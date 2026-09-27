@@ -345,7 +345,7 @@ async def upload_files(name: str, files: list[UploadFile] = File(...)):
             # Track the embedding-model call in SQLite (one row with the
             # embedded chunk count). Never breaks the upload flow.
             try:
-                from backend.utils.spend_handler import record_external_usage
+                from backend.agent.utils.spend_handler import record_external_usage
 
                 record_external_usage(
                     "embedding", "google", db.embed_func.model_name, len(documents),
@@ -444,7 +444,7 @@ async def add_url(name: str, req: AddUrlRequest):
         # Track the embedding-model call in SQLite (one row with the
         # embedded chunk count). Never breaks the flow.
         try:
-            from backend.utils.spend_handler import record_external_usage
+            from backend.agent.utils.spend_handler import record_external_usage
 
             record_external_usage(
                 "embedding", "google", db.embed_func.model_name, len(documents),

@@ -33,7 +33,8 @@ if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
 from backend.agent.utils.error_logger import log_error
-from backend.utils.db import db_transaction, get_connection
+from backend.agent.utils.db import db_transaction, get_connection
+from backend.agent.utils.queries import load_query
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +90,7 @@ def should_sync(provider: str) -> bool:
         return True
     try:
         row = conn.execute(
-            "SELECT value FROM config_kv WHERE key = ?",
+            load_query("config/get_value.sql"),
             (f"catalog_sync_{provider}",),
         ).fetchone()
         if row is None:
@@ -114,9 +115,7 @@ def _set_sync_timestamp(provider: str) -> None:
     try:
         with conn:
             conn.execute(
-                """INSERT INTO config_kv (key, value)
-                   VALUES (?, ?)
-                   ON CONFLICT(key) DO UPDATE SET value = excluded.value""",
+                load_query("config/upsert_value.sql"),
                 (f"catalog_sync_{provider}", str(time.time())),
             )
     except Exception as e:
@@ -250,46 +249,7 @@ def sync_catalog(provider: str) -> dict:
     try:
         with conn:
             conn.executemany(
-                """INSERT INTO model_catalog
-                   (provider, model_id, name, description, family,
-                    context_window, input_limit, output_limit,
-                    reasoning, reasoning_options,
-                    tool_call, attachment, temperature, structured_output,
-                    modalities_input, modalities_output,
-                    cost_input, cost_output, cost_cache_read, cost_cache_write,
-                    open_weights, status, api, npm, updated_at)
-                   VALUES
-                   (:provider, :model_id, :name, :description, :family,
-                    :context_window, :input_limit, :output_limit,
-                    :reasoning, :reasoning_options,
-                    :tool_call, :attachment, :temperature, :structured_output,
-                    :modalities_input, :modalities_output,
-                    :cost_input, :cost_output, :cost_cache_read, :cost_cache_write,
-                    :open_weights, :status, :api, :npm, :updated_at)
-                   ON CONFLICT(provider, model_id) DO UPDATE SET
-                       name = excluded.name,
-                       description = excluded.description,
-                       family = excluded.family,
-                       context_window = excluded.context_window,
-                       input_limit = excluded.input_limit,
-                       output_limit = excluded.output_limit,
-                       reasoning = excluded.reasoning,
-                       reasoning_options = excluded.reasoning_options,
-                       tool_call = excluded.tool_call,
-                       attachment = excluded.attachment,
-                       temperature = excluded.temperature,
-                       structured_output = excluded.structured_output,
-                       modalities_input = excluded.modalities_input,
-                       modalities_output = excluded.modalities_output,
-                       cost_input = excluded.cost_input,
-                       cost_output = excluded.cost_output,
-                       cost_cache_read = excluded.cost_cache_read,
-                       cost_cache_write = excluded.cost_cache_write,
-                       open_weights = excluded.open_weights,
-                       status = excluded.status,
-                       api = excluded.api,
-                       npm = excluded.npm,
-                       updated_at = excluded.updated_at""",
+                load_query("model_catalog/upsert_model.sql"),
                 rows,
             )
         _set_sync_timestamp(provider)
@@ -320,7 +280,7 @@ def get_models(provider: str) -> list[str]:
         return []
     try:
         rows = conn.execute(
-            "SELECT model_id FROM model_catalog WHERE provider = ? ORDER BY model_id",
+            load_query("model_catalog/list_models_by_provider.sql"),
             (provider.strip(),),
         ).fetchall()
         return [row["model_id"] for row in rows]
@@ -346,7 +306,7 @@ def get_model(provider: str, model_id: str) -> dict[str, Any] | None:
         return None
     try:
         row = conn.execute(
-            "SELECT * FROM model_catalog WHERE provider = ? AND model_id = ?",
+            load_query("model_catalog/get_model.sql"),
             (provider.strip(), model_id),
         ).fetchone()
         if row is None:
@@ -769,7 +729,7 @@ def list_configured_providers() -> list[str]:
         return []
     try:
         rows = conn.execute(
-            "SELECT DISTINCT provider FROM model_catalog ORDER BY provider"
+            load_query("model_catalog/list_providers.sql"),
         ).fetchall()
         return [row["provider"] for row in rows]
     except Exception as e:
@@ -830,7 +790,7 @@ def get_provider_api_type(provider: str) -> str:
             return "unknown"
         try:
             row = conn.execute(
-                "SELECT npm FROM model_catalog WHERE provider = ? LIMIT 1",
+                load_query("model_catalog/get_npm.sql"),
                 (prov,),
             ).fetchone()
         finally:

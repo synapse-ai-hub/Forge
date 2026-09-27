@@ -228,7 +228,7 @@ async def stream_interview_loop(
         except Exception as e:
             logger.exception("Error en streaming interview: %s", e)
             try:
-                from backend.utils.spend_handler import record_creator_call
+                from backend.agent.utils.spend_handler import record_creator_call
 
                 record_creator_call("creator:interview", provider, model, iter_usage)
             except Exception:
@@ -245,7 +245,7 @@ async def stream_interview_loop(
         # Contemplate this interview LLM call (tracked in creator_calls
         # since it never produces messages rows).
         try:
-            from backend.utils.spend_handler import record_creator_call
+            from backend.agent.utils.spend_handler import record_creator_call
 
             record_creator_call("creator:interview", provider, model, iter_usage)
         except Exception:
@@ -385,7 +385,7 @@ async def stream_tool_calling_loop(
         except Exception as e:
             logger.exception("Error en streaming create agent: %s", e)
             try:
-                from backend.utils.spend_handler import record_creator_call
+                from backend.agent.utils.spend_handler import record_creator_call
 
                 record_creator_call("creator:generate", provider, model, iter_usage)
             except Exception:
@@ -402,7 +402,7 @@ async def stream_tool_calling_loop(
         # Contemplate this generation LLM call (tracked in creator_calls
         # since it never produces messages rows).
         try:
-            from backend.utils.spend_handler import record_creator_call
+            from backend.agent.utils.spend_handler import record_creator_call
 
             record_creator_call("creator:generate", provider, model, iter_usage)
         except Exception:

@@ -39,7 +39,8 @@ if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
 from backend.agent.utils.error_logger import log_error
-from backend.utils.db import db_transaction, get_connection
+from backend.agent.utils.db import db_transaction, get_connection
+from backend.agent.utils.queries import load_query
 
 logger = logging.getLogger(__name__)
 
@@ -155,7 +156,7 @@ def list_tasks() -> list[dict]:
     try:
         with get_connection() as conn:
             rows = conn.execute(
-                "SELECT * FROM scheduled_tasks ORDER BY time, created_at"
+                load_query("scheduler/list_tasks.sql"),
             ).fetchall()
             return [_row_to_task(row) for row in rows]
     except Exception as exc:
@@ -169,7 +170,7 @@ def get_task(task_id: str) -> dict | None:
     try:
         with get_connection() as conn:
             row = conn.execute(
-                "SELECT * FROM scheduled_tasks WHERE id = ?", (task_id,)
+                load_query("scheduler/get_task.sql"), (task_id,)
             ).fetchone()
             return _row_to_task(row) if row else None
     except Exception as exc:
@@ -222,11 +223,7 @@ def add_task(
     try:
         with db_transaction() as conn:
             conn.execute(
-                "INSERT INTO scheduled_tasks "
-                "(id, name, prompt, time, days, enabled, repetitions, "
-                "tool_permissions, skill_permissions, parameters, "
-                "slot_runs, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, '{}', ?, ?)",
+                load_query("scheduler/insert_task.sql"),
                 (
                     task_id,
                     name,
@@ -252,7 +249,9 @@ def add_task(
             agent_name = None
         if agent_name is None:
             with db_transaction() as conn:
-                conn.execute("DELETE FROM scheduled_tasks WHERE id = ?", (task_id,))
+                conn.execute(
+                    load_query("scheduler/delete_task.sql"), (task_id,)
+                )
             return {
                 "status": "error",
                 "message": "No se pudo crear el sub-agente de la tarea (nombre en conflicto o error de escritura).",
@@ -347,10 +346,7 @@ def update_task(
     try:
         with db_transaction() as conn:
             conn.execute(
-                "UPDATE scheduled_tasks SET "
-                "name = ?, prompt = ?, time = ?, days = ?, enabled = ?, "
-                "repetitions = ?, tool_permissions = ?, skill_permissions = ?, "
-                "parameters = ?, last_run_date = NULL, updated_at = ? WHERE id = ?",
+                load_query("scheduler/update_task.sql"),
                 (
                     new_name,
                     new_prompt,
@@ -395,10 +391,10 @@ def delete_task(task_id: str) -> dict:
     try:
         with db_transaction() as conn:
             cursor = conn.execute(
-                "DELETE FROM task_runs WHERE task_id = ?", (task_id,)
+                load_query("scheduler/delete_runs_by_task.sql"), (task_id,)
             )
             cursor = conn.execute(
-                "DELETE FROM scheduled_tasks WHERE id = ?", (task_id,)
+                load_query("scheduler/delete_task.sql"), (task_id,)
             )
         if cursor.rowcount == 0:
             return {"status": "error", "message": "La tarea no existe."}
@@ -583,13 +579,13 @@ def mark_slot_fired(task_id: str, slot_key: str, date_str: str) -> None:
     try:
         with get_connection() as conn:
             row = conn.execute(
-                "SELECT slot_runs FROM scheduled_tasks WHERE id = ?", (task_id,)
+                load_query("scheduler/get_slot_runs.sql"), (task_id,)
             ).fetchone()
             slot_runs = _parse_json_field(row["slot_runs"] if row else None, {})
             slot_runs[slot_key] = date_str
         with db_transaction() as conn:
             conn.execute(
-                "UPDATE scheduled_tasks SET slot_runs = ? WHERE id = ?",
+                load_query("scheduler/update_slot_runs.sql"),
                 (json.dumps(slot_runs, ensure_ascii=False), task_id),
             )
     except Exception as exc:
@@ -614,9 +610,7 @@ def list_runs(limit: int = 50) -> list[dict]:
     try:
         with get_connection() as conn:
             rows = conn.execute(
-                "SELECT r.*, t.prompt, t.name FROM task_runs r "
-                "LEFT JOIN scheduled_tasks t ON t.id = r.task_id "
-                "ORDER BY r.started_at DESC LIMIT ?",
+                load_query("scheduler/list_runs.sql"),
                 (int(limit),),
             ).fetchall()
             return [
@@ -651,8 +645,7 @@ def record_run(
     try:
         with db_transaction() as conn:
             conn.execute(
-                "INSERT INTO task_runs (task_id, session_id, status, detail, started_at, finished_at) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
+                load_query("scheduler/insert_run.sql"),
                 (task_id, session_id, status, detail, started_at, finished_at),
             )
     except Exception as exc:

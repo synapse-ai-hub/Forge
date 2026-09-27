@@ -14,7 +14,8 @@ import sqlite3
 import sys
 
 from backend.agent.utils.error_logger import log_error
-from backend.utils.db import db_transaction, get_connection
+from backend.agent.utils.db import db_transaction, get_connection
+from backend.agent.utils.queries import load_query
 
 from fastapi import APIRouter
 
@@ -50,7 +51,7 @@ def _fetch_attachments(session_id: str) -> dict[int, list[dict]]:
     try:
         with get_connection() as conn:
             rows = conn.execute(
-                "SELECT turn_number, file_name, size FROM attachments WHERE session_id = ? ORDER BY turn_number, id",
+                load_query("attachments/list_for_session.sql"),
                 (session_id,),
             ).fetchall()
 

@@ -35,7 +35,8 @@ if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
 from backend.agent.utils.error_logger import log_error
-from backend.utils.db import db_transaction, get_connection
+from backend.agent.utils.db import db_transaction, get_connection
+from backend.agent.utils.queries import load_query
 
 logger = logging.getLogger(__name__)
 
@@ -281,13 +282,7 @@ def save_key(provider: str, api_key: str) -> dict:
         try:
             with conn:
                 conn.execute(
-                    """
-                    INSERT INTO provider_api_keys (provider, api_key_encrypted, updated_at)
-                    VALUES (?, ?, ?)
-                    ON CONFLICT(provider) DO UPDATE SET
-                        api_key_encrypted = excluded.api_key_encrypted,
-                        updated_at = excluded.updated_at
-                    """,
+                    load_query("providers/upsert_key.sql"),
                     (provider_id, encrypted, now),
                 )
         finally:
@@ -331,7 +326,7 @@ def get_key(provider: str) -> str | None:
             return None
         try:
             row = conn.execute(
-                "SELECT api_key_encrypted FROM provider_api_keys WHERE provider = ?",
+                load_query("providers/get_encrypted_key.sql"),
                 (provider_id,),
             ).fetchone()
         finally:
@@ -365,13 +360,13 @@ def delete_key(provider: str) -> dict:
         try:
             with conn:
                 cursor = conn.execute(
-                    "DELETE FROM provider_api_keys WHERE provider = ?", (provider_id,)
+                    load_query("providers/delete_key.sql"), (provider_id,)
                 )
             deleted = cursor.rowcount > 0
             # Also delete the model catalog for this provider.
             if deleted:
                 conn.execute(
-                    "DELETE FROM model_catalog WHERE provider = ?",
+                    load_query("model_catalog/delete_by_provider.sql"),
                     (provider_id,),
                 )
                 conn.commit()

@@ -34,7 +34,8 @@ from backend.routes.file_text_extractor import (
     ExtractionResult,
     extract_text_from_bytes,
 )
-from backend.utils.db import db_transaction, get_connection
+from backend.agent.utils.db import db_transaction, get_connection
+from backend.agent.utils.queries import load_query
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +83,7 @@ async def upload_context_file(
         now = datetime.now().isoformat()
         with db_transaction() as conn:
             cursor = conn.execute(
-                "INSERT INTO context_files (filename, content, created_at) VALUES (?, ?, ?)",
+                load_query("context_files/insert.sql"),
                 (filename, text, now),
             )
             file_id = cursor.lastrowid
@@ -112,7 +113,7 @@ async def list_context_files():
     try:
         with get_connection() as conn:
             rows = conn.execute(
-                "SELECT id, filename, created_at FROM context_files ORDER BY created_at DESC"
+                load_query("context_files/list.sql"),
             ).fetchall()
 
         files = [
@@ -149,7 +150,7 @@ async def delete_context_file(file_id: int):
     try:
         with db_transaction() as conn:
             cursor = conn.execute(
-                "DELETE FROM context_files WHERE id = ?", (file_id,)
+                load_query("context_files/delete.sql"), (file_id,)
             )
             deleted = cursor.rowcount
 

@@ -1,0 +1,41 @@
+-- Upsert one model row of the catalog (models.dev sync).
+INSERT INTO model_catalog
+(provider, model_id, name, description, family,
+ context_window, input_limit, output_limit,
+ reasoning, reasoning_options,
+ tool_call, attachment, temperature, structured_output,
+ modalities_input, modalities_output,
+ cost_input, cost_output, cost_cache_read, cost_cache_write,
+ open_weights, status, api, npm, updated_at)
+VALUES
+(:provider, :model_id, :name, :description, :family,
+ :context_window, :input_limit, :output_limit,
+ :reasoning, :reasoning_options,
+ :tool_call, :attachment, :temperature, :structured_output,
+ :modalities_input, :modalities_output,
+ :cost_input, :cost_output, :cost_cache_read, :cost_cache_write,
+ :open_weights, :status, :api, :npm, :updated_at)
+ON CONFLICT(provider, model_id) DO UPDATE SET
+    name = excluded.name,
+    description = excluded.description,
+    family = excluded.family,
+    context_window = excluded.context_window,
+    input_limit = excluded.input_limit,
+    output_limit = excluded.output_limit,
+    reasoning = excluded.reasoning,
+    reasoning_options = excluded.reasoning_options,
+    tool_call = excluded.tool_call,
+    attachment = excluded.attachment,
+    temperature = excluded.temperature,
+    structured_output = excluded.structured_output,
+    modalities_input = excluded.modalities_input,
+    modalities_output = excluded.modalities_output,
+    cost_input = excluded.cost_input,
+    cost_output = excluded.cost_output,
+    cost_cache_read = excluded.cost_cache_read,
+    cost_cache_write = excluded.cost_cache_write,
+    open_weights = excluded.open_weights,
+    status = excluded.status,
+    api = excluded.api,
+    npm = excluded.npm,
+    updated_at = excluded.updated_at;

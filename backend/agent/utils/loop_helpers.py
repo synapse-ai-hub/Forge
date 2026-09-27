@@ -31,7 +31,8 @@ if _project_root not in sys.path:
 
 from backend.agent.permissions import get_agent_prompt, is_tool_allowed, list_agents
 from backend.agent.utils.error_logger import log_error
-from backend.utils.db import db_transaction, get_connection
+from backend.agent.utils.db import db_transaction, get_connection
+from backend.agent.utils.queries import load_query
 from backend.agent.utils.skill_loader import format_skills_section
 from backend.agent.utils.contract import make_error_response, make_success_response, zero_usage
 from backend.instances import agent
@@ -83,7 +84,7 @@ def load_context_text() -> str:
     try:
         with get_connection() as conn:
             rows = conn.execute(
-                "SELECT filename, content FROM context_files ORDER BY id"
+                load_query("context_files/list_all.sql"),
             ).fetchall()
         if not rows:
             return ""

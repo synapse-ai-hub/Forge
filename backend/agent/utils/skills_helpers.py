@@ -153,7 +153,7 @@ async def _evaluar_si_existe(
     # Contemplate this evaluator LLM call (tracked in creator_calls
     # since it never produces messages rows).
     try:
-        from backend.utils.spend_handler import record_creator_call
+        from backend.agent.utils.spend_handler import record_creator_call
 
         record_creator_call(
             "creator:skill:evaluate", eval_provider, eval_model,
@@ -238,7 +238,7 @@ async def _explain_skill(
     # Contemplate this explainer LLM call (tracked in creator_calls
     # since it never produces messages rows).
     try:
-        from backend.utils.spend_handler import record_creator_call
+        from backend.agent.utils.spend_handler import record_creator_call
 
         record_creator_call(
             "creator:skill:explain", eval_provider, eval_model,
@@ -315,7 +315,7 @@ async def _create_skill(
     # Contemplate this generator LLM call (tracked in creator_calls
     # since it never produces messages rows).
     try:
-        from backend.utils.spend_handler import record_creator_call
+        from backend.agent.utils.spend_handler import record_creator_call
 
         record_creator_call(
             "creator:skill:generate", eval_provider, eval_model,

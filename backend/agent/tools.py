@@ -984,7 +984,7 @@ class Tools:
             prompt_tokens = db.embed_func.count_tokens([query])
             # Track the query-embedding call in SQLite. Never breaks the flow.
             try:
-                from backend.utils.spend_handler import record_external_usage
+                from backend.agent.utils.spend_handler import record_external_usage
 
                 record_external_usage(
                     "embedding", "google", db.embed_func.model_name, 1,
@@ -1076,7 +1076,7 @@ class Tools:
             prompt_tokens = db.embed_func.count_tokens([query])
             # Track the query-embedding call in SQLite. Never breaks the flow.
             try:
-                from backend.utils.spend_handler import record_external_usage
+                from backend.agent.utils.spend_handler import record_external_usage
 
                 record_external_usage(
                     "embedding", "google", db.embed_func.model_name, 1,

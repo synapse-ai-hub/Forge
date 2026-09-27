@@ -1285,7 +1285,7 @@ class TelegramBot:
     async def _cmd_usage(self, chat_id: int) -> None:
         """Show usage metrics per provider."""
         try:
-            from backend.utils.spend_handler import get_all_spend
+            from backend.agent.utils.spend_handler import get_all_spend
             spend = get_all_spend()
             if not spend:
                 await self.send_message(chat_id, "No hay datos de uso aún.")
@@ -1311,7 +1311,7 @@ class TelegramBot:
         Shows current limits and asks what to configure via question-response flow.
         """
         try:
-            from backend.utils.spend_handler import get_spend_config
+            from backend.agent.utils.spend_handler import get_spend_config
             from backend.agent.utils.provider_keys import list_configured
 
             # Get providers with keys
@@ -1355,7 +1355,7 @@ class TelegramBot:
             if text.strip() == "1":
                 # Show current spend
                 try:
-                    from backend.utils.spend_handler import get_all_spend
+                    from backend.agent.utils.spend_handler import get_all_spend
                     spend = get_all_spend()
                     if not spend:
                         await self.send_message(chat_id, "No hay datos de gasto.")
@@ -1447,7 +1447,7 @@ class TelegramBot:
     async def _apply_billing_limit(self, chat_id: int, provider: str, model: str | None, limit: float) -> None:
         """Apply a billing limit for a provider/model."""
         try:
-            from backend.utils.spend_handler import set_spend_limit
+            from backend.agent.utils.spend_handler import set_spend_limit
             success = set_spend_limit(provider.strip(), model, limit)
             if success:
                 msg = f"Límite configurado: {provider}"
@@ -1953,7 +1953,7 @@ class TelegramBot:
         # Contemplate the transcription call. Failures are never recorded
         # and never break the transcription flow.
         try:
-            from backend.utils.spend_handler import record_external_usage
+            from backend.agent.utils.spend_handler import record_external_usage
 
             record_external_usage(
                 "transcription", "groq", "whisper-large-v3-turbo", 1,

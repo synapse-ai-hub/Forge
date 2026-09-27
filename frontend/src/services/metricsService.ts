@@ -3,26 +3,7 @@ const API_BASE_URL = import.meta.env.VITE_URL_BASE || "http://localhost:8000";
 export interface SessionMetrics {
   total_sessions: number;
   total_messages: number;
-  avg_messages_per_session: number;
-  total_tokens: number;
-  avg_tokens_per_session: number;
-  avg_input_tokens_per_session: number;
-  avg_output_tokens_per_session: number;
-  avg_tokens_per_message: number;
-  avg_tokens_per_tool: number;
-  total_cost: number;
-  avg_cost_per_session: number;
-  avg_cost_input_per_session: number;
-  avg_cost_output_per_session: number;
-  avg_cost_per_message: number;
-  avg_cost_per_tool: number;
-  avg_cost_per_provider_model: number;
-  total_time: number;
-  avg_time_per_turn: number;
-  avg_time_per_session: number;
-  avg_agent_latency: number;
-  sessions_by_day: { date: string; count: number }[];
-  sessions_over_time: { date: string; count: number }[];
+  cantidad: { date: string; count: number }[];
 }
 
 export interface ToolMetrics {
@@ -43,14 +24,6 @@ export interface ErrorMetrics {
   errors_by_source: { source: string; count: number }[];
 }
 
-export interface SessionDetail {
-  cantidad: { date: string; count: number }[];
-  mensajes_per_session: number[];
-  tokens_entrada: number[];
-  tokens_salida: number[];
-  latencia_per_session: number[];
-}
-
 export interface MetricsOverview {
   total_sessions: number;
   total_messages: number;
@@ -64,7 +37,6 @@ export interface MetricsOverview {
   failure_rate_sessions: number;
   top_tools: { name: string; count: number }[];
   sessions_by_day: { date: string; count: number }[];
-  sessions_over_time: { date: string; count: number }[];
   total_tokens: number;
   avg_tokens_per_session: number;
   avg_input_tokens_per_session: number;
@@ -153,15 +125,6 @@ const metricsService = {
     return fetchMetric<MetricsOverview>(
       `/api/metrics/overview${query}`,
       "Error fetching metrics overview",
-    );
-  },
-
-  /** Get per-session distributions for the Sesiones card (from .sql scripts). */
-  async getSessionDetail(timeRange?: string): Promise<SessionDetail> {
-    const query = timeRange ? `?time_range=${timeRange}` : "";
-    return fetchMetric<SessionDetail>(
-      `/api/metrics/sessions/detail${query}`,
-      "Error fetching session detail",
     );
   },
 

@@ -84,8 +84,8 @@ from backend.agent.utils.model_resolver import (
     get_vram_gb,
     ollama_default_context,
 )
-from backend.utils.spend_handler import check_spend_limit
-from backend.utils.rate_limit_handler import (
+from backend.agent.utils.spend_handler import check_spend_limit
+from backend.agent.utils.rate_limit_handler import (
     classify_error_category,
     get_retry_delay,
 )

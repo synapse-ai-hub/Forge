@@ -28,7 +28,8 @@ if _project_root not in sys.path:
 
 from backend.agent.loop import AgentLoop
 from backend.agent.utils.error_logger import log_error, set_error_context, reset_error_context
-from backend.utils.db import db_transaction, get_connection
+from backend.agent.utils.db import db_transaction, get_connection
+from backend.agent.utils.queries import load_query
 from backend.instances import agent, session_manager
 from backend.routes.file_text_extractor import (
     ExtractionResult,
@@ -60,8 +61,7 @@ def _save_attachments(session_id: str, turn_number: int, files_data: list[tuple[
             now = datetime.now().isoformat()
             for filename, binary_content, _extracted_text in files_data:
                 conn.execute(
-                    "INSERT INTO attachments (session_id, turn_number, file_name, size, content, created_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    load_query("attachments/insert.sql"),
                     (session_id, turn_number, filename, len(binary_content), binary_content, now),
                 )
     except Exception as exc:

@@ -1,21 +1,14 @@
 """Render metric distributions with synapse_tools.eda without writing files.
 
-Loads the .sql metric scripts with pandas read_sql (the temporal filter
+Loads the .sql query scripts with pandas read_sql (the temporal filter
 stays in SQL so only the range rows travel) and converts the matplotlib
 figure to base64 in memory. Nothing is ever written to disk.
 """
 
 from __future__ import annotations
 
-import os
 import sqlite3
-import sys
 from typing import Any
-
-_current_dir = os.path.dirname(os.path.abspath(__file__))
-_PROJECT_ROOT = os.path.dirname(os.path.dirname(_current_dir))
-if _PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, _PROJECT_ROOT)
 
 import matplotlib
 
@@ -24,42 +17,17 @@ matplotlib.use("Agg")
 import pandas as pd
 from synapse_tools.eda import outliers as _outliers
 
-from backend.utils.db import DB_PATH
-
-_METRICS_SQL_DIR = os.path.join(
-    _PROJECT_ROOT, "backend", "agent", "agent_db", "metrics"
-)
+from backend.agent.utils.db import DB_PATH
+from backend.agent.utils.queries import TIME_PLACEHOLDER, load_query, time_clause
 
 _VALID_RANGES = {"1h", "6h", "1d", "1w", "1m", "all"}
-
-
-def time_clause(time_range: str, column_name: str) -> tuple[str, tuple[Any, ...]]:
-    """Return a parameterized SQL time filter clause and its parameters."""
-    if time_range == "1h":
-        return f" AND {column_name} >= datetime('now', ?)", ("-1 hour",)
-    if time_range == "6h":
-        return f" AND {column_name} >= datetime('now', ?)", ("-6 hours",)
-    if time_range == "1d":
-        return f" AND {column_name} >= datetime('now', ?)", ("-1 day",)
-    if time_range == "1w":
-        return f" AND {column_name} >= datetime('now', ?)", ("-7 days",)
-    if time_range == "1m":
-        return f" AND {column_name} >= datetime('now', ?)", ("-30 days",)
-    return "", ()
-
-
-def load_metric_sql(name: str) -> str:
-    """Load a metric SQL script from backend/agent/agent_db/metrics/."""
-    path = os.path.join(_METRICS_SQL_DIR, name)
-    with open(path, "r", encoding="utf-8") as f:
-        return f.read()
 
 
 def render_outliers_figure(
     query_file: str,
     value_column: str,
     time_range: str = "1m",
-    placeholder: str = "{TIME_CLAUSE_SES}",
+    placeholder: str = TIME_PLACEHOLDER,
     filter_column: str = "sessions.created_at",
     color: str = "#8b5cf6",
     fig_size: tuple[int, int] = (18, 6),
@@ -67,7 +35,8 @@ def render_outliers_figure(
     """Run a metric query and render the outliers figure as base64.
 
     Args:
-        query_file: Script path relative to the metrics dir.
+        query_file: Script path relative to the queries root
+            (e.g. ``"metrics/sessions/messages_per_session.sql"``).
         value_column: Result column with the numeric values to plot.
         time_range: One of 1h, 6h, 1d, 1w, 1m, all.
         placeholder: Time filter placeholder used inside the script.
@@ -83,7 +52,7 @@ def render_outliers_figure(
     if time_range not in _VALID_RANGES:
         time_range = "1m"
     clause, params = time_clause(time_range, filter_column)
-    sql = load_metric_sql(query_file).replace(placeholder, clause)
+    sql = load_query(query_file).replace(placeholder, clause)
     code_lines = [
         line for line in sql.splitlines() if not line.lstrip().startswith("--")
     ]

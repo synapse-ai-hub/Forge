@@ -132,7 +132,7 @@ async def _evaluar_si_existe(
     # Contemplate this evaluator LLM call (tracked in creator_calls
     # since it never produces messages rows).
     try:
-        from backend.utils.spend_handler import record_creator_call
+        from backend.agent.utils.spend_handler import record_creator_call
 
         record_creator_call(
             "creator:tool:evaluate", eval_provider, eval_model,

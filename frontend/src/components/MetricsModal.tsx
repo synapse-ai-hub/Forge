@@ -18,7 +18,6 @@ import {
 import metricsService, {
   type MetricsOverview,
   type SessionMetrics,
-  type SessionDetail,
   type ToolMetrics,
   type ModelMetrics,
   type ErrorMetrics,
@@ -62,11 +61,6 @@ function formatNumber(value: number): string {
 
 function formatSeconds(value: number): string {
   return `${value.toFixed(2)} s`;
-}
-
-function mean(values: number[]): number {
-  if (values.length === 0) return 0;
-  return values.reduce((a, b) => a + b, 0) / values.length;
 }
 
 /** Tarjeta del sidebar: solo selección, sin despliegue inline. */
@@ -210,11 +204,13 @@ function HistBox({
   valueColumn,
   title,
   timeRange,
+  onStats,
 }: {
   queryFile: string;
   valueColumn: string;
   title: string;
   timeRange: string;
+  onStats?: (stats: Record<string, number>) => void;
 }) {
   const [image, setImage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -229,6 +225,7 @@ function HistBox({
         if (cancelled) return;
         lastImage.current = res.image;
         setImage(res.image);
+        if (onStats) onStats(res.stats);
       })
       .catch((e) => {
         if (cancelled) return;
@@ -274,11 +271,11 @@ export function MetricsModal({ open, onClose }: MetricsModalProps) {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [metrics, setMetrics] = useState<MetricsData>(EMPTY_METRICS);
-  const [detail, setDetail] = useState<SessionDetail | null>(null);
   const [activeCardId, setActiveCardId] = useState<string | null>(null);
   const [sesionSub, setSesionSub] = useState<string>("cantidad");
+  const [latenciaStats, setLatenciaStats] = useState<Record<string, number>>({});
 
-  const hasData = metrics.overview !== null || metrics.sessions !== null || detail !== null;
+  const hasData = metrics.overview !== null || metrics.sessions !== null;
 
   const loadAll = async () => {
     const firstLoad = !hasData;
@@ -286,14 +283,13 @@ export function MetricsModal({ open, onClose }: MetricsModalProps) {
     else setRefreshing(true);
     setError(null);
     try {
-      const [overviewRes, sessionsRes, toolsRes, modelsRes, errorsRes, detailRes] =
+      const [overviewRes, sessionsRes, toolsRes, modelsRes, errorsRes] =
         await Promise.allSettled([
           metricsService.getOverview(timeRange),
           metricsService.getSessionMetrics(timeRange),
           metricsService.getToolMetrics(timeRange),
           metricsService.getModelMetrics(timeRange),
           metricsService.getErrorMetrics(timeRange),
-          metricsService.getSessionDetail(timeRange),
         ]);
 
       setMetrics({
@@ -303,7 +299,6 @@ export function MetricsModal({ open, onClose }: MetricsModalProps) {
         models: modelsRes.status === "fulfilled" ? modelsRes.value : null,
         errors: errorsRes.status === "fulfilled" ? errorsRes.value : null,
       });
-      if (detailRes.status === "fulfilled") setDetail(detailRes.value);
 
       if (
         overviewRes.status === "rejected" &&
@@ -341,7 +336,7 @@ export function MetricsModal({ open, onClose }: MetricsModalProps) {
   const tls = metrics.tools;
   const errs = metrics.errors;
 
-  const latenciaAvg = detail && detail.latencia_per_session.length > 0 ? mean(detail.latencia_per_session) : 0;
+  const latenciaAvg = latenciaStats.mean ?? 0;
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
@@ -432,8 +427,8 @@ export function MetricsModal({ open, onClose }: MetricsModalProps) {
                   activeId={activeCardId}
                   onSelect={(id) => setActiveCardId(id)}
                   title="Gasto"
-                  value={`$${(ov?.total_cost ?? ses?.total_cost ?? 0).toFixed(2)}`}
-                  subtitle={`${formatNumber(ov?.total_tokens ?? ses?.total_tokens ?? 0)} tokens`}
+                  value={`$${(ov?.total_cost ?? 0).toFixed(2)}`}
+                  subtitle={`${formatNumber(ov?.total_tokens ?? 0)} tokens`}
                   icon={<DollarSign size={16} />}
                 />
                 <SidebarCard
@@ -461,19 +456,19 @@ export function MetricsModal({ open, onClose }: MetricsModalProps) {
                       <div className="text-sm font-bold text-app-text">Sesiones</div>
                       <div className="mt-2 h-[440px]">
                         {sesionSub === "cantidad" && (
-                          <FixedBars data={detail?.cantidad ?? []} />
+                          <FixedBars data={metrics.sessions?.cantidad ?? []} />
                         )}
                         {sesionSub === "mensajes_total" && (
-                          <HistBox queryFile="sesiones/total_mensajes.sql" valueColumn="msg_count" title="Total de mensajes por sesión" timeRange={timeRange} />
+                          <HistBox queryFile="metrics/sessions/messages_per_session.sql" valueColumn="msg_count" title="Total de mensajes por sesión" timeRange={timeRange} />
                         )}
                         {sesionSub === "tokens_entrada" && (
-                          <HistBox queryFile="sesiones/tokens_entrada.sql" valueColumn="input_tokens" title="Tokens de entrada por sesión" timeRange={timeRange} />
+                          <HistBox queryFile="metrics/sessions/input_tokens.sql" valueColumn="input_tokens" title="Tokens de entrada por sesión" timeRange={timeRange} />
                         )}
                         {sesionSub === "tokens_salida" && (
-                          <HistBox queryFile="sesiones/tokens_salida.sql" valueColumn="output_tokens" title="Tokens de salida por sesión" timeRange={timeRange} />
+                          <HistBox queryFile="metrics/sessions/output_tokens.sql" valueColumn="output_tokens" title="Tokens de salida por sesión" timeRange={timeRange} />
                         )}
                         {sesionSub === "latencia_promedio" && (
-                          <HistBox queryFile="sesiones/latencia_promedio_sesion.sql" valueColumn="avg_lat" title="Latencia promedio por sesión" timeRange={timeRange} />
+                          <HistBox queryFile="metrics/sessions/latency_per_session.sql" valueColumn="avg_lat" title="Latencia promedio por sesión" timeRange={timeRange} onStats={setLatenciaStats} />
                         )}
                       </div>
                       {sesionSub === "latencia_promedio" && (
