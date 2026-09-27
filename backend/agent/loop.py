@@ -519,6 +519,17 @@ class AgentLoop:
             # --- 1b. Get turn_number for this message ---
             turn_number = session_manager.get_last_turn_number(session_id) + 1
 
+            def _schedule_latency() -> None:
+                """Persist this turn's latency in the background (non-blocking)."""
+                try:
+                    asyncio.create_task(
+                        asyncio.to_thread(
+                            session_manager.save_turn_latency, session_id, turn_number
+                        )
+                    )
+                except Exception as exc:
+                    logger.warning("Could not schedule turn latency: %s", exc)
+
             # --- 1c. Update error logging context with actual turn_number ---
             reset_error_context(error_ctx_token)
             error_ctx_token = set_error_context(
@@ -574,13 +585,11 @@ class AgentLoop:
                 if router_perms is not None:
                     # config.yaml defines permissions — use them exclusively.
                     tool_permissions = {}
-                    for name, action in (router_perms.get("tool") or {}).items():
+                    for name, action in (router_perms.get("tools") or {}).items():
                         tool_permissions[name] = action
-                    task_perms = router_perms.get("task")
-                    if isinstance(task_perms, dict) and task_perms:
-                        tool_permissions["task"] = task_perms
-                    elif "task" not in tool_permissions:
-                        tool_permissions["task"] = "allow"
+                    tasks_perms = router_perms.get("tasks")
+                    if isinstance(tasks_perms, dict) and tasks_perms:
+                        tool_permissions["task"] = tasks_perms
                 else:
                     # No config.yaml — use the guaranteed floor.
                     tool_permissions = {
@@ -925,6 +934,7 @@ class AgentLoop:
                                 )
                             yield f"data: {json.dumps({'type': 'chunk', 'content': 'Ocurrió un error al procesar la solicitud. Por favor, intentá de nuevo.'}, ensure_ascii=False)}\n\n"
                             yield "data: [DONE]\n\n"
+                            _schedule_latency()
                             return
 
                         # Rate-limit / transient: retry with exponential back-off while attempts
@@ -1008,6 +1018,7 @@ class AgentLoop:
                             )
                         yield f"data: {json.dumps({'type': 'chunk', 'content': final_msg}, ensure_ascii=False)}\n\n"
                         yield "data: [DONE]\n\n"
+                        _schedule_latency()
                         return
                     break  # Stream consumed successfully
                 # Fold this attempt into the step accumulators exactly once
@@ -1473,6 +1484,7 @@ class AgentLoop:
                     )
                     yield f"data: {json.dumps({'type': 'chunk', 'content': final_msg}, ensure_ascii=False)}\n\n"
                     yield "data: [DONE]\n\n"
+                    _schedule_latency()
                     if parent_model and model != parent_model and parent_is_local and child_is_local:
                         ctx = get_error_context()
                         await asyncio.to_thread(
@@ -1537,6 +1549,7 @@ class AgentLoop:
                         logger.warning("Memory indexing could not be scheduled: %s", exc)
                         log_error(str(exc), source="loop.py:run(memory_index)")
 
+                _schedule_latency()
                 _t_before_done = _time.time()
 
                 # # logger.info("[DEBUG_TIEMPO_SSE] about to yield [DONE] — iteration=%d, t=%.3f", iteration, _t_before_done)
@@ -1559,6 +1572,7 @@ class AgentLoop:
             logger.warning("Agent loop reached max_iterations (%d)", self.max_iterations)
             yield f"data: {json.dumps({'type': 'chunk', 'content': '\n\n*El agente alcanzó el límite de iteraciones.*'})}\n\n"
             yield "data: [DONE]\n\n"
+            _schedule_latency()
             if parent_model and model != parent_model and parent_is_local and child_is_local:
                 logger.info("Liberando modelo del subagente (%s) por max_iterations", model)
                 ctx = get_error_context()

@@ -194,7 +194,7 @@ def log_error(
 
     try:
         conn = _get_connection()
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now().isoformat()
         conn.execute(
             """
             INSERT INTO error_log

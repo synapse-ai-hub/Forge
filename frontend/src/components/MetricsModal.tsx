@@ -5,20 +5,20 @@ import {
   DialogTitle,
   DialogDescription,
 } from "./ui/dialog";
-import { Button } from "./ui/button";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   BarChart3,
   MessageSquare,
   Activity,
   AlertCircle,
   RefreshCw,
-  Cpu,
   Wrench,
+  DollarSign,
 } from "lucide-react";
 import metricsService, {
   type MetricsOverview,
   type SessionMetrics,
+  type SessionDetail,
   type ToolMetrics,
   type ModelMetrics,
   type ErrorMetrics,
@@ -29,7 +29,7 @@ interface MetricsModalProps {
   onClose: () => void;
 }
 
-type TabId = "overview" | "sessions" | "tools" | "models" | "errors";
+type TimeRange = "1h" | "6h" | "1d" | "1w" | "1m" | "all";
 
 interface MetricsData {
   overview: MetricsOverview | null;
@@ -47,496 +47,479 @@ const EMPTY_METRICS: MetricsData = {
   errors: null,
 };
 
-/** Format a number using thousands separators (es-AR locale). */
+const TIME_RANGES: { id: TimeRange; label: string }[] = [
+  { id: "1h", label: "1h" },
+  { id: "6h", label: "6h" },
+  { id: "1d", label: "1d" },
+  { id: "1w", label: "1w" },
+  { id: "1m", label: "1m" },
+  { id: "all", label: "Todo" },
+];
+
 function formatNumber(value: number): string {
   return value.toLocaleString("es-AR");
 }
 
-/** Format seconds with 2 decimals. */
 function formatSeconds(value: number): string {
   return `${value.toFixed(2)} s`;
 }
 
-/** KPI summary card. */
-function KpiCard({
+function mean(values: number[]): number {
+  if (values.length === 0) return 0;
+  return values.reduce((a, b) => a + b, 0) / values.length;
+}
+
+/** Tarjeta del sidebar: solo selección, sin despliegue inline. */
+function SidebarCard({
+  id,
+  activeId,
+  onSelect,
   title,
   value,
+  subtitle,
   icon,
   tone = "default",
 }: {
+  id: string;
+  activeId: string | null;
+  onSelect: (id: string) => void;
   title: string;
   value: string;
+  subtitle?: string;
   icon: React.ReactNode;
   tone?: "default" | "error";
 }) {
-  return (
-    <div className="rounded-lg border border-app-border bg-white p-4">
-      <div className="mb-1 flex min-h-8 items-start gap-2 text-xs text-app-text-secondary">
-        {icon}
-        {title}
-      </div>
-      <div
-        className={`text-2xl font-bold ${
-          tone === "error" ? "text-app-error" : "text-app-text"
-        }`}
-      >
-        {value}
-      </div>
-    </div>
-  );
-}
-
-/** Vertical bar chart (pure CSS/Tailwind) for daily series. */
-function DailyBarChart({ data }: { data: { date: string; count: number }[] }) {
-  if (!data || data.length === 0) {
-    return (
-      <div className="py-6 text-center text-sm text-app-text-secondary">
-        No hay datos
-      </div>
-    );
-  }
-  const maxCount = Math.max(...data.map((d) => d.count), 1);
+  const selected = activeId === id;
 
   return (
-    <div className="flex h-40 items-end gap-1 overflow-x-auto rounded-lg border border-app-border bg-app-bg-secondary p-3">
-      {data.map((d) => {
-        const pct = Math.max((d.count / maxCount) * 100, 4);
-        return (
-          <div
-            key={d.date}
-            className="flex min-w-[24px] flex-1 flex-col items-center gap-1"
-            title={`${d.date}: ${formatNumber(d.count)}`}
-          >
-            <span className="text-[10px] font-medium text-app-text-secondary">
-              {formatNumber(d.count)}
-            </span>
-            <div
-              className="w-full max-w-[32px] rounded-t bg-app-primary"
-              style={{ height: `${pct}%` }}
-            />
-            <span className="text-[10px] text-app-text-secondary">
-              {d.date?.slice(5)}
-            </span>
+    <div
+      onClick={() => onSelect(id)}
+      className={`rounded-xl border transition-all duration-200 cursor-pointer bg-white p-3 shadow-sm hover:shadow-md w-full text-left ${
+        selected
+          ? "border-[var(--color-app-primary)] ring-2 ring-[var(--color-app-primary)]/20 shadow-md"
+          : "border-app-border hover:border-[var(--color-app-primary)]/50"
+      }`}
+    >
+      <div className="flex items-center gap-2 text-xs font-medium text-app-text-secondary">
+        <span className="p-1.5 rounded-lg bg-app-bg-secondary text-[var(--color-app-primary)]">
+          {icon}
+        </span>
+        <span className="truncate">{title}</span>
+      </div>
+      <div className="mt-2">
+        <div
+          className={`text-xl font-bold tracking-tight ${
+            tone === "error" ? "text-app-error" : "text-app-text"
+          }`}
+        >
+          {value}
+        </div>
+        {subtitle && (
+          <div className="text-[11px] text-app-text-secondary mt-0.5 truncate" title={subtitle}>
+            {subtitle}
           </div>
-        );
-      })}
+        )}
+      </div>
     </div>
   );
 }
 
-/** Horizontal ranking bars (pure CSS/Tailwind). */
-function RankingBars({
-  items,
-  emptyLabel = "No hay datos",
+/** Subtarjeta clickeable de Sesiones: sin datos, solo selecciona el gráfico central. */
+function SubCard({
+  id,
+  selectedId,
+  onSelect,
+  title,
 }: {
-  items: { label: string; count: number }[];
-  emptyLabel?: string;
+  id: string;
+  selectedId: string;
+  onSelect: (id: string) => void;
+  title: string;
 }) {
-  if (!items || items.length === 0) {
-    return (
-      <div className="py-6 text-center text-sm text-app-text-secondary">
-        {emptyLabel}
-      </div>
-    );
-  }
-  const maxCount = Math.max(...items.map((i) => i.count), 1);
-
+  const selected = selectedId === id;
   return (
-    <div className="space-y-2">
-      {items.map((item) => {
-        const pct = Math.max((item.count / maxCount) * 100, 2);
-        return (
-          <div key={item.label} className="flex items-center gap-3 text-xs">
-            <div className="w-40 break-all text-app-text" title={item.label}>
-              {item.label}
-            </div>
-            <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-app-bg-tertiary">
+    <button
+      type="button"
+      onClick={() => onSelect(id)}
+      className={`rounded-lg border px-3 py-2 text-xs font-medium text-left transition-all cursor-pointer ${
+        selected
+          ? "border-[var(--color-app-primary)] bg-white ring-2 ring-[var(--color-app-primary)]/20 text-app-text shadow-sm"
+          : "border-app-border bg-white text-app-text-secondary hover:border-[var(--color-app-primary)]/50 hover:text-app-text"
+      }`}
+    >
+      {title}
+    </button>
+  );
+}
+
+/** Barras fijas: siempre 12, mismo ancho, fechas bajo la línea, alto completo. */
+function FixedBars({ data }: { data: { date: string; count: number }[] }) {
+  const maxCount = Math.max(...data.map((d) => d.count), 1);
+  const total = data.reduce((a, b) => a + b.count, 0);
+  return (
+    <div className="h-full flex flex-col">
+      <div className="text-xs font-semibold text-app-text">
+        {formatNumber(total)} sesiones
+      </div>
+      <div className="flex flex-1 min-h-0 gap-2 mt-2">
+        <div className="flex flex-col justify-between text-[10px] font-medium text-app-text-secondary py-1 pr-1 text-right">
+          <span>{maxCount}</span>
+          <span>{Math.round(maxCount / 2)}</span>
+          <span>0</span>
+        </div>
+        <div className="flex-1 flex flex-col min-h-0">
+          <div className="flex-1 flex items-end gap-2 rounded-lg border border-app-border bg-white px-3 pt-3">
+            {data.map((d, i) => (
               <div
-                className="h-full rounded-full bg-app-primary"
-                style={{ width: `${pct}%` }}
-              />
-            </div>
-            <div className="w-14 text-right font-medium text-app-text-secondary">
-              {formatNumber(item.count)}
-            </div>
+                key={`${d.date}-${i}`}
+                className="flex-1 flex flex-col items-center justify-end gap-1 min-w-0 h-full"
+                title={`${d.date}: ${formatNumber(d.count)}`}
+              >
+                <span className="text-[11px] font-bold text-app-text">
+                  {d.count > 0 ? d.count : ""}
+                </span>
+                <div
+                  className="w-full rounded-t border"
+                  style={{
+                    height: d.count > 0 ? `${Math.max((d.count / maxCount) * 100, 10)}%` : "3px",
+                    flexGrow: d.count > 0 ? undefined : 0,
+                    backgroundColor: d.count > 0 ? "#8b5cf6" : "#e5e7eb",
+                    borderColor: d.count > 0 ? "#7c3aed" : "#d1d5db",
+                  }}
+                />
+              </div>
+            ))}
           </div>
-        );
-      })}
+          <div className="border-t-2 border-app-text mt-0" />
+          <div className="flex gap-2 pt-1">
+            {data.map((d, i) => (
+              <div key={`${d.date}-${i}`} className="flex-1 min-w-0 text-center text-[10px] font-medium text-app-text-secondary truncate">
+                {d.date}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
 
-/** Section title inside a tab. */
-function SectionTitle({ children }: { children: React.ReactNode }) {
+/** Figura exacta de synapse_tools.eda.outliers renderizada en el backend (base64). */
+function HistBox({
+  queryFile,
+  valueColumn,
+  title,
+  timeRange,
+}: {
+  queryFile: string;
+  valueColumn: string;
+  title: string;
+  timeRange: string;
+}) {
+  const [image, setImage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const lastImage = useRef<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setError(null);
+    metricsService
+      .getOutliersFigure({ query_file: queryFile, value_column: valueColumn, time_range: timeRange })
+      .then((res) => {
+        if (cancelled) return;
+        lastImage.current = res.image;
+        setImage(res.image);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        lastImage.current = null;
+        setImage(null);
+        const msg = e instanceof Error ? e.message : "Error";
+        setError(/no data/i.test(msg) ? "Sin datos para este rango" : msg);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [queryFile, valueColumn, timeRange]);
+
+  const shown = image ?? lastImage.current;
+
   return (
-    <h4 className="mb-2 text-xs font-medium text-app-text-secondary">
-      {children}
-    </h4>
+    <div className="h-full flex flex-col gap-2">
+      <div className="text-xs font-semibold text-app-text">{title}</div>
+      <div className="flex-1 min-h-0 rounded-lg border border-app-border bg-white p-2 flex items-center justify-center">
+        {shown ? (
+          <img src={shown} alt={title} className="max-w-full max-h-full object-contain" />
+        ) : error ? (
+          <div className="text-xs text-app-text-secondary">{error}</div>
+        ) : (
+          <div className="text-xs text-app-text-secondary">Cargando…</div>
+        )}
+      </div>
+    </div>
   );
 }
+
+const SESIONES_SUBS = [
+  { id: "cantidad", title: "Cantidad de sesiones" },
+  { id: "mensajes_total", title: "Total de mensajes" },
+  { id: "tokens_entrada", title: "Tokens de entrada" },
+  { id: "tokens_salida", title: "Tokens de salida" },
+  { id: "latencia_promedio", title: "Latencia promedio por sesión" },
+];
 
 export function MetricsModal({ open, onClose }: MetricsModalProps) {
-  const [activeTab, setActiveTab] = useState<TabId>("overview");
+  const [timeRange, setTimeRange] = useState<TimeRange>("1m");
   const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [metrics, setMetrics] = useState<MetricsData>(EMPTY_METRICS);
+  const [detail, setDetail] = useState<SessionDetail | null>(null);
+  const [activeCardId, setActiveCardId] = useState<string | null>(null);
+  const [sesionSub, setSesionSub] = useState<string>("cantidad");
+
+  const hasData = metrics.overview !== null || metrics.sessions !== null || detail !== null;
 
   const loadAll = async () => {
-    setLoading(true);
+    const firstLoad = !hasData;
+    if (firstLoad) setLoading(true);
+    else setRefreshing(true);
     setError(null);
     try {
-      const [overviewRes, sessionsRes, toolsRes, modelsRes, errorsRes] =
+      const [overviewRes, sessionsRes, toolsRes, modelsRes, errorsRes, detailRes] =
         await Promise.allSettled([
-          metricsService.getOverview(),
-          metricsService.getSessionMetrics(),
-          metricsService.getToolMetrics(),
-          metricsService.getModelMetrics(),
-          metricsService.getErrorMetrics(),
+          metricsService.getOverview(timeRange),
+          metricsService.getSessionMetrics(timeRange),
+          metricsService.getToolMetrics(timeRange),
+          metricsService.getModelMetrics(timeRange),
+          metricsService.getErrorMetrics(timeRange),
+          metricsService.getSessionDetail(timeRange),
         ]);
 
-      const next: MetricsData = {
+      setMetrics({
         overview: overviewRes.status === "fulfilled" ? overviewRes.value : null,
         sessions: sessionsRes.status === "fulfilled" ? sessionsRes.value : null,
         tools: toolsRes.status === "fulfilled" ? toolsRes.value : null,
         models: modelsRes.status === "fulfilled" ? modelsRes.value : null,
         errors: errorsRes.status === "fulfilled" ? errorsRes.value : null,
-      };
-      setMetrics(next);
+      });
+      if (detailRes.status === "fulfilled") setDetail(detailRes.value);
 
-      const allFailed =
+      if (
         overviewRes.status === "rejected" &&
         sessionsRes.status === "rejected" &&
         toolsRes.status === "rejected" &&
         modelsRes.status === "rejected" &&
-        errorsRes.status === "rejected";
-      if (allFailed) {
-        setError(
-          "No se pudieron cargar las métricas. Verificá que el backend esté corriendo e intentá de nuevo.",
-        );
+        errorsRes.status === "rejected"
+      ) {
+        setError("No se pudieron cargar las métricas. Verificá el backend.");
       }
     } catch (err) {
       setError("Error inesperado al cargar métricas.");
       console.error(err);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
   useEffect(() => {
     if (open) {
-      loadAll();
+      setActiveCardId("sessions");
+      setSesionSub("cantidad");
     }
   }, [open]);
 
-  const tabs: { id: TabId; label: string }[] = [
-    { id: "overview", label: "Resumen" },
-    { id: "sessions", label: "Conversaciones" },
-    { id: "tools", label: "Herramientas" },
-    { id: "models", label: "Modelos" },
-    { id: "errors", label: "Errores" },
-  ];
+  useEffect(() => {
+    if (open) {
+      loadAll();
+    }
+  }, [open, timeRange]);
+
+  const ov = metrics.overview;
+  const ses = metrics.sessions;
+  const tls = metrics.tools;
+  const errs = metrics.errors;
+
+  const latenciaAvg = detail && detail.latencia_per_session.length > 0 ? mean(detail.latencia_per_session) : 0;
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="flex h-[620px] max-w-4xl w-[720px] flex-col gap-0 p-0">
-        <DialogHeader className="px-6 pt-6 pb-4">
-          <DialogTitle className="flex items-center gap-2">
-            <BarChart3 size={20} />
-            Métricas del agente
-          </DialogTitle>
-          <DialogDescription>
-            Estadísticas de uso, herramientas, modelos y errores.
-          </DialogDescription>
+      <DialogContent className="flex h-[920px] max-w-7xl w-[1300px] flex-col gap-0 p-0 overflow-hidden bg-app-bg border border-app-border rounded-xl shadow-2xl">
+        <DialogHeader className="px-6 py-4 border-b border-app-border flex flex-row items-center justify-between space-y-0 bg-white">
+          <div className="flex items-center gap-3">
+            <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-app-bg-secondary text-[var(--color-app-primary)]">
+              <BarChart3 size={20} />
+            </span>
+            <div>
+              <DialogTitle className="text-base font-bold text-app-text">
+                Dashboard Interactivo de Métricas
+              </DialogTitle>
+              <DialogDescription className="text-xs text-app-text-secondary">
+                Seleccioná una tarjeta del sidebar para ver su visualización en el panel central.
+              </DialogDescription>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-1.5 bg-app-bg-secondary p-1 rounded-lg border border-app-border mr-8">
+            {TIME_RANGES.map((tr) => (
+              <button
+                key={tr.id}
+                onClick={() => setTimeRange(tr.id)}
+                className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${
+                  timeRange === tr.id
+                    ? "bg-[var(--color-app-primary)] text-white shadow-sm"
+                    : "text-app-text-secondary hover:text-app-text hover:bg-app-bg-tertiary"
+                }`}
+              >
+                {tr.label}
+              </button>
+            ))}
+          </div>
         </DialogHeader>
 
-        {/* Tabs */}
-        <div className="flex border-b border-app-border">
-          {tabs.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`px-4 py-2 text-sm font-medium transition-colors ${
-                activeTab === tab.id
-                  ? "border-b-2 border-app-primary text-app-primary"
-                  : "border-b-2 border-transparent text-app-text-secondary hover:text-app-primary"
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-
-        {/* Content — fixed height with scroll */}
-        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-4">
-          {loading ? (
-            <div className="flex h-full flex-col items-center justify-center gap-3 text-sm text-app-text-secondary">
-              <RefreshCw size={24} className="animate-spin text-app-primary" />
-              Cargando métricas...
+        {/* Content area: sidebar + central */}
+        <div className="flex-1 min-h-0 flex bg-app-bg-secondary">
+          {loading && !hasData ? (
+            <div className="flex flex-1 flex-col items-center justify-center gap-3 text-sm text-app-text-secondary">
+              <RefreshCw size={28} className="animate-spin text-[var(--color-app-primary)]" />
+              Cargando métricas y gráficos analíticos...
             </div>
-          ) : error ? (
-            <div className="flex h-full flex-col items-center justify-center gap-4 text-sm">
-              <AlertCircle size={28} className="text-app-error" />
+          ) : error && !hasData ? (
+            <div className="flex flex-1 flex-col items-center justify-center gap-4 text-sm">
+              <AlertCircle size={32} className="text-app-error" />
               <p className="text-app-error">{error}</p>
-              <Button variant="outline" size="sm" onClick={loadAll}>
-                <RefreshCw size={14} className="mr-2" />
+              <button
+                onClick={loadAll}
+                className="px-4 py-2 text-xs font-medium rounded-lg bg-[var(--color-app-primary)] text-white hover:opacity-90 transition-opacity"
+              >
                 Reintentar
-              </Button>
+              </button>
             </div>
           ) : (
             <>
-              {/* Overview tab */}
-              {activeTab === "overview" && metrics.overview && (
-                <div className="space-y-4">
-                  <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-                    <KpiCard
-                      title="Sesiones"
-                      value={formatNumber(metrics.overview.total_sessions)}
-                      icon={<MessageSquare size={14} />}
-                    />
-                    <KpiCard
-                      title="Mensajes"
-                      value={formatNumber(metrics.overview.total_messages)}
-                      icon={<Activity size={14} />}
-                    />
-                    <KpiCard
-                      title="Prom. mensajes/sesión"
-                      value={formatNumber(metrics.overview.avg_messages_per_session)}
-                      icon={<BarChart3 size={14} />}
-                    />
-                    <KpiCard
-                      title="Errores"
-                      value={formatNumber(metrics.overview.total_errors)}
-                      icon={<AlertCircle size={14} />}
-                      tone="error"
-                    />
-                  </div>
+              {/* Sidebar tarjetas principales */}
+              <aside className="w-[300px] shrink-0 border-r border-app-border bg-white overflow-y-auto p-3 space-y-3">
+                <SidebarCard
+                  id="sessions"
+                  activeId={activeCardId}
+                  onSelect={(id) => setActiveCardId(id)}
+                  title="Sesiones"
+                  value={formatNumber(ov?.total_sessions ?? ses?.total_sessions ?? 0)}
+                  subtitle={`Mensajes: ${formatNumber(ov?.total_messages ?? ses?.total_messages ?? 0)}`}
+                  icon={<MessageSquare size={16} />}
+                />
+                <SidebarCard
+                  id="messages"
+                  activeId={activeCardId}
+                  onSelect={(id) => setActiveCardId(id)}
+                  title="Mensajes"
+                  value={formatNumber(ov?.total_messages ?? ses?.total_messages ?? 0)}
+                  subtitle={`Sesiones: ${formatNumber(ov?.total_sessions ?? ses?.total_sessions ?? 0)}`}
+                  icon={<Activity size={16} />}
+                />
+                <SidebarCard
+                  id="tools"
+                  activeId={activeCardId}
+                  onSelect={(id) => setActiveCardId(id)}
+                  title="Uso de herramientas"
+                  value={formatNumber(tls?.total_tool_calls ?? 0)}
+                  subtitle={`Herramientas distintas: ${(tls?.tool_usage?.length ?? ov?.top_tools?.length ?? 0)}`}
+                  icon={<Wrench size={16} />}
+                />
+                <SidebarCard
+                  id="spend"
+                  activeId={activeCardId}
+                  onSelect={(id) => setActiveCardId(id)}
+                  title="Gasto"
+                  value={`$${(ov?.total_cost ?? ses?.total_cost ?? 0).toFixed(2)}`}
+                  subtitle={`${formatNumber(ov?.total_tokens ?? ses?.total_tokens ?? 0)} tokens`}
+                  icon={<DollarSign size={16} />}
+                />
+                <SidebarCard
+                  id="errors"
+                  activeId={activeCardId}
+                  onSelect={(id) => setActiveCardId(id)}
+                  title="Errores"
+                  value={formatNumber(errs?.total_errors ?? ov?.total_errors ?? 0)}
+                  subtitle={`Fallos: ${ov?.failed_turns_count ?? 0}`}
+                  icon={<AlertCircle size={16} />}
+                  tone="error"
+                />
+              </aside>
 
-                  <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-                    <KpiCard
-                      title="Tokens totales"
-                      value={formatNumber(metrics.overview.total_tokens)}
-                      icon={<Cpu size={14} />}
-                    />
-                    <KpiCard
-                      title="Prom. tokens/sesión"
-                      value={formatNumber(metrics.overview.avg_tokens_per_session)}
-                      icon={<BarChart3 size={14} />}
-                    />
-                    <KpiCard
-                      title="Gasto total (USD)"
-                      value={metrics.overview.total_cost.toFixed(2)}
-                      icon={<Activity size={14} />}
-                    />
-                    <KpiCard
-                      title="Prom. gasto/prov-modelo"
-                      value={metrics.overview.avg_cost_per_provider_model.toFixed(2)}
-                      icon={<BarChart3 size={14} />}
-                    />
-                    <KpiCard
-                      title="Tiempo prom./sesión"
-                      value={formatSeconds(metrics.overview.avg_time_per_session)}
-                      icon={<BarChart3 size={14} />}
-                    />
-                    <KpiCard
-                      title="Latencia prom./turno"
-                      value={formatSeconds(metrics.overview.avg_agent_latency)}
-                      icon={<Activity size={14} />}
-                    />
+              {/* Central visualización */}
+              <main className="flex-1 min-w-0 overflow-y-auto p-6">
+                {activeCardId === "sessions" && (
+                  <div className="space-y-4">
+                    <div className="rounded-xl border border-app-border bg-white p-4 shadow-sm relative">
+                      {refreshing && (
+                        <div className="absolute top-3 right-3 flex items-center gap-1 text-[11px] text-app-text-secondary">
+                          <RefreshCw size={12} className="animate-spin" /> Actualizando…
+                        </div>
+                      )}
+                      <div className="text-sm font-bold text-app-text">Sesiones</div>
+                      <div className="mt-2 h-[440px]">
+                        {sesionSub === "cantidad" && (
+                          <FixedBars data={detail?.cantidad ?? []} />
+                        )}
+                        {sesionSub === "mensajes_total" && (
+                          <HistBox queryFile="sesiones/total_mensajes.sql" valueColumn="msg_count" title="Total de mensajes por sesión" timeRange={timeRange} />
+                        )}
+                        {sesionSub === "tokens_entrada" && (
+                          <HistBox queryFile="sesiones/tokens_entrada.sql" valueColumn="input_tokens" title="Tokens de entrada por sesión" timeRange={timeRange} />
+                        )}
+                        {sesionSub === "tokens_salida" && (
+                          <HistBox queryFile="sesiones/tokens_salida.sql" valueColumn="output_tokens" title="Tokens de salida por sesión" timeRange={timeRange} />
+                        )}
+                        {sesionSub === "latencia_promedio" && (
+                          <HistBox queryFile="sesiones/latencia_promedio_sesion.sql" valueColumn="avg_lat" title="Latencia promedio por sesión" timeRange={timeRange} />
+                        )}
+                      </div>
+                      {sesionSub === "latencia_promedio" && (
+                        <div className="mt-2 flex gap-2 text-[11px] text-app-text-secondary">
+                          <span className="px-2 py-1 rounded bg-app-bg-secondary border border-app-border">
+                            Promedio {formatSeconds(latenciaAvg)}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                    <div className="rounded-xl border border-app-border bg-white p-4 shadow-sm">
+                      <div className="text-xs font-semibold text-app-text mb-2">Subtarjetas de Sesiones</div>
+                      <div className="flex flex-wrap gap-2">
+                        {SESIONES_SUBS.map((s) => (
+                          <SubCard key={s.id} id={s.id} selectedId={sesionSub} onSelect={setSesionSub} title={s.title} />
+                        ))}
+                      </div>
+                    </div>
                   </div>
-
-                  <div>
-                    <SectionTitle>Sesiones por día (últimos 30 días)</SectionTitle>
-                    <DailyBarChart data={metrics.overview.sessions_by_day || []} />
+                )}
+                {activeCardId !== "sessions" && (
+                  <div className="flex h-full items-center justify-center rounded-xl border border-dashed border-app-border bg-white p-6 text-xs text-app-text-secondary">
+                    Visualización de {activeCardId} pendiente de definición paso a paso.
                   </div>
-
-                  <div>
-                    <SectionTitle>Herramientas más usadas</SectionTitle>
-                    <RankingBars
-                      items={(metrics.overview.top_tools || []).map((t) => ({
-                        label: t.name,
-                        count: t.count,
-                      }))}
-                    />
-                  </div>
-                </div>
-              )}
-
-              {/* Sessions tab */}
-              {activeTab === "sessions" && metrics.sessions && (
-                <div className="space-y-4">
-                  <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
-                    <KpiCard
-                      title="Total sesiones"
-                      value={formatNumber(metrics.sessions.total_sessions)}
-                      icon={<MessageSquare size={14} />}
-                    />
-                    <KpiCard
-                      title="Total mensajes"
-                      value={formatNumber(metrics.sessions.total_messages)}
-                      icon={<Activity size={14} />}
-                    />
-                    <KpiCard
-                      title="Prom. mensajes/sesión"
-                      value={formatNumber(metrics.sessions.avg_messages_per_session)}
-                      icon={<BarChart3 size={14} />}
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-                    <KpiCard
-                      title="Tokens totales"
-                      value={formatNumber(metrics.sessions.total_tokens)}
-                      icon={<Cpu size={14} />}
-                    />
-                    <KpiCard
-                      title="Prom. tokens/sesión"
-                      value={formatNumber(metrics.sessions.avg_tokens_per_session)}
-                      icon={<BarChart3 size={14} />}
-                    />
-                    <KpiCard
-                      title="Gasto total (USD)"
-                      value={metrics.sessions.total_cost.toFixed(2)}
-                      icon={<Activity size={14} />}
-                    />
-                    <KpiCard
-                      title="Prom. gasto/prov-modelo"
-                      value={metrics.sessions.avg_cost_per_provider_model.toFixed(2)}
-                      icon={<BarChart3 size={14} />}
-                    />
-                    <KpiCard
-                      title="Tiempo prom./turno"
-                      value={formatSeconds(metrics.sessions.avg_time_per_turn)}
-                      icon={<Activity size={14} />}
-                    />
-                    <KpiCard
-                      title="Tiempo prom./sesión"
-                      value={formatSeconds(metrics.sessions.avg_time_per_session)}
-                      icon={<BarChart3 size={14} />}
-                    />
-                    <KpiCard
-                      title="Latencia prom./turno"
-                      value={formatSeconds(metrics.sessions.avg_agent_latency)}
-                      icon={<Activity size={14} />}
-                    />
-                  </div>
-
-                  <div>
-                    <SectionTitle>Sesiones por día (últimos 30 días)</SectionTitle>
-                    <DailyBarChart data={metrics.sessions.sessions_by_day || []} />
-                  </div>
-                </div>
-              )}
-
-              {/* Tools tab */}
-              {activeTab === "tools" && metrics.tools && (
-                <div className="space-y-4">
-                  <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
-                    <KpiCard
-                      title="Total tool calls"
-                      value={formatNumber(metrics.tools.total_tool_calls)}
-                      icon={<Wrench size={14} />}
-                    />
-                    <KpiCard
-                      title="Herramientas distintas"
-                      value={formatNumber(metrics.tools.tool_usage?.length ?? 0)}
-                      icon={<BarChart3 size={14} />}
-                    />
-                    <KpiCard
-                      title="Delegaciones (task)"
-                      value={formatNumber(metrics.tools.top_subagents?.[0]?.count ?? 0)}
-                      icon={<MessageSquare size={14} />}
-                    />
-                    <KpiCard
-                      title="Tiempo prom./llamada"
-                      value={formatSeconds(metrics.tools.avg_time_per_tool_call)}
-                      icon={<Activity size={14} />}
-                    />
-                  </div>
-
-                  <div>
-                    <SectionTitle>Ranking de herramientas</SectionTitle>
-                    <RankingBars
-                      items={(metrics.tools.tool_usage || []).map((t) => ({
-                        label: t.name,
-                        count: t.count,
-                      }))}
-                    />
-                  </div>
-                </div>
-              )}
-
-              {/* Models tab */}
-              {activeTab === "models" && metrics.models && (
-                <div className="space-y-4">
-                  <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
-                    <KpiCard
-                      title="Llamadas con modelo registrado"
-                      value={formatNumber(metrics.models.total_model_calls)}
-                      icon={<Cpu size={14} />}
-                    />
-                    <KpiCard
-                      title="Modelos distintos"
-                      value={formatNumber(metrics.models.models?.length ?? 0)}
-                      icon={<BarChart3 size={14} />}
-                    />
-                  </div>
-
-                  <div>
-                    <SectionTitle>Ranking de modelos</SectionTitle>
-                    <RankingBars
-                      items={(metrics.models.models || []).map((m) => ({
-                        label: m.model,
-                        count: m.count,
-                      }))}
-                      emptyLabel="Sin registros aún: el uso por modelo se registra desde mensajes nuevos."
-                    />
-                  </div>
-                </div>
-              )}
-
-              {/* Errors tab */}
-              {activeTab === "errors" && metrics.errors && (
-                <div className="space-y-4">
-                  <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
-                    <KpiCard
-                      title="Total errores"
-                      value={formatNumber(metrics.errors.total_errors)}
-                      icon={<AlertCircle size={14} />}
-                      tone="error"
-                    />
-                  </div>
-
-                  <div>
-                    <SectionTitle>Errores por día (últimos 30 días)</SectionTitle>
-                    <DailyBarChart data={metrics.errors.errors_by_day || []} />
-                  </div>
-
-                  <div>
-                    <SectionTitle>Errores por origen</SectionTitle>
-                    <RankingBars
-                      items={(metrics.errors.errors_by_source || []).map((e) => ({
-                        label: e.source,
-                        count: e.count,
-                      }))}
-                    />
-                  </div>
-                </div>
-              )}
+                )}
+              </main>
             </>
           )}
         </div>
 
         {/* Footer */}
-        <div
-          className="flex items-center justify-between border-t border-app-border px-6 py-3"
-        >
-          <Button variant="secondary" size="sm" onClick={loadAll} disabled={loading}>
-            <RefreshCw size={12} className={`mr-2 ${loading ? "animate-spin" : ""}`} />
-            Actualizar
-          </Button>
-          <Button variant="outline" size="sm" onClick={onClose}>
+        <div className="flex items-center justify-between border-t border-app-border px-6 py-3 bg-white">
+          <button
+            onClick={loadAll}
+            disabled={loading || refreshing}
+            className="flex items-center gap-2 px-3.5 py-2 text-xs font-medium rounded-lg border border-app-border text-app-text hover:bg-app-bg-secondary transition-colors shadow-sm"
+          >
+            <RefreshCw size={14} className={loading || refreshing ? "animate-spin" : ""} />
+            Actualizar métricas
+          </button>
+          <button
+            onClick={onClose}
+            className="px-5 py-2 text-xs font-medium rounded-lg bg-[var(--color-app-primary)] text-white hover:opacity-90 transition-opacity shadow-sm"
+          >
             Cerrar
-          </Button>
+          </button>
         </div>
       </DialogContent>
     </Dialog>

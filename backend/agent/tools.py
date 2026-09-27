@@ -981,6 +981,7 @@ class Tools:
             _rag_t0 = time.time()
             results = db.query(collection, query, n_results=5)
             _rag_duration = round(time.time() - _rag_t0, 2)
+            prompt_tokens = db.embed_func.count_tokens([query])
             # Track the query-embedding call in SQLite. Never breaks the flow.
             try:
                 from backend.utils.spend_handler import record_external_usage
@@ -988,14 +989,20 @@ class Tools:
                 record_external_usage(
                     "embedding", "google", db.embed_func.model_name, 1,
                     duration=_rag_duration,
-                    prompt_tokens=db.embed_func.count_tokens([query]),
+                    prompt_tokens=prompt_tokens,
                 )
             except Exception:
                 pass
+            usage = {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": 0,
+                "total_tokens": prompt_tokens,
+                "total_time": _rag_duration,
+            }
             return make_success_response(
                 message=f"Resultados de '{collection}'.",
                 data=results,
-                usage=zero_usage(),
+                usage=usage,
             )
         except Exception as e:
             logger.exception("Error in rag: %s", e)
@@ -1066,6 +1073,7 @@ class Tools:
                 where=where,
             )
             _mem_duration = round(time.time() - _mem_t0, 2)
+            prompt_tokens = db.embed_func.count_tokens([query])
             # Track the query-embedding call in SQLite. Never breaks the flow.
             try:
                 from backend.utils.spend_handler import record_external_usage
@@ -1073,10 +1081,16 @@ class Tools:
                 record_external_usage(
                     "embedding", "google", db.embed_func.model_name, 1,
                     duration=_mem_duration,
-                    prompt_tokens=db.embed_func.count_tokens([query]),
+                    prompt_tokens=prompt_tokens,
                 )
             except Exception:
                 pass
+            usage = {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": 0,
+                "total_tokens": prompt_tokens,
+                "total_time": _mem_duration,
+            }
 
             documents = (results.get("documents") or [[]])[0]
             metadatas = (results.get("metadatas") or [[]])[0]
@@ -1097,13 +1111,13 @@ class Tools:
                 return make_success_response(
                     message="No se encontraron conversaciones relacionadas.",
                     data=[],
-                    usage=zero_usage(),
+                    usage=usage,
                 )
 
             return make_success_response(
                 message=f"{len(formatted)} fragmento(s) encontrado(s) en conversaciones anteriores.",
                 data=formatted,
-                usage=zero_usage(),
+                usage=usage,
             )
         except Exception as e:
             logger.exception("Error in search_memory: %s", e)

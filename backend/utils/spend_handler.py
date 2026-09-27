@@ -39,10 +39,9 @@ def current_month() -> str:
     history is never reset and the tabs show the current month.
 
     Returns:
-        The current month as ``"YYYY-MM"`` (UTC, like every timestamp
-        stored by this module).
+        The current month as ``"YYYY-MM"`` (Local time).
     """
-    return datetime.now(timezone.utc).strftime("%Y-%m")
+    return datetime.now().strftime("%Y-%m")
 
 
 # ---------------------------------------------------------------------------
@@ -186,7 +185,7 @@ def record_spend(
         month_value = current_month()
         cost_total = cost_input + cost_output
         total_tokens = prompt_tokens + completion_tokens
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now().isoformat()
 
         with db_transaction() as conn:
             cursor = conn.execute(
@@ -396,7 +395,7 @@ def set_spend_limit(
     try:
         provider_value = provider.strip()
         model_value = model.strip() if model else None
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now().isoformat()
 
         with db_transaction() as conn:
             if model_value:
@@ -656,6 +655,9 @@ def record_external_usage(
     units: int = 1,
     duration: float | None = None,
     prompt_tokens: int = 0,
+    session_id: str | None = None,
+    turn_number: int | None = None,
+    step: int | None = None,
 ) -> bool:
     """Record a non-LLM usage call (embeddings, transcription).
 
@@ -676,6 +678,9 @@ def record_external_usage(
         units: Processed units this call counts (default 1).
         duration: Measured wall-clock seconds for the call, if known.
         prompt_tokens: Input tokens counted up front (embeddings only).
+        session_id: Optional session identifier if called within a chat turn.
+        turn_number: Optional turn number if called within a chat turn.
+        step: Optional step number if called within a chat turn.
 
     Returns:
         True if the usage was recorded successfully, False otherwise.
@@ -686,15 +691,27 @@ def record_external_usage(
         model_value = (model or "").strip()
         units_value = units or 0
         prompt_value = int(prompt_tokens or 0)
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now().isoformat()
+
+        if session_id is None or turn_number is None:
+            try:
+                from backend.agent.utils.error_logger import get_error_context
+                ctx = get_error_context()
+                if ctx:
+                    if session_id is None:
+                        session_id = ctx.get("session_id")
+                    if turn_number is None:
+                        turn_number = ctx.get("turn_number")
+            except Exception:
+                pass
 
         with db_transaction() as conn:
             conn.execute(
                 """INSERT INTO external_usage
                    (kind, provider, model, units, prompt_tokens,
-                    completion_tokens, duration, created_at)
-                   VALUES (?, ?, ?, ?, ?, 0, ?, ?)""",
-                (kind_value, provider_value, model_value, units_value, prompt_value, duration, now),
+                    completion_tokens, duration, session_id, turn_number, step, created_at)
+                   VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)""",
+                (kind_value, provider_value, model_value, units_value, prompt_value, duration, session_id, turn_number, step, now),
             )
         # Contemplate the call in spend too (one request plus the counted
         # input tokens and their cost; transcription reports no tokens so
@@ -755,7 +772,7 @@ def record_creator_call(
         cost_input, cost_output, cost_total = calculate_cost(
             provider_value, model_value, prompt_tokens, completion_tokens
         )
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now().isoformat()
 
         with db_transaction() as conn:
             conn.execute(

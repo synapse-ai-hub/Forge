@@ -127,7 +127,7 @@ class SessionManager:
                             usage=zero_usage(),
                         )
 
-                    now = datetime.now(timezone.utc).isoformat()
+                    now = datetime.now().isoformat()
                     metadata_json = json.dumps(metadata) if metadata is not None else None
 
                     conn.execute(
@@ -175,7 +175,7 @@ class SessionManager:
             if max_turns <= 0:
                 # Load ALL messages
                 rows = conn.execute(
-                    "SELECT * FROM messages WHERE session_id = ? ORDER BY turn_number, step, id ASC",
+                    "SELECT * FROM messages WHERE session_id = ? ORDER BY turn_number, step, substep, id ASC",
                     (session_id,),
                 ).fetchall()
             else:
@@ -190,7 +190,7 @@ class SessionManager:
                 # +1 to include the current incomplete turn as well
                 rows = conn.execute(
                     "SELECT * FROM messages WHERE session_id = ? AND "
-                    "turn_number >= ? ORDER BY turn_number, step, id ASC",
+                    "turn_number >= ? ORDER BY turn_number, step, substep, id ASC",
                     (session_id, min_turn),
                 ).fetchall()
 
@@ -369,7 +369,8 @@ class SessionManager:
         model: str | None = None,
         provider: str | None = None,
         turn_number: int | None = None,
-        step: int = 0,
+        step: int | None = 0,
+        substep: int | None = None,
     ) -> dict:
         """Persist a single message and update the session timestamp.
 
@@ -396,6 +397,12 @@ class SessionManager:
                 Used to calculate cost per message when combined with model and usage.
             turn_number: Turn number for grouping messages by
                 conversation turn.
+            step: Step within the turn. Always None for roles
+                "user" and "title" (those messages carry no step).
+            substep: Ordinal within the same turn and step
+                (differentiates parallel messages sharing a step).
+                Auto-assigned as MAX+1 when None. Always None for
+                roles "user" and "title".
 
         Returns:
             A contract response dict indicating success or failure.
@@ -425,7 +432,20 @@ class SessionManager:
         conn = self._get_connection()
         try:
             with self._lock:
-                now = datetime.now(timezone.utc).isoformat()
+                now = datetime.now().isoformat()
+
+                if role in ("user", "title"):
+                    step = None
+                    substep = None
+
+                if substep is None and step is not None:
+                    row = conn.execute(
+                        "SELECT COALESCE(MAX(substep), 0) FROM messages "
+                        "WHERE session_id = ? AND COALESCE(turn_number, -1) = COALESCE(?, -1) "
+                        "AND COALESCE(step, 0) = COALESCE(?, 0)",
+                        (session_id, turn_number, step),
+                    ).fetchone()
+                    substep = int(row[0]) + 1 if row else 1
 
                 conn.execute(
                     "INSERT INTO messages "
@@ -433,8 +453,8 @@ class SessionManager:
                     "status, message, prompt_tokens, completion_tokens, total_tokens, total_time, "
                     "time_to_first_token, "
                     "tool_call_id, tool_name, model, provider, cost_input, cost_output, cost_total, "
-                    "turn_number, step, created_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "turn_number, step, substep, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         session_id,
                         role,
@@ -458,6 +478,7 @@ class SessionManager:
                         cost_total,
                         turn_number,
                         step,
+                        substep,
                         now,
                     ),
                 )
@@ -479,6 +500,67 @@ class SessionManager:
             )
             return make_error_response(
                 message=f"Failed to save message for session '{session_id}'.",
+                usage=zero_usage(),
+            )
+        finally:
+            conn.close()
+
+    def save_turn_latency(self, session_id: str, turn_number: int) -> dict:
+        """Compute and store the latency of a single turn.
+
+        Latency = SUM(assistant total_time for steps before the last one)
+            + SUM over steps of MAX(tool total_time)
+            + time_to_first_token of the last assistant message.
+        Aggregates ignore NULL values; if any part has no data the
+        stored latency is NULL.
+
+        Args:
+            session_id: The session identifier.
+            turn_number: The turn number to compute.
+
+        Returns:
+            A contract response dict with the stored latency.
+        """
+        conn = self._get_connection()
+        try:
+            with self._lock:
+                row = conn.execute(
+                    "SELECT "
+                    "(SELECT SUM(a.total_time) FROM messages a "
+                    "WHERE a.role = 'assistant' AND a.session_id = ? AND a.turn_number = ? "
+                    "AND a.step < (SELECT MAX(m.step) FROM messages m "
+                    "WHERE m.role = 'assistant' AND m.session_id = ? AND m.turn_number = ?)) "
+                    "+ (SELECT SUM(mx) FROM (SELECT MAX(t2.total_time) AS mx FROM messages t2 "
+                    "WHERE t2.role = 'tool' AND t2.session_id = ? AND t2.turn_number = ? "
+                    "GROUP BY t2.step)) "
+                    "+ (SELECT m2.time_to_first_token FROM messages m2 "
+                    "WHERE m2.role = 'assistant' AND m2.session_id = ? AND m2.turn_number = ? "
+                    "ORDER BY m2.step DESC LIMIT 1)",
+                    (
+                        session_id, turn_number,
+                        session_id, turn_number,
+                        session_id, turn_number,
+                        session_id, turn_number,
+                    ),
+                ).fetchone()
+                latency = row[0] if row else None
+                conn.execute(
+                    "INSERT INTO turn_latency (session_id, turn_number, latency) VALUES (?, ?, ?)",
+                    (session_id, turn_number, latency),
+                )
+                conn.commit()
+            return make_success_response(
+                message="Turn latency saved.",
+                data={"session_id": session_id, "turn_number": turn_number, "latency": latency},
+                usage=zero_usage(),
+            )
+        except Exception as e:
+            log_error(str(e), source="backend/agent/session.py")
+            logger.exception(
+                "Failed to save turn latency for session '%s' turn %s", session_id, turn_number
+            )
+            return make_error_response(
+                message=f"Failed to save turn latency for session '{session_id}'.",
                 usage=zero_usage(),
             )
         finally:
@@ -645,7 +727,7 @@ class SessionManager:
         conn = self._get_connection()
         try:
             with self._lock:
-                now = datetime.now(timezone.utc).isoformat()
+                now = datetime.now().isoformat()
                 for p in providers:
                     conn.execute(
                         "INSERT INTO providers (provider, label, models, updated_at) "

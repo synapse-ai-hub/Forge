@@ -66,12 +66,23 @@ def setup_database(conn: sqlite3.Connection) -> None:
             cost_total REAL,
             turn_number INTEGER,
             step INTEGER DEFAULT 0,
+            substep INTEGER DEFAULT 0,
             created_at TEXT NOT NULL,
             FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
         );
 
         CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id);
         CREATE INDEX IF NOT EXISTS idx_sessions_parent_id ON sessions(parent_id);
+
+        CREATE TABLE IF NOT EXISTS turn_latency (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL,
+            turn_number INTEGER NOT NULL,
+            latency REAL,
+            FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_turn_latency_session_turn ON turn_latency(session_id, turn_number);
 
         CREATE TABLE IF NOT EXISTS config_kv (
             key TEXT PRIMARY KEY,
@@ -245,6 +256,9 @@ def setup_database(conn: sqlite3.Connection) -> None:
             prompt_tokens INTEGER DEFAULT 0,
             completion_tokens INTEGER DEFAULT 0,
             duration REAL,
+            session_id TEXT,
+            turn_number INTEGER,
+            step INTEGER,
             created_at TEXT NOT NULL
         );
 

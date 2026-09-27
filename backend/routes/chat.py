@@ -57,7 +57,7 @@ def _save_attachments(session_id: str, turn_number: int, files_data: list[tuple[
         return
     try:
         with db_transaction() as conn:
-            now = datetime.now(timezone.utc).isoformat()
+            now = datetime.now().isoformat()
             for filename, binary_content, _extracted_text in files_data:
                 conn.execute(
                     "INSERT INTO attachments (session_id, turn_number, file_name, size, content, created_at) "

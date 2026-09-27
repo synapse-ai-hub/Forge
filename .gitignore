@@ -61,3 +61,6 @@ backend/agent/agent_db/*
 # Test Whisper
 tests/whisper/data/
 tests/whisper/result/
+
+# Pruebas embeddings
+pruebas_chroma.ipynb

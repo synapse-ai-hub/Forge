@@ -79,7 +79,7 @@ async def upload_context_file(
                 message=f"No se encontró texto legible en {filename}.",
             )
 
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now().isoformat()
         with db_transaction() as conn:
             cursor = conn.execute(
                 "INSERT INTO context_files (filename, content, created_at) VALUES (?, ?, ?)",

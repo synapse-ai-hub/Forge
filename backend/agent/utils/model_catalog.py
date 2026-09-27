@@ -163,7 +163,7 @@ def _extract_provider_models(catalog: dict, provider: str) -> list[dict]:
     provider_api = provider_data.get("api")
     provider_npm = provider_data.get("npm")
     models_raw = provider_data.get("models") or {}
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now().isoformat()
     rows: list[dict] = []
 
     for model_id, model_data in models_raw.items():

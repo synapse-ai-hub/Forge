@@ -228,7 +228,7 @@ def _render_message(msg: Message, index: int) -> str:
 
 def conversation_to_markdown(messages: list[Message], title: str = "Conversación") -> str:
     """Convert a list of messages to a Markdown string (mirror of the frontend)."""
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now().isoformat()
     md = f"# {title}\n\n"
     md += f"> Exportado el: {now}\n\n"
     for i, msg in enumerate(messages):

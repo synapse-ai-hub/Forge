@@ -175,7 +175,7 @@ def is_supported(provider: str) -> bool:
         True if the provider can be managed through this module.
     """
     try:
-        return (provider or "").strip() in PROVIDER_REGISTRY
+        return (provider or "").strip().lower() in PROVIDER_REGISTRY
     except Exception as e:
         log_error(str(e), source="provider_keys.py:is_supported")
         return False
@@ -261,7 +261,7 @@ def save_key(provider: str, api_key: str) -> dict:
     Returns:
         Contract response ``{"status": "success"|"error", "message": ...}``.
     """
-    provider_id = (provider or "").strip()
+    provider_id = (provider or "").strip().lower()
     if provider_id not in PROVIDER_REGISTRY:
         return {"status": "error", "message": f"Provider inválido: '{provider}'."}
     if not api_key or not api_key.strip():
@@ -274,7 +274,7 @@ def save_key(provider: str, api_key: str) -> dict:
         }
     try:
         encrypted = fernet.encrypt(api_key.strip().encode("utf-8")).decode("ascii")
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now().isoformat()
         conn = _connect()
         if conn is None:
             return {"status": "error", "message": "No se pudo abrir la base de datos."}
@@ -319,7 +319,7 @@ def get_key(provider: str) -> str | None:
     Returns:
         The plain-text API key, or ``None`` if not stored / undecryptable.
     """
-    provider_id = (provider or "").strip()
+    provider_id = (provider or "").strip().lower()
     if provider_id not in PROVIDER_REGISTRY:
         return None
     fernet = _load_fernet()
@@ -355,7 +355,7 @@ def delete_key(provider: str) -> dict:
     Returns:
         Contract response ``{"status": "success"|"error", "message": ...}``.
     """
-    provider_id = (provider or "").strip()
+    provider_id = (provider or "").strip().lower()
     if provider_id not in PROVIDER_REGISTRY:
         return {"status": "error", "message": f"Provider inválido: '{provider}'."}
     try:
@@ -432,7 +432,7 @@ def validate_key(provider: str, api_key: str) -> dict:
     Returns:
         Contract response ``{"status": "success"|"error", "message": ...}``.
     """
-    provider_id = (provider or "").strip()
+    provider_id = (provider or "").strip().lower()
     if provider_id not in PROVIDER_REGISTRY:
         return {"status": "error", "message": f"Provider inválido: '{provider}'."}
     if not api_key or not api_key.strip():
