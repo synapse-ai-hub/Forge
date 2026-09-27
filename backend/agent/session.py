@@ -494,11 +494,13 @@ class SessionManager:
     def save_turn_latency(self, session_id: str, turn_number: int) -> dict:
         """Compute and store the latency of a single turn.
 
-        Latency = SUM(assistant total_time for steps before the last one)
-            + SUM over steps of MAX(tool total_time)
-            + time_to_first_token of the last assistant message.
-        Each part is COALESCEd to 0: a missing part (e.g. a direct
-        answer with no tool steps) does not null the other parts.
+        Latency = SUM over steps of MAX(non-null total_time) for every
+            row except the final assistant row (parallel calls share the
+            step, only the group maximum counts) + time_to_first_token
+            of the final assistant message.
+        NULL times are skipped, never stored as 0; when the final
+        assistant is missing or its time_to_first_token is NULL the row
+        stores NULL so averages skip the turn instead of counting 0.
 
         Args:
             session_id: The session identifier.
@@ -513,7 +515,6 @@ class SessionManager:
                 row = conn.execute(
                     load_query("turn_latency/compute.sql"),
                     (
-                        session_id, turn_number,
                         session_id, turn_number,
                         session_id, turn_number,
                         session_id, turn_number,

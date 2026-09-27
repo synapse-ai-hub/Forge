@@ -10,12 +10,14 @@ hardcoded here. Each endpoint maps 1:1 to its query folder.
 
 from __future__ import annotations
 
+import csv
+import io
 import os
 import sys
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, Body
+from fastapi import APIRouter, Body, Response
 
 # ---------------------------------------------------------------------------
 # Ensure the project root is in sys.path so absolute imports (backend.*)
@@ -197,6 +199,46 @@ def _fetch_one(conn, path: str, clause: str, params: tuple) -> Any:
     return row[0] if row else None
 
 
+def _rows_to_csv_response(rows: list, name: str) -> Response:
+    """Serialize fetched SQLite rows into a single-line-per-record CSV.
+
+    Newline characters inside string cells (``\\r\\n``, ``\\r``, ``\\n``)
+    are replaced by the literal two-character sequence ``\\n`` so every
+    record occupies exactly one physical line in the file; the original
+    breaks remain visible as text.
+
+    Args:
+        rows: Fetched rows (``sqlite3.Row``); the first row provides the
+            header names.
+        name: Base filename (without extension) for the attachment.
+
+    Returns:
+        A ``text/csv`` response with an attachment disposition header.
+    """
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    if rows:
+        header = list(rows[0].keys())
+        writer.writerow(header)
+        for row in rows:
+            cells = []
+            for key in header:
+                cell = row[key]
+                if isinstance(cell, str):
+                    cell = (
+                        cell.replace("\r\n", "\n")
+                        .replace("\r", "\n")
+                        .replace("\n", "\\n")
+                    )
+                cells.append(cell)
+            writer.writerow(cells)
+    return Response(
+        content=buffer.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{name}.csv"'},
+    )
+
+
 @router.get("/metrics/sessions")
 async def get_session_metrics(time_range: str = "1m"):
     """Return session metrics: totals plus the 12-bar creation chart.
@@ -216,9 +258,6 @@ async def get_session_metrics(time_range: str = "1m"):
             total_sessions = _fetch_one(
                 conn, "metrics/sessions/total_sessions.sql", clause, params
             ) or 0
-            total_messages = _fetch_one(
-                conn, "metrics/sessions/total_messages.sql", clause, params
-            ) or 0
 
             created_sql = with_time(
                 load_query("metrics/sessions/created_at_list.sql"), clause
@@ -231,7 +270,6 @@ async def get_session_metrics(time_range: str = "1m"):
                     message="Session metrics obtenidas",
                     data={
                         "total_sessions": total_sessions,
-                        "total_messages": total_messages,
                         "cantidad": cantidad,
                     },
                     usage=zero_usage(),
@@ -242,11 +280,112 @@ async def get_session_metrics(time_range: str = "1m"):
         return make_error_response(message="Error fetching session metrics")
 
 
+@router.get("/metrics/sessions/export")
+async def export_sessions_csv(time_range: str = "1m"):
+    """Download the sessions table for the time range as a CSV file.
+
+    Args:
+        time_range: Time filter ('1h', '6h', '1d', '1w', '1m', 'all').
+
+    Returns:
+        A ``text/csv`` attachment with every session row in the range.
+    """
+    try:
+        time_range = _normalize_range(time_range)
+        clause, params = time_clause(time_range, "sessions.created_at")
+
+        with get_connection() as conn:
+            sql = with_time(load_query("metrics/sessions/export.sql"), clause)
+            rows = conn.execute(sql, params).fetchall()
+        return _rows_to_csv_response(rows, "sessions")
+    except Exception as e:
+        log_error(str(e), source="backend/routes/metrics.py:export_sessions_csv")
+        return make_error_response(message="Error exporting sessions CSV")
+
+
+@router.get("/metrics/messages")
+async def get_message_metrics(time_range: str = "1m"):
+    """Return the five per-message metrics with time range filter.
+
+    One row per turn for each defined message metric: steps, input
+    tokens, output tokens, time (assistant + tool) and latency (from the
+    turn_latency table). Rows whose value was never loaded stay NULL and
+    are excluded by the queries (NULL is never turned into 0).
+
+    Args:
+        time_range: Time filter ('1h', '6h', '1d', '1w', '1m', 'all').
+
+    Returns:
+        A contract response with ``data`` containing one row list per
+        metric: steps, input_tokens, output_tokens, time and latency.
+    """
+    try:
+        time_range = _normalize_range(time_range)
+        clause, params = time_clause(time_range, "sessions.created_at")
+
+        with get_connection() as conn:
+            data: dict[str, list[dict]] = {}
+            for key, path in (
+                ("steps", "metrics/messages/steps_per_message.sql"),
+                ("input_tokens", "metrics/messages/input_tokens_per_message.sql"),
+                ("output_tokens", "metrics/messages/output_tokens_per_message.sql"),
+                ("time", "metrics/messages/time_per_message.sql"),
+                ("latency", "metrics/messages/latency_per_message.sql"),
+            ):
+                sql = with_time(load_query(path), clause)
+                rows = conn.execute(sql, params).fetchall()
+                data[key] = [dict(row) for row in rows]
+
+        return validate_response(
+            make_success_response(
+                message="Message metrics obtenidas",
+                data=data,
+                usage=zero_usage(),
+            )
+        )
+    except Exception as e:
+        log_error(str(e), source="backend/routes/metrics.py:get_message_metrics")
+        return make_error_response(message="Error fetching message metrics")
+
+
+@router.get("/metrics/messages/export")
+async def export_messages_csv(time_range: str = "1m"):
+    """Download the messages table for the time range as a CSV file.
+
+    Args:
+        time_range: Time filter ('1h', '6h', '1d', '1w', '1m', 'all').
+
+    Returns:
+        A ``text/csv`` attachment with every message row in the range.
+    """
+    try:
+        time_range = _normalize_range(time_range)
+        clause, params = time_clause(time_range, "messages.created_at")
+
+        with get_connection() as conn:
+            sql = with_time(load_query("metrics/messages/export.sql"), clause)
+            rows = conn.execute(sql, params).fetchall()
+        return _rows_to_csv_response(rows, "messages")
+    except Exception as e:
+        log_error(str(e), source="backend/routes/metrics.py:export_messages_csv")
+        return make_error_response(message="Error exporting messages CSV")
+
+
 @router.post("/metrics/eda/outliers-image")
 async def eda_outliers_image(payload: dict = Body(...)):
     """Render a metric query with synapse_tools.eda.outliers (base64, no files)."""
     try:
         from backend.agent.utils.eda_figure import render_outliers_figure
+
+        raw_percentile = payload.get("percentile")
+        percentile: float | None = None
+        if raw_percentile is not None:
+            try:
+                candidate = float(raw_percentile)
+                if 0 < candidate < 1:
+                    percentile = candidate
+            except (TypeError, ValueError):
+                percentile = None
 
         result = render_outliers_figure(
             query_file=str(payload.get("query_file", "")),
@@ -257,6 +396,7 @@ async def eda_outliers_image(payload: dict = Body(...)):
                 payload.get("filter_column", "sessions.created_at")
             ),
             color=str(payload.get("color", "#8b5cf6")),
+            percentile=percentile,
         )
         return validate_response(
             make_success_response(
@@ -438,7 +578,8 @@ async def get_metrics_overview(time_range: str = "1m"):
         spend_clause, spend_params = time_clause(time_range, "updated_at")
 
         with get_connection() as conn:
-            # Session/message totals (queries live in metrics/sessions/).
+            # Session totals live in metrics/sessions/; the message total
+            # (turns) lives in metrics/messages/.
             total_sessions = (
                 _fetch_one(
                     conn, "metrics/sessions/total_sessions.sql", clause, params
@@ -447,7 +588,7 @@ async def get_metrics_overview(time_range: str = "1m"):
             )
             total_messages = (
                 _fetch_one(
-                    conn, "metrics/sessions/total_messages.sql", clause, params
+                    conn, "metrics/messages/total_messages.sql", clause, params
                 )
                 or 0
             )
@@ -547,12 +688,11 @@ async def get_metrics_overview(time_range: str = "1m"):
                 round(total_time / total_sessions, 2) if total_sessions > 0 else 0.0
             )
 
-            # Average turn latency, read directly from the turn_latency table
-            # (query lives in metrics/sessions/).
+            # Average turn latency, read directly from the turn_latency table.
             avg_agent_latency = round(
                 float(
                     _fetch_one(
-                        conn, "metrics/sessions/avg_latency.sql", clause, params
+                        conn, "metrics/overview/avg_latency.sql", clause, params
                     )
                     or 0.0
                 ),

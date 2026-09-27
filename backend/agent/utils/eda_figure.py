@@ -30,7 +30,8 @@ def render_outliers_figure(
     placeholder: str = TIME_PLACEHOLDER,
     filter_column: str = "sessions.created_at",
     color: str = "#8b5cf6",
-    fig_size: tuple[int, int] = (18, 6),
+    fig_size: tuple[int, int] = (20, 8),
+    percentile: float | None = None,
 ) -> dict:
     """Run a metric query and render the outliers figure as base64.
 
@@ -42,6 +43,9 @@ def render_outliers_figure(
         placeholder: Time filter placeholder used inside the script.
         filter_column: Column the time filter applies to.
         color: Figure color.
+        percentile: When set (0 < q < 1), the plotted values are capped
+            at this quantile of the series (e.g. 0.95 keeps everything up
+            to p95). ``None`` plots the full series.
 
     Returns:
         Dict with image_base64 (PNG data URI) and stats.
@@ -68,6 +72,9 @@ def render_outliers_figure(
     values = pd.to_numeric(df[value_column], errors="coerce").dropna()
     if values.empty:
         raise ValueError("No data for this range")
+    if percentile is not None:
+        threshold = values.quantile(percentile)
+        values = values[values <= threshold]
     result = _outliers(
         pd.DataFrame({value_column: values}),
         column=value_column,

@@ -14,10 +14,12 @@ import {
   RefreshCw,
   Wrench,
   DollarSign,
+  Download,
 } from "lucide-react";
 import metricsService, {
   type MetricsOverview,
   type SessionMetrics,
+  type MessageMetrics,
   type ToolMetrics,
   type ModelMetrics,
   type ErrorMetrics,
@@ -33,6 +35,7 @@ type TimeRange = "1h" | "6h" | "1d" | "1w" | "1m" | "all";
 interface MetricsData {
   overview: MetricsOverview | null;
   sessions: SessionMetrics | null;
+  messages: MessageMetrics | null;
   tools: ToolMetrics | null;
   models: ModelMetrics | null;
   errors: ErrorMetrics | null;
@@ -41,6 +44,7 @@ interface MetricsData {
 const EMPTY_METRICS: MetricsData = {
   overview: null,
   sessions: null,
+  messages: null,
   tools: null,
   models: null,
   errors: null,
@@ -59,10 +63,6 @@ function formatNumber(value: number): string {
   return value.toLocaleString("es-AR");
 }
 
-function formatSeconds(value: number): string {
-  return `${value.toFixed(2)} s`;
-}
-
 /** Tarjeta del sidebar: solo selección, sin despliegue inline. */
 function SidebarCard({
   id,
@@ -70,18 +70,18 @@ function SidebarCard({
   onSelect,
   title,
   value,
-  subtitle,
   icon,
   tone = "default",
+  onDownload,
 }: {
   id: string;
   activeId: string | null;
   onSelect: (id: string) => void;
   title: string;
   value: string;
-  subtitle?: string;
   icon: React.ReactNode;
   tone?: "default" | "error";
+  onDownload?: () => void;
 }) {
   const selected = activeId === id;
 
@@ -94,11 +94,26 @@ function SidebarCard({
           : "border-app-border hover:border-[var(--color-app-primary)]/50"
       }`}
     >
-      <div className="flex items-center gap-2 text-xs font-medium text-app-text-secondary">
-        <span className="p-1.5 rounded-lg bg-app-bg-secondary text-[var(--color-app-primary)]">
-          {icon}
-        </span>
-        <span className="truncate">{title}</span>
+      <div className="flex items-center justify-between text-xs font-medium text-app-text-secondary">
+        <div className="flex items-center gap-2">
+          <span className="p-1.5 rounded-lg bg-app-bg-secondary text-[var(--color-app-primary)]">
+            {icon}
+          </span>
+          <span className="truncate">{title}</span>
+        </div>
+        {onDownload && (
+          <button
+            type="button"
+            title="Descargar CSV"
+            onClick={(e) => {
+              e.stopPropagation();
+              onDownload();
+            }}
+            className="p-1 rounded-md text-app-text-secondary hover:text-app-text hover:bg-app-bg-secondary cursor-pointer"
+          >
+            <Download size={13} />
+          </button>
+        )}
       </div>
       <div className="mt-2">
         <div
@@ -108,11 +123,6 @@ function SidebarCard({
         >
           {value}
         </div>
-        {subtitle && (
-          <div className="text-[11px] text-app-text-secondary mt-0.5 truncate" title={subtitle}>
-            {subtitle}
-          </div>
-        )}
       </div>
     </div>
   );
@@ -198,52 +208,115 @@ function FixedBars({ data }: { data: { date: string; count: number }[] }) {
   );
 }
 
+/** Spanish labels for query-folder sections, used in download filenames. */
+const DOWNLOAD_SECTION: Record<string, string> = {
+  sessions: "sesiones",
+  messages: "mensajes",
+};
+
 /** Figura exacta de synapse_tools.eda.outliers renderizada en el backend (base64). */
 function HistBox({
   queryFile,
   valueColumn,
   title,
   timeRange,
-  onStats,
+  percentiles = false,
 }: {
   queryFile: string;
   valueColumn: string;
   title: string;
   timeRange: string;
-  onStats?: (stats: Record<string, number>) => void;
+  percentiles?: boolean;
 }) {
   const [image, setImage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [stats, setStats] = useState<Record<string, number> | null>(null);
+  const [percentile, setPercentile] = useState<number | null>(null);
   const lastImage = useRef<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     setError(null);
     metricsService
-      .getOutliersFigure({ query_file: queryFile, value_column: valueColumn, time_range: timeRange })
+      .getOutliersFigure({
+        query_file: queryFile,
+        value_column: valueColumn,
+        time_range: timeRange,
+        ...(percentile !== null ? { percentile } : {}),
+      })
       .then((res) => {
         if (cancelled) return;
         lastImage.current = res.image;
         setImage(res.image);
-        if (onStats) onStats(res.stats);
+        setStats(res.stats);
       })
       .catch((e) => {
         if (cancelled) return;
         lastImage.current = null;
         setImage(null);
+        setStats(null);
         const msg = e instanceof Error ? e.message : "Error";
         setError(/no data/i.test(msg) ? "Sin datos para este rango" : msg);
       });
     return () => {
       cancelled = true;
     };
-  }, [queryFile, valueColumn, timeRange]);
+  }, [queryFile, valueColumn, timeRange, percentile]);
+
+  const downloadJson = () => {
+    if (!stats) return;
+    try {
+      const blob = new Blob([JSON.stringify(stats, null, 2)], {
+        type: "application/json",
+      });
+      const href = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = href;
+      const folder = queryFile.split("/")[1] ?? "metrica";
+      const section = DOWNLOAD_SECTION[folder] ?? folder;
+      const suffix = percentile !== null ? `_p${Math.round(percentile * 100)}` : "";
+      anchor.download = `${section}_${valueColumn}${suffix}_${timeRange}.json`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(href);
+    } catch (e) {
+      console.error(e);
+    }
+  };
 
   const shown = image ?? lastImage.current;
 
   return (
     <div className="h-full flex flex-col gap-2">
-      <div className="text-xs font-semibold text-app-text">{title}</div>
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-xs font-semibold text-app-text">{title}</div>
+        <div className="flex items-center gap-2">
+          {percentiles && (
+            <select
+              value={percentile === null ? "" : String(percentile)}
+              onChange={(e) =>
+                setPercentile(e.target.value === "" ? null : Number(e.target.value))
+              }
+              className="rounded-md border border-app-border bg-white px-1.5 py-1 text-[10px] font-medium text-app-text-secondary cursor-pointer"
+            >
+              <option value="">General</option>
+              <option value="0.5">p50</option>
+              <option value="0.95">p95</option>
+              <option value="0.99">p99</option>
+            </select>
+          )}
+          <button
+            type="button"
+            title="Descargar JSON"
+            onClick={downloadJson}
+            disabled={!stats}
+            className="flex items-center gap-1 rounded-md border border-app-border px-2 py-1 text-[10px] font-medium text-app-text-secondary hover:text-app-text hover:bg-app-bg-secondary disabled:opacity-40 cursor-pointer disabled:cursor-default"
+          >
+            <Download size={12} /> JSON
+          </button>
+        </div>
+      </div>
       <div className="flex-1 min-h-0 rounded-lg border border-app-border bg-white p-2 flex items-center justify-center">
         {shown ? (
           <img src={shown} alt={title} className="max-w-full max-h-full object-contain" />
@@ -265,6 +338,14 @@ const SESIONES_SUBS = [
   { id: "latencia_promedio", title: "Latencia promedio por sesión" },
 ];
 
+const MENSAJES_SUBS = [
+  { id: "steps", title: "Steps por mensaje" },
+  { id: "tokens_entrada", title: "Tokens de entrada por mensaje" },
+  { id: "tokens_salida", title: "Tokens de salida por mensaje" },
+  { id: "tiempo", title: "Tiempo por mensaje" },
+  { id: "latencia", title: "Latencia por mensaje" },
+];
+
 export function MetricsModal({ open, onClose }: MetricsModalProps) {
   const [timeRange, setTimeRange] = useState<TimeRange>("1m");
   const [loading, setLoading] = useState(false);
@@ -273,7 +354,7 @@ export function MetricsModal({ open, onClose }: MetricsModalProps) {
   const [metrics, setMetrics] = useState<MetricsData>(EMPTY_METRICS);
   const [activeCardId, setActiveCardId] = useState<string | null>(null);
   const [sesionSub, setSesionSub] = useState<string>("cantidad");
-  const [latenciaStats, setLatenciaStats] = useState<Record<string, number>>({});
+  const [mensajeSub, setMensajeSub] = useState<string>("steps");
 
   const hasData = metrics.overview !== null || metrics.sessions !== null;
 
@@ -283,10 +364,11 @@ export function MetricsModal({ open, onClose }: MetricsModalProps) {
     else setRefreshing(true);
     setError(null);
     try {
-      const [overviewRes, sessionsRes, toolsRes, modelsRes, errorsRes] =
+      const [overviewRes, sessionsRes, messagesRes, toolsRes, modelsRes, errorsRes] =
         await Promise.allSettled([
           metricsService.getOverview(timeRange),
           metricsService.getSessionMetrics(timeRange),
+          metricsService.getMessageMetrics(timeRange),
           metricsService.getToolMetrics(timeRange),
           metricsService.getModelMetrics(timeRange),
           metricsService.getErrorMetrics(timeRange),
@@ -295,6 +377,7 @@ export function MetricsModal({ open, onClose }: MetricsModalProps) {
       setMetrics({
         overview: overviewRes.status === "fulfilled" ? overviewRes.value : null,
         sessions: sessionsRes.status === "fulfilled" ? sessionsRes.value : null,
+        messages: messagesRes.status === "fulfilled" ? messagesRes.value : null,
         tools: toolsRes.status === "fulfilled" ? toolsRes.value : null,
         models: modelsRes.status === "fulfilled" ? modelsRes.value : null,
         errors: errorsRes.status === "fulfilled" ? errorsRes.value : null,
@@ -303,6 +386,7 @@ export function MetricsModal({ open, onClose }: MetricsModalProps) {
       if (
         overviewRes.status === "rejected" &&
         sessionsRes.status === "rejected" &&
+        messagesRes.status === "rejected" &&
         toolsRes.status === "rejected" &&
         modelsRes.status === "rejected" &&
         errorsRes.status === "rejected"
@@ -322,6 +406,7 @@ export function MetricsModal({ open, onClose }: MetricsModalProps) {
     if (open) {
       setActiveCardId("sessions");
       setSesionSub("cantidad");
+      setMensajeSub("steps");
     }
   }, [open]);
 
@@ -335,8 +420,6 @@ export function MetricsModal({ open, onClose }: MetricsModalProps) {
   const ses = metrics.sessions;
   const tls = metrics.tools;
   const errs = metrics.errors;
-
-  const latenciaAvg = latenciaStats.mean ?? 0;
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
@@ -401,17 +484,17 @@ export function MetricsModal({ open, onClose }: MetricsModalProps) {
                   onSelect={(id) => setActiveCardId(id)}
                   title="Sesiones"
                   value={formatNumber(ov?.total_sessions ?? ses?.total_sessions ?? 0)}
-                  subtitle={`Mensajes: ${formatNumber(ov?.total_messages ?? ses?.total_messages ?? 0)}`}
                   icon={<MessageSquare size={16} />}
+                  onDownload={() => metricsService.downloadSessionsCsv(timeRange)}
                 />
                 <SidebarCard
                   id="messages"
                   activeId={activeCardId}
                   onSelect={(id) => setActiveCardId(id)}
                   title="Mensajes"
-                  value={formatNumber(ov?.total_messages ?? ses?.total_messages ?? 0)}
-                  subtitle={`Sesiones: ${formatNumber(ov?.total_sessions ?? ses?.total_sessions ?? 0)}`}
+                  value={formatNumber(ov?.total_messages ?? 0)}
                   icon={<Activity size={16} />}
+                  onDownload={() => metricsService.downloadMessagesCsv(timeRange)}
                 />
                 <SidebarCard
                   id="tools"
@@ -419,7 +502,6 @@ export function MetricsModal({ open, onClose }: MetricsModalProps) {
                   onSelect={(id) => setActiveCardId(id)}
                   title="Uso de herramientas"
                   value={formatNumber(tls?.total_tool_calls ?? 0)}
-                  subtitle={`Herramientas distintas: ${(tls?.tool_usage?.length ?? ov?.top_tools?.length ?? 0)}`}
                   icon={<Wrench size={16} />}
                 />
                 <SidebarCard
@@ -428,7 +510,6 @@ export function MetricsModal({ open, onClose }: MetricsModalProps) {
                   onSelect={(id) => setActiveCardId(id)}
                   title="Gasto"
                   value={`$${(ov?.total_cost ?? 0).toFixed(2)}`}
-                  subtitle={`${formatNumber(ov?.total_tokens ?? 0)} tokens`}
                   icon={<DollarSign size={16} />}
                 />
                 <SidebarCard
@@ -437,7 +518,6 @@ export function MetricsModal({ open, onClose }: MetricsModalProps) {
                   onSelect={(id) => setActiveCardId(id)}
                   title="Errores"
                   value={formatNumber(errs?.total_errors ?? ov?.total_errors ?? 0)}
-                  subtitle={`Fallos: ${ov?.failed_turns_count ?? 0}`}
                   icon={<AlertCircle size={16} />}
                   tone="error"
                 />
@@ -468,19 +548,11 @@ export function MetricsModal({ open, onClose }: MetricsModalProps) {
                           <HistBox queryFile="metrics/sessions/output_tokens.sql" valueColumn="output_tokens" title="Tokens de salida por sesión" timeRange={timeRange} />
                         )}
                         {sesionSub === "latencia_promedio" && (
-                          <HistBox queryFile="metrics/sessions/latency_per_session.sql" valueColumn="avg_lat" title="Latencia promedio por sesión" timeRange={timeRange} onStats={setLatenciaStats} />
+                          <HistBox queryFile="metrics/sessions/latency_per_session.sql" valueColumn="avg_lat" title="Latencia promedio por sesión" timeRange={timeRange} />
                         )}
                       </div>
-                      {sesionSub === "latencia_promedio" && (
-                        <div className="mt-2 flex gap-2 text-[11px] text-app-text-secondary">
-                          <span className="px-2 py-1 rounded bg-app-bg-secondary border border-app-border">
-                            Promedio {formatSeconds(latenciaAvg)}
-                          </span>
-                        </div>
-                      )}
                     </div>
                     <div className="rounded-xl border border-app-border bg-white p-4 shadow-sm">
-                      <div className="text-xs font-semibold text-app-text mb-2">Subtarjetas de Sesiones</div>
                       <div className="flex flex-wrap gap-2">
                         {SESIONES_SUBS.map((s) => (
                           <SubCard key={s.id} id={s.id} selectedId={sesionSub} onSelect={setSesionSub} title={s.title} />
@@ -489,7 +561,43 @@ export function MetricsModal({ open, onClose }: MetricsModalProps) {
                     </div>
                   </div>
                 )}
-                {activeCardId !== "sessions" && (
+                {activeCardId === "messages" && (
+                  <div className="space-y-4">
+                    <div className="rounded-xl border border-app-border bg-white p-4 shadow-sm relative">
+                      {refreshing && (
+                        <div className="absolute top-3 right-3 flex items-center gap-1 text-[11px] text-app-text-secondary">
+                          <RefreshCw size={12} className="animate-spin" /> Actualizando…
+                        </div>
+                      )}
+                      <div className="text-sm font-bold text-app-text">Mensajes</div>
+                      <div className="mt-2 h-[440px]">
+                        {mensajeSub === "steps" && (
+                          <HistBox queryFile="metrics/messages/steps_per_message.sql" valueColumn="steps" title="Steps por mensaje" timeRange={timeRange} />
+                        )}
+                        {mensajeSub === "tokens_entrada" && (
+                          <HistBox queryFile="metrics/messages/input_tokens_per_message.sql" valueColumn="input_tokens" title="Tokens de entrada por mensaje" timeRange={timeRange} />
+                        )}
+                        {mensajeSub === "tokens_salida" && (
+                          <HistBox queryFile="metrics/messages/output_tokens_per_message.sql" valueColumn="output_tokens" title="Tokens de salida por mensaje" timeRange={timeRange} />
+                        )}
+                        {mensajeSub === "tiempo" && (
+                          <HistBox queryFile="metrics/messages/time_per_message.sql" valueColumn="total_time" title="Tiempo por mensaje" timeRange={timeRange} />
+                        )}
+                        {mensajeSub === "latencia" && (
+                          <HistBox queryFile="metrics/messages/latency_per_message.sql" valueColumn="latency" title="Latencia por mensaje" timeRange={timeRange} percentiles />
+                        )}
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-app-border bg-white p-4 shadow-sm">
+                      <div className="flex flex-wrap gap-2">
+                        {MENSAJES_SUBS.map((s) => (
+                          <SubCard key={s.id} id={s.id} selectedId={mensajeSub} onSelect={setMensajeSub} title={s.title} />
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {activeCardId !== "sessions" && activeCardId !== "messages" && (
                   <div className="flex h-full items-center justify-center rounded-xl border border-dashed border-app-border bg-white p-6 text-xs text-app-text-secondary">
                     Visualización de {activeCardId} pendiente de definición paso a paso.
                   </div>

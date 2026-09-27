@@ -1,9 +1,46 @@
 const API_BASE_URL = import.meta.env.VITE_URL_BASE || "http://localhost:8000";
 
+/**
+ * Fetch a URL and save its content as a downloaded file.
+ *
+ * @param url - URL that returns the file content.
+ * @param filename - Name given to the downloaded file.
+ * @throws Error - When the HTTP request fails.
+ */
+async function downloadFile(url: string, filename: string): Promise<void> {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+  }
+  const blob = await response.blob();
+  const href = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = href;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(href);
+}
+
 export interface SessionMetrics {
   total_sessions: number;
-  total_messages: number;
   cantidad: { date: string; count: number }[];
+}
+
+/** One turn row of a per-message metric distribution. */
+export interface MessageMetricRow {
+  sid: string;
+  turn: number | null;
+}
+
+/** The five per-message metrics: steps, tokens, time and latency. */
+export interface MessageMetrics {
+  steps: (MessageMetricRow & { steps: number | null })[];
+  input_tokens: (MessageMetricRow & { input_tokens: number | null })[];
+  output_tokens: (MessageMetricRow & { output_tokens: number | null })[];
+  time: (MessageMetricRow & { total_time: number | null })[];
+  latency: (MessageMetricRow & { latency: number | null })[];
 }
 
 export interface ToolMetrics {
@@ -92,6 +129,15 @@ const metricsService = {
     );
   },
 
+  /** Get the five per-message metrics with optional time range filter. */
+  async getMessageMetrics(timeRange?: string): Promise<MessageMetrics> {
+    const query = timeRange ? `?time_range=${timeRange}` : "";
+    return fetchMetric<MessageMetrics>(
+      `/api/metrics/messages${query}`,
+      "Error fetching message metrics",
+    );
+  },
+
   /** Get tool usage metrics with optional time range filter. */
   async getToolMetrics(timeRange?: string): Promise<ToolMetrics> {
     const query = timeRange && timeRange !== "all" ? `?time_range=${timeRange}` : "";
@@ -133,6 +179,7 @@ const metricsService = {
     query_file: string;
     value_column: string;
     time_range?: string;
+    percentile?: number;
   }): Promise<{ image: string; stats: Record<string, number> }> {
     const response = await fetch(`${API_BASE_URL}/api/metrics/eda/outliers-image`, {
       method: "POST",
@@ -147,6 +194,20 @@ const metricsService = {
       throw new Error(result.message || "Error generando figura");
     }
     return result.data as { image: string; stats: Record<string, number> };
+  },
+
+  /** Download the sessions table (CSV) for the given time range. */
+  async downloadSessionsCsv(timeRange?: string): Promise<void> {
+    const range = timeRange || "1m";
+    const query = timeRange ? `?time_range=${timeRange}` : "";
+    return downloadFile(`${API_BASE_URL}/api/metrics/sessions/export${query}`, `sesiones_${range}.csv`);
+  },
+
+  /** Download the messages table (CSV) for the given time range. */
+  async downloadMessagesCsv(timeRange?: string): Promise<void> {
+    const range = timeRange || "1m";
+    const query = timeRange ? `?time_range=${timeRange}` : "";
+    return downloadFile(`${API_BASE_URL}/api/metrics/messages/export${query}`, `mensajes_${range}.csv`);
   },
 };
 

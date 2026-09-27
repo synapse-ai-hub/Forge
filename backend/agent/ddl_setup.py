@@ -1,15 +1,8 @@
 """Database schema setup for the agent (no migrations).
 
-Creates the ``sessions``, ``messages`` and ``config_kv`` tables using
-``CREATE TABLE IF NOT EXISTS`` so the operation is idempotent and can be
+Creates the tables using ``CREATE TABLE IF NOT EXISTS`` so the operation is idempotent and can be
 called once at startup without per-session overhead.
 
-The DDL statements live verbatim in ``agent_db/queries/ddl/*.sql`` (one
-file per table with its indexes), executed together as one script.
-
-NOTE: This module intentionally contains NO migration logic. When the
-schema changes, the old database file is deleted and recreated from
-scratch — the ``IF NOT EXISTS`` guard then simply creates the new tables.
 
 NOTE: If columns are added or modified, migrations must be added here
 and executed during update (pipeline/update) so existing user databases
