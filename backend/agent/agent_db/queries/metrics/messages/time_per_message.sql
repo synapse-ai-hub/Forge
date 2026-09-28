@@ -10,3 +10,6 @@ WHERE m.session_id IN (
 AND (m.role = 'assistant' OR m.role = 'tool')
 GROUP BY m.session_id, m.turn_number
 HAVING SUM(m.total_time) IS NOT NULL;
+
+select * from messages 
+where session_id = '452f2dbf-79f0-4351-bb9c-a21712691adf' and turn_number = 4;

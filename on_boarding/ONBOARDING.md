@@ -50,6 +50,15 @@ git rebase origin/main
 git push origin feature/mi-nueva-feature
 ```
 
+- Hacer commits atómicos en español e imperativo, con prefijo de tipo:
+
+```bash
+git commit -m "Feat: agregar mi nueva funcionalidad"
+git commit -m "Fix: corregir error en validación"
+```
+
+> Formato: `Fix:`, `Feat:`, `Chore:`, `Docs:`, `Refactor:`, `Update:` + mensaje en español e imperativo. Ver detalle en [GIT_WORKFLOW.md](./OnBoarding/GIT_WORKFLOW.md).
+
 ---
 
 ## 4. Abrir Pull Request
