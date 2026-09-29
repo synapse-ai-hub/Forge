@@ -1406,6 +1406,10 @@ class AgentLoop:
                             # original call — otherwise tool_name is NULL and
                             # metrics (WHERE tool_name IS NOT NULL) lose the row.
                             tool_name=tc.get("name") or tool_msg.get("tool_name"),
+                            # The tool is chosen by the turn's model, so it
+                            # inherits the same provider/model as the turn.
+                            model=model,
+                            provider=effective_provider,
                             turn_number=turn_number,
                             step=step,
                             usage={"total_time": block_durations.get(idx, 0.0)},
