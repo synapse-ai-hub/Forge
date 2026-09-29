@@ -208,10 +208,69 @@ function FixedBars({ data }: { data: { date: string; count: number }[] }) {
   );
 }
 
+/** Barras categóricas: una barra por ítem (herramienta/subagente), con su valor. */
+function CatBars({
+  data,
+  valueFormatter = (v) => formatNumber(v),
+}: {
+  data: { name: string; value: number }[];
+  valueFormatter?: (v: number) => string;
+}) {
+  const maxValue = Math.max(...data.map((d) => d.value), 1);
+  return (
+    <div className="h-full flex flex-col">
+      <div className="flex flex-1 min-h-0 gap-2 mt-2">
+        <div className="flex flex-col justify-between text-[10px] font-medium text-app-text-secondary py-1 pr-1 text-right">
+          <span>{valueFormatter(maxValue)}</span>
+          <span>{valueFormatter(Math.round(maxValue / 2))}</span>
+          <span>0</span>
+        </div>
+        <div className="flex-1 flex flex-col min-h-0">
+          <div className="flex-1 flex items-end gap-2 rounded-lg border border-app-border bg-white px-3 pt-3">
+            {data.map((d, i) => (
+              <div
+                key={`${d.name}-${i}`}
+                className="flex-1 flex flex-col items-center justify-end gap-1 min-w-0 h-full"
+                title={`${d.name}: ${valueFormatter(d.value)}`}
+              >
+                <span className="text-[11px] font-bold text-app-text">
+                  {d.value > 0 ? valueFormatter(d.value) : ""}
+                </span>
+                <div
+                  className="w-full rounded-t border"
+                  style={{
+                    height: d.value > 0 ? `${Math.max((d.value / maxValue) * 100, 10)}%` : "3px",
+                    flexGrow: d.value > 0 ? undefined : 0,
+                    backgroundColor: d.value > 0 ? "#8b5cf6" : "#e5e7eb",
+                    borderColor: d.value > 0 ? "#7c3aed" : "#d1d5db",
+                  }}
+                />
+              </div>
+            ))}
+          </div>
+          <div className="border-t-2 border-app-text mt-0" />
+          <div className="flex gap-2 pt-1">
+            {data.map((d, i) => (
+              <div
+                key={`${d.name}-${i}`}
+                className="flex-1 min-w-0 text-center text-[10px] font-medium text-app-text-secondary truncate"
+                title={d.name}
+              >
+                {d.name}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** Spanish labels for query-folder sections, used in download filenames. */
 const DOWNLOAD_SECTION: Record<string, string> = {
   sessions: "sesiones",
   messages: "mensajes",
+  tools: "herramientas",
 };
 
 /** Figura exacta de synapse_tools.eda.outliers renderizada en el backend (base64). */
@@ -346,6 +405,13 @@ const MENSAJES_SUBS = [
   { id: "latencia", title: "Latencia por mensaje" },
 ];
 
+const TOOLS_SUBS = [
+  { id: "llamadas", title: "Llamadas por herramienta" },
+  { id: "tiempo_distribucion", title: "Tiempo por llamada" },
+  { id: "tiempo_promedio", title: "Tiempo promedio por herramienta" },
+  { id: "subagentes", title: "Subagentes" },
+];
+
 export function MetricsModal({ open, onClose }: MetricsModalProps) {
   const [timeRange, setTimeRange] = useState<TimeRange>("1m");
   const [loading, setLoading] = useState(false);
@@ -355,6 +421,7 @@ export function MetricsModal({ open, onClose }: MetricsModalProps) {
   const [activeCardId, setActiveCardId] = useState<string | null>(null);
   const [sesionSub, setSesionSub] = useState<string>("cantidad");
   const [mensajeSub, setMensajeSub] = useState<string>("steps");
+  const [toolsSub, setToolsSub] = useState<string>("llamadas");
 
   const hasData = metrics.overview !== null || metrics.sessions !== null;
 
@@ -407,6 +474,7 @@ export function MetricsModal({ open, onClose }: MetricsModalProps) {
       setActiveCardId("sessions");
       setSesionSub("cantidad");
       setMensajeSub("steps");
+      setToolsSub("llamadas");
     }
   }, [open]);
 
@@ -597,7 +665,47 @@ export function MetricsModal({ open, onClose }: MetricsModalProps) {
                     </div>
                   </div>
                 )}
-                {activeCardId !== "sessions" && activeCardId !== "messages" && (
+                {activeCardId === "tools" && (
+                  <div className="space-y-4">
+                    <div className="rounded-xl border border-app-border bg-white p-4 shadow-sm relative">
+                      {refreshing && (
+                        <div className="absolute top-3 right-3 flex items-center gap-1 text-[11px] text-app-text-secondary">
+                          <RefreshCw size={12} className="animate-spin" /> Actualizando…
+                        </div>
+                      )}
+                      <div className="text-sm font-bold text-app-text">Herramientas</div>
+                      <div className="mt-2 h-[440px]">
+                        {toolsSub === "llamadas" && (
+                          <CatBars
+                            data={(tls?.tool_usage ?? []).map((t) => ({ name: t.name, value: t.count }))}
+                          />
+                        )}
+                        {toolsSub === "tiempo_distribucion" && (
+                          <HistBox queryFile="metrics/tools/time_per_tool_call.sql" valueColumn="total_time" title="Tiempo por llamada de herramienta" timeRange={timeRange} />
+                        )}
+                        {toolsSub === "tiempo_promedio" && (
+                          <CatBars
+                            data={(tls?.tool_usage ?? []).map((t) => ({ name: t.name, value: t.avg_time }))}
+                            valueFormatter={(v) => `${v.toFixed(2)}s`}
+                          />
+                        )}
+                        {toolsSub === "subagentes" && (
+                          <CatBars
+                            data={(tls?.top_subagents ?? []).map((s) => ({ name: s.name, value: s.count }))}
+                          />
+                        )}
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-app-border bg-white p-4 shadow-sm">
+                      <div className="flex flex-wrap gap-2">
+                        {TOOLS_SUBS.map((s) => (
+                          <SubCard key={s.id} id={s.id} selectedId={toolsSub} onSelect={setToolsSub} title={s.title} />
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {activeCardId !== "sessions" && activeCardId !== "messages" && activeCardId !== "tools" && (
                   <div className="flex h-full items-center justify-center rounded-xl border border-dashed border-app-border bg-white p-6 text-xs text-app-text-secondary">
                     Visualización de {activeCardId} pendiente de definición paso a paso.
                   </div>

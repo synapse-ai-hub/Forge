@@ -55,14 +55,26 @@ def _normalize_range(time_range: str) -> str:
     return time_range if time_range in _VALID_RANGES else "1m"
 
 
+def _local_tz() -> Any:
+    """Return the server's local timezone (tzinfo).
+
+    Returns:
+        The tzinfo of the current local time.
+    """
+    return datetime.now().astimezone().tzinfo
+
+
 def _parse_ts(value: Any) -> Any | None:
-    """Parse SQLite/ISO timestamps (with or without timezone) to aware datetime.
+    """Parse SQLite/ISO timestamps to a local-aware datetime.
+
+    Naive values (no offset) are assumed to be local time; aware values
+    are converted to the server's local timezone.
 
     Args:
         value: Raw timestamp string coming from SQLite.
 
     Returns:
-        Timezone-aware datetime, or None when unparseable.
+        Local-timezone-aware datetime, or None when unparseable.
     """
     try:
         if value is None:
@@ -74,16 +86,16 @@ def _parse_ts(value: Any) -> Any | None:
 
         dt = _dt.fromisoformat(text)
         if dt.tzinfo is None:
-            from datetime import timezone as _tz
-
-            dt = dt.replace(tzinfo=_tz.utc)
+            dt = dt.replace(tzinfo=_local_tz())
+        else:
+            dt = dt.astimezone(_local_tz())
         return dt
     except Exception:
         return None
 
 
 def _cantidad_bins(time_range: str) -> tuple[Any, Any, int]:
-    """Return (start, end, bins) in UTC for the fixed 12-bar chart.
+    """Return (start, end, bins) in local time for the fixed 12-bar chart.
 
     Args:
         time_range: Whitelisted range string.
@@ -94,7 +106,7 @@ def _cantidad_bins(time_range: str) -> tuple[Any, Any, int]:
     try:
         from datetime import timedelta
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now().astimezone()
         if time_range == "1h":
             base = now.replace(second=0, microsecond=0)
             base = base.replace(minute=(base.minute // 5) * 5)
@@ -108,7 +120,7 @@ def _cantidad_bins(time_range: str) -> tuple[Any, Any, int]:
             return base - timedelta(hours=22), base + timedelta(hours=2), 12
         elif time_range == "1w":
             base = now.replace(hour=0, minute=0, second=0, microsecond=0)
-            return base - timedelta(days=6), base + timedelta(days=1), 12
+            return base - timedelta(days=6), base + timedelta(days=1), 7
         elif time_range == "1m":
             base = now.replace(hour=0, minute=0, second=0, microsecond=0)
             return base - timedelta(days=29), base + timedelta(days=1), 12
@@ -117,7 +129,7 @@ def _cantidad_bins(time_range: str) -> tuple[Any, Any, int]:
     except Exception:
         from datetime import timedelta
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now().astimezone()
         return now - timedelta(days=6), now + timedelta(days=1), 12
 
 
@@ -137,7 +149,7 @@ def _bin_label(dt: Any, time_range: str) -> str:
         if time_range == "1d":
             return dt.strftime("%Hh")
         if time_range == "1w":
-            return dt.strftime("%m-%d %Hh")
+            return dt.strftime("%m-%d")
         if time_range == "1m":
             return dt.strftime("%m-%d")
         return dt.strftime("%Y-%m")
