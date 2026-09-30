@@ -21,7 +21,30 @@ jobs:
       pull-requests: 'write'
     steps:
       - uses: 'actions/checkout@v4'
+
+      - name: Check if PR touches backend files
+        id: check
+        if: github.event_name == 'issue_comment'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_URL="${{ github.event.issue.pull_request.url }}"
+          if [ -z "$PR_URL" ] || [ "$PR_URL" == "null" ]; then
+            echo "relevant=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          PR_NUM=$(basename "$PR_URL")
+          FILES=$(gh api repos/${{ github.repository }}/pulls/$PR_NUM/files --jq '.[].filename' 2>/dev/null || echo "")
+          if echo "$FILES" | grep -q '^backend/'; then
+            echo "relevant=true" >> $GITHUB_OUTPUT
+          else
+            echo "relevant=false" >> $GITHUB_OUTPUT
+          fi
+
       - uses: 'google-github-actions/run-gemini-cli@v0'
+        if: |-
+          (github.event_name == 'pull_request') ||
+          (github.event_name == 'issue_comment' && steps.check.outputs.relevant == 'true')
         env:
           GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
           GEMINI_API_KEY: '${{ secrets.GOOGLE_API_KEY }}'
@@ -29,5 +52,29 @@ jobs:
         with:
           gemini_api_key: '${{ secrets.GOOGLE_API_KEY }}'
           gemini_model: 'gemini-3.5-flash-lite'
-          prompt: '/review-backend'
+          prompt: |
+            <CONTEXT>
+                **Repository**: synapseForge - Backend Service (Python + FastAPI)
+                **Focus**: Python code, FastAPI endpoints, async/await patterns, error handling, security, database operations, performance.
+            </CONTEXT>
+            <OUTPUT>
+            The output **MUST** be clean, concise, and structured exactly as follows.
+
+            **If no issues are found:**
+            # Change summary: [Single sentence description of the overall change].
+            No issues found. Code looks clean and ready to merge.
+
+            **If issues are found:**
+            # Change summary: [Single sentence description of the overall change].
+            [Optional general feedback for the entire change.]
+
+            ## File: path/to/file/one
+            ### L<LINE_NUMBER>: [<SEVERITY>] Single sentence summary of the issue.
+            More details about the issue.
+            Suggested change:
+            ```
+            - old code
+            + new code
+            ```
+            </OUTPUT>
           extensions: '["https://github.com/gemini-cli-extensions/code-review"]'
