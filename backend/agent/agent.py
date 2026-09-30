@@ -6,10 +6,7 @@ import uuid
 import base64
 import functools
 import logging
-from datetime import datetime
-from dotenv import load_dotenv
-from typing import Any, Dict, Generator
-import asyncio
+
 try:
     # Optional dependency: the LOCAL (Ollama) provider needs the ``ollama``
     # package, but the app must start without it installed.
@@ -113,7 +110,7 @@ def _signature_to_str(signature: Any) -> str | None:
     Returns:
         Base64 string, the original value if already a string, or ``None``.
     """
-    if isinstance(signature, (bytes, bytearray)):
+    if isinstance(signature, (bydtes, bytearray)):
         try:
             return base64.b64encode(bytes(signature)).decode("ascii")
         except Exception as e:
