@@ -22,11 +22,24 @@ jobs:
     steps:
       - uses: 'actions/checkout@v4'
 
+      - name: 'Get PR refs'
+        id: pr
+        if: github.event_name == 'issue_comment'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUM=$(basename "${{ github.event.issue.pull_request.url }}")
+          PR_JSON=$(gh api repos/${{ github.repository }}/pulls/$PR_NUM)
+          echo "base=$(echo "$PR_JSON" | jq -r '.base.ref')" >> $GITHUB_OUTPUT
+          echo "head=$(echo "$PR_JSON" | jq -r '.head.ref')" >> $GITHUB_OUTPUT
+
       - name: 'Check if PR touches backend files'
         id: filter
         if: github.event_name == 'issue_comment'
         uses: dorny/paths-filter@v3
         with:
+          base: ${{ steps.pr.outputs.base }}
+          ref: ${{ steps.pr.outputs.head }}
           filters: |
             backend:
               - 'backend/**'
@@ -37,6 +50,7 @@ jobs:
           (github.event_name == 'issue_comment' && steps.filter.outputs.backend == 'true')
         env:
           GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
+          GH_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
           GEMINI_API_KEY: '${{ secrets.GOOGLE_API_KEY }}'
           GEMINI_CLI_TRUST_WORKSPACE: 'true'
         with:
@@ -47,9 +61,10 @@ jobs:
             Revisa los cambios del Pull Request actual.
 
             **Instrucción crítica**: Debes publicar tu revisión como un comentario en el PR.
-            Sigue estos pasos exactamente:
-            1. Escribe tu revisión completa en el archivo `/tmp/review.md`.
-            2. Ejecuta el comando: `gh pr comment ${{ github.event.pull_request.number || github.event.issue.number }} --body-file /tmp/review.md`
+            Sigue estos pasos exactamente usando tus herramientas:
+            1. Usa la herramienta `write_file` para escribir tu revisión completa en el archivo `/tmp/review.md`.
+            2. Usa la herramienta `run_shell_command` para ejecutar exactamente este comando:
+               `gh pr comment ${{ github.event.pull_request.number || github.event.issue.number }} --body-file /tmp/review.md`
 
             Asegúrate de que el archivo `/tmp/review.md` esté formateado correctamente. Si no hay problemas, el archivo debe contener exactamente "No issues found. Code looks clean and ready to merge.".
 
