@@ -18,7 +18,12 @@ import pandas as pd
 from synapse_tools.eda import outliers as _outliers
 
 from backend.agent.utils.db import DB_PATH
-from backend.agent.utils.queries import TIME_PLACEHOLDER, load_query, time_clause
+from backend.agent.utils.queries import (
+    MODEL_PLACEHOLDER,
+    TIME_PLACEHOLDER,
+    load_query,
+    time_clause,
+)
 
 _VALID_RANGES = {"1h", "6h", "1d", "1w", "1m", "all"}
 
@@ -32,6 +37,8 @@ def render_outliers_figure(
     color: str = "#8b5cf6",
     fig_size: tuple[int, int] = (20, 8),
     percentile: float | None = None,
+    model_clause: str = "",
+    model_params: tuple[Any, ...] = (),
 ) -> dict:
     """Run a metric query and render the outliers figure as base64.
 
@@ -46,6 +53,10 @@ def render_outliers_figure(
         percentile: When set (0 < q < 1), the plotted values are capped
             at this quantile of the series (e.g. 0.95 keeps everything up
             to p95). ``None`` plots the full series.
+        model_clause: Optional SQL filter clause for the ``{MODEL_CLAUSE}``
+            placeholder (e.g. ``" AND m.model = ? AND m.provider = ?"``).
+            Empty string leaves the placeholder removed.
+        model_params: Parameters for ``model_clause``.
 
     Returns:
         Dict with image_base64 (PNG data URI) and stats.
@@ -56,15 +67,19 @@ def render_outliers_figure(
     if time_range not in _VALID_RANGES:
         time_range = "1m"
     clause, params = time_clause(time_range, filter_column)
-    sql = load_query(query_file).replace(placeholder, clause)
+    sql = load_query(query_file)
     code_lines = [
         line for line in sql.splitlines() if not line.lstrip().startswith("--")
     ]
-    count = "\n".join(code_lines).count("?")
-    full_params: tuple[Any, ...] = params * count if count else ()
+    code = "\n".join(code_lines)
+    time_count = code.count(placeholder)
+    code = code.replace(placeholder, clause)
+    model_count = code.count(MODEL_PLACEHOLDER)
+    code = code.replace(MODEL_PLACEHOLDER, model_clause)
+    full_params: tuple[Any, ...] = params * time_count + model_params * model_count
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     try:
-        df = pd.read_sql(sql, conn, params=full_params if full_params else None)
+        df = pd.read_sql(code, conn, params=full_params if full_params else None)
     finally:
         conn.close()
     if value_column not in df.columns:

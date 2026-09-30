@@ -51,8 +51,12 @@ export interface ToolMetrics {
 }
 
 export interface ModelMetrics {
-  models: { model: string; count: number }[];
+  models: { provider: string; model: string; count: number }[];
+  tokens_input: { provider: string; model: string; value: number }[];
+  tokens_output: { provider: string; model: string; value: number }[];
+  tool_calls: { provider: string; model: string; value: number }[];
   total_model_calls: number;
+  total_models: number;
 }
 
 export interface ErrorMetrics {
@@ -149,7 +153,7 @@ const metricsService = {
 
   /** Get LLM usage metrics grouped by model with optional time range filter. */
   async getModelMetrics(timeRange?: string): Promise<ModelMetrics> {
-    const query = timeRange && timeRange !== "all" ? `?time_range=${timeRange}` : "";
+    const query = timeRange ? `?time_range=${timeRange}` : "";
     return fetchMetric<ModelMetrics>(
       `/api/metrics/models${query}`,
       "Error fetching model metrics",
@@ -180,6 +184,8 @@ const metricsService = {
     value_column: string;
     time_range?: string;
     percentile?: number;
+    model?: string;
+    provider?: string;
   }): Promise<{ image: string; stats: Record<string, number> }> {
     const response = await fetch(`${API_BASE_URL}/api/metrics/eda/outliers-image`, {
       method: "POST",
@@ -208,6 +214,20 @@ const metricsService = {
     const range = timeRange || "1m";
     const query = timeRange ? `?time_range=${timeRange}` : "";
     return downloadFile(`${API_BASE_URL}/api/metrics/messages/export${query}`, `mensajes_${range}.csv`);
+  },
+
+  /** Download the tool calls table (CSV) for the given time range. */
+  async downloadToolsCsv(timeRange?: string): Promise<void> {
+    const range = timeRange || "1m";
+    const query = timeRange ? `?time_range=${timeRange}` : "";
+    return downloadFile(`${API_BASE_URL}/api/metrics/tools/export${query}`, `herramientas_${range}.csv`);
+  },
+
+  /** Download the assistant model calls table (CSV) for the given time range. */
+  async downloadModelsCsv(timeRange?: string): Promise<void> {
+    const range = timeRange || "1m";
+    const query = timeRange ? `?time_range=${timeRange}` : "";
+    return downloadFile(`${API_BASE_URL}/api/metrics/models/export${query}`, `modelos_${range}.csv`);
   },
 };
 

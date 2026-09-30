@@ -1,9 +1,8 @@
--- Assistant LLM calls per provider/model in the time range.
+-- Assistant LLM calls per message in the time range (CSV export).
 -- {TIME_CLAUSE} : filter on messages.created_at.
-SELECT provider, model, COUNT(*) AS cnt
+SELECT session_id, turn_number, provider, model, created_at
 FROM messages
 WHERE role = 'assistant'
     AND model IS NOT NULL AND model != ''
     AND provider IS NOT NULL AND provider != '' {TIME_CLAUSE}
-GROUP BY provider, model
-ORDER BY cnt DESC;
+ORDER BY created_at ASC;

@@ -15,6 +15,7 @@ import {
   Wrench,
   DollarSign,
   Download,
+  Cpu,
 } from "lucide-react";
 import metricsService, {
   type MetricsOverview,
@@ -208,7 +209,16 @@ function FixedBars({ data }: { data: { date: string; count: number }[] }) {
   );
 }
 
-/** Barras categóricas: una barra por ítem (herramienta/subagente), con su valor. */
+/** Redondea un valor hacia arriba a un número "lindo" para los ticks del eje. */
+function niceCeil(v: number): number {
+  if (v <= 0) return 1;
+  const pow = Math.pow(10, Math.floor(Math.log10(v)));
+  const n = v / pow;
+  const nice = n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10;
+  return nice * pow;
+}
+
+/** Barras categóricas horizontales con ejes: nombres a la izquierda, valores abajo. */
 function CatBars({
   data,
   valueFormatter = (v) => formatNumber(v),
@@ -216,51 +226,123 @@ function CatBars({
   data: { name: string; value: number }[];
   valueFormatter?: (v: number) => string;
 }) {
+  if (data.length === 0) {
+    return (
+      <div className="h-full flex items-center justify-center text-xs text-app-text-secondary">
+        Sin datos para este rango
+      </div>
+    );
+  }
   const maxValue = Math.max(...data.map((d) => d.value), 1);
+  const niceMax = niceCeil(maxValue);
   return (
-    <div className="h-full flex flex-col">
-      <div className="flex flex-1 min-h-0 gap-2 mt-2">
-        <div className="flex flex-col justify-between text-[10px] font-medium text-app-text-secondary py-1 pr-1 text-right">
-          <span>{valueFormatter(maxValue)}</span>
-          <span>{valueFormatter(Math.round(maxValue / 2))}</span>
-          <span>0</span>
-        </div>
-        <div className="flex-1 flex flex-col min-h-0">
-          <div className="flex-1 flex items-end gap-2 rounded-lg border border-app-border bg-white px-3 pt-3">
+    <div className="h-full flex flex-col pt-2">
+      <div className="flex-1 min-h-0 flex flex-col">
+        <div className="flex-1 min-h-0 flex">
+          <div className="w-48 shrink-0 pr-3 flex flex-col justify-around text-right text-[10px] font-medium text-app-text-secondary">
             {data.map((d, i) => (
-              <div
-                key={`${d.name}-${i}`}
-                className="flex-1 flex flex-col items-center justify-end gap-1 min-w-0 h-full"
-                title={`${d.name}: ${valueFormatter(d.value)}`}
-              >
-                <span className="text-[11px] font-bold text-app-text">
-                  {d.value > 0 ? valueFormatter(d.value) : ""}
-                </span>
-                <div
-                  className="w-full rounded-t border"
-                  style={{
-                    height: d.value > 0 ? `${Math.max((d.value / maxValue) * 100, 10)}%` : "3px",
-                    flexGrow: d.value > 0 ? undefined : 0,
-                    backgroundColor: d.value > 0 ? "#8b5cf6" : "#e5e7eb",
-                    borderColor: d.value > 0 ? "#7c3aed" : "#d1d5db",
-                  }}
-                />
-              </div>
-            ))}
-          </div>
-          <div className="border-t-2 border-app-text mt-0" />
-          <div className="flex gap-2 pt-1">
-            {data.map((d, i) => (
-              <div
-                key={`${d.name}-${i}`}
-                className="flex-1 min-w-0 text-center text-[10px] font-medium text-app-text-secondary truncate"
-                title={d.name}
-              >
+              <div key={`${d.name}-${i}`} className="leading-tight break-words" title={d.name}>
                 {d.name}
               </div>
             ))}
           </div>
+          <div className="flex-1 flex flex-col justify-around gap-1 min-w-0">
+            {data.map((d, i) => (
+              <div key={`${d.name}-${i}`} className="flex items-center gap-2">
+                <div
+                  className="h-4 rounded-r border"
+                  style={{
+                    width: d.value > 0 ? `${Math.max((d.value / niceMax) * 100, 2)}%` : "2px",
+                    backgroundColor: d.value > 0 ? "#8b5cf6" : "#e5e7eb",
+                    borderColor: d.value > 0 ? "#7c3aed" : "#d1d5db",
+                  }}
+                />
+                <span className="text-[10px] font-bold text-app-text shrink-0">
+                  {d.value > 0 ? valueFormatter(d.value) : ""}
+                </span>
+              </div>
+            ))}
+          </div>
         </div>
+        <div className="flex">
+          <div className="w-48 shrink-0" />
+          <div className="flex-1 border-t-2 border-app-text mt-1 flex justify-between text-[9px] text-app-text-secondary">
+            <span>0</span>
+            <span>{valueFormatter(niceMax / 2)}</span>
+            <span>{valueFormatter(niceMax)}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Barras categóricas con encabezado (título + dropdown de modelo + descarga), siguiendo el formato de HistBox. */
+function CatBox({
+  title,
+  data,
+  valueFormatter,
+  showModelDropdown,
+  models,
+  selectedModel,
+  onSelectModel,
+  onDownload,
+}: {
+  title: string;
+  data: { name: string; value: number }[];
+  valueFormatter?: (v: number) => string;
+  showModelDropdown?: boolean;
+  models?: { provider: string; model: string }[];
+  selectedModel?: { provider: string; model: string } | null;
+  onSelectModel?: (m: { provider: string; model: string } | null) => void;
+  onDownload?: () => void;
+}) {
+  return (
+    <div className="h-full flex flex-col gap-2">
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-xs font-semibold text-app-text">{title}</div>
+        <div className="flex items-center gap-2">
+          {showModelDropdown && (
+            <select
+              value={
+                selectedModel
+                  ? `${selectedModel.provider}|${selectedModel.model}`
+                  : ""
+              }
+              onChange={(e) => {
+                const raw = e.target.value;
+                if (!raw) {
+                  onSelectModel?.(null);
+                  return;
+                }
+                const [provider, ...rest] = raw.split("|");
+                onSelectModel?.({ provider, model: rest.join("|") });
+              }}
+              className="rounded-md border border-app-border bg-white px-1.5 py-1 text-[10px] font-medium text-app-text-secondary cursor-pointer"
+            >
+              <option value="">Todos</option>
+              {(models ?? []).map((m) => (
+                <option
+                  key={`${m.provider}|${m.model}`}
+                  value={`${m.provider}|${m.model}`}
+                >
+                  {m.provider} {m.model}
+                </option>
+              ))}
+            </select>
+          )}
+          <button
+            type="button"
+            title="Descargar JSON"
+            onClick={onDownload}
+            className="flex items-center gap-1 rounded-md border border-app-border px-2 py-1 text-[10px] font-medium text-app-text-secondary hover:text-app-text hover:bg-app-bg-secondary cursor-pointer"
+          >
+            <Download size={12} /> JSON
+          </button>
+        </div>
+      </div>
+      <div className="flex-1 min-h-0 rounded-lg border border-app-border bg-white p-2">
+        <CatBars data={data} valueFormatter={valueFormatter} />
       </div>
     </div>
   );
@@ -271,6 +353,7 @@ const DOWNLOAD_SECTION: Record<string, string> = {
   sessions: "sesiones",
   messages: "mensajes",
   tools: "herramientas",
+  models: "modelos",
 };
 
 /** Figura exacta de synapse_tools.eda.outliers renderizada en el backend (base64). */
@@ -280,12 +363,22 @@ function HistBox({
   title,
   timeRange,
   percentiles = false,
+  model,
+  provider,
+  models,
+  selectedModel,
+  onSelectModel,
 }: {
   queryFile: string;
   valueColumn: string;
   title: string;
   timeRange: string;
   percentiles?: boolean;
+  model?: string;
+  provider?: string;
+  models?: { provider: string; model: string }[];
+  selectedModel?: { provider: string; model: string } | null;
+  onSelectModel?: (m: { provider: string; model: string } | null) => void;
 }) {
   const [image, setImage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -302,6 +395,7 @@ function HistBox({
         value_column: valueColumn,
         time_range: timeRange,
         ...(percentile !== null ? { percentile } : {}),
+        ...(model && provider ? { model, provider } : {}),
       })
       .then((res) => {
         if (cancelled) return;
@@ -320,7 +414,7 @@ function HistBox({
     return () => {
       cancelled = true;
     };
-  }, [queryFile, valueColumn, timeRange, percentile]);
+  }, [queryFile, valueColumn, timeRange, percentile, model, provider]);
 
   const downloadJson = () => {
     if (!stats) return;
@@ -351,6 +445,35 @@ function HistBox({
       <div className="flex items-center justify-between gap-2">
         <div className="text-xs font-semibold text-app-text">{title}</div>
         <div className="flex items-center gap-2">
+          {models && onSelectModel && (
+            <select
+              value={
+                selectedModel
+                  ? `${selectedModel.provider}|${selectedModel.model}`
+                  : ""
+              }
+              onChange={(e) => {
+                const raw = e.target.value;
+                if (!raw) {
+                  onSelectModel(null);
+                  return;
+                }
+                const [provider, ...rest] = raw.split("|");
+                onSelectModel({ provider, model: rest.join("|") });
+              }}
+              className="rounded-md border border-app-border bg-white px-1.5 py-1 text-[10px] font-medium text-app-text-secondary cursor-pointer"
+            >
+              <option value="">Todos</option>
+              {models.map((m) => (
+                <option
+                  key={`${m.provider}|${m.model}`}
+                  value={`${m.provider}|${m.model}`}
+                >
+                  {m.provider} {m.model}
+                </option>
+              ))}
+            </select>
+          )}
           {percentiles && (
             <select
               value={percentile === null ? "" : String(percentile)}
@@ -412,6 +535,13 @@ const TOOLS_SUBS = [
   { id: "subagentes", title: "Subagentes" },
 ];
 
+const MODELS_SUBS = [
+  { id: "tokens_entrada", title: "Tokens de entrada" },
+  { id: "tokens_salida", title: "Tokens de salida" },
+  { id: "llamadas_herramientas", title: "Llamadas a herramientas" },
+  { id: "latencia", title: "Latencia" },
+];
+
 export function MetricsModal({ open, onClose }: MetricsModalProps) {
   const [timeRange, setTimeRange] = useState<TimeRange>("1m");
   const [loading, setLoading] = useState(false);
@@ -422,6 +552,11 @@ export function MetricsModal({ open, onClose }: MetricsModalProps) {
   const [sesionSub, setSesionSub] = useState<string>("cantidad");
   const [mensajeSub, setMensajeSub] = useState<string>("steps");
   const [toolsSub, setToolsSub] = useState<string>("llamadas");
+  const [modelsSub, setModelsSub] = useState<string>("tokens_entrada");
+  const [selectedModel, setSelectedModel] = useState<{
+    provider: string;
+    model: string;
+  } | null>(null);
 
   const hasData = metrics.overview !== null || metrics.sessions !== null;
 
@@ -469,12 +604,33 @@ export function MetricsModal({ open, onClose }: MetricsModalProps) {
     }
   };
 
+  const downloadJson = (data: unknown, name: string) => {
+    if (!data) return;
+    try {
+      const blob = new Blob([JSON.stringify(data, null, 2)], {
+        type: "application/json",
+      });
+      const href = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = href;
+      anchor.download = `modelos_${name}_${timeRange}.json`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(href);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
   useEffect(() => {
     if (open) {
       setActiveCardId("sessions");
       setSesionSub("cantidad");
       setMensajeSub("steps");
       setToolsSub("llamadas");
+      setModelsSub("tokens_entrada");
+      setSelectedModel(null);
     }
   }, [open]);
 
@@ -484,10 +640,22 @@ export function MetricsModal({ open, onClose }: MetricsModalProps) {
     }
   }, [open, timeRange]);
 
+  // Reset the model selection if the selected combo is no longer present
+  // in the current time range.
+  useEffect(() => {
+    if (!selectedModel) return;
+    const exists = (metrics.models?.models ?? []).some(
+      (m) =>
+        m.provider === selectedModel.provider && m.model === selectedModel.model,
+    );
+    if (!exists) setSelectedModel(null);
+  }, [metrics.models, selectedModel]);
+
   const ov = metrics.overview;
   const ses = metrics.sessions;
   const tls = metrics.tools;
   const errs = metrics.errors;
+  const mdl = metrics.models;
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
@@ -571,6 +739,16 @@ export function MetricsModal({ open, onClose }: MetricsModalProps) {
                   title="Uso de herramientas"
                   value={formatNumber(tls?.total_tool_calls ?? 0)}
                   icon={<Wrench size={16} />}
+                  onDownload={() => metricsService.downloadToolsCsv(timeRange)}
+                />
+                <SidebarCard
+                  id="models"
+                  activeId={activeCardId}
+                  onSelect={(id) => setActiveCardId(id)}
+                  title="Modelos"
+                  value={formatNumber(mdl?.total_models ?? 0)}
+                  icon={<Cpu size={16} />}
+                  onDownload={() => metricsService.downloadModelsCsv(timeRange)}
                 />
                 <SidebarCard
                   id="spend"
@@ -676,22 +854,34 @@ export function MetricsModal({ open, onClose }: MetricsModalProps) {
                       <div className="text-sm font-bold text-app-text">Herramientas</div>
                       <div className="mt-2 h-[440px]">
                         {toolsSub === "llamadas" && (
-                          <CatBars
+                          <CatBox
+                            title="Llamadas a herramientas"
                             data={(tls?.tool_usage ?? []).map((t) => ({ name: t.name, value: t.count }))}
+                            onDownload={() =>
+                              downloadJson(tls?.tool_usage ?? [], "llamadas_herramientas")
+                            }
                           />
                         )}
                         {toolsSub === "tiempo_distribucion" && (
                           <HistBox queryFile="metrics/tools/time_per_tool_call.sql" valueColumn="total_time" title="Tiempo por llamada de herramienta" timeRange={timeRange} />
                         )}
                         {toolsSub === "tiempo_promedio" && (
-                          <CatBars
+                          <CatBox
+                            title="Tiempo promedio por herramienta"
                             data={(tls?.tool_usage ?? []).map((t) => ({ name: t.name, value: t.avg_time }))}
                             valueFormatter={(v) => `${v.toFixed(2)}s`}
+                            onDownload={() =>
+                              downloadJson(tls?.tool_usage ?? [], "tiempo_promedio")
+                            }
                           />
                         )}
                         {toolsSub === "subagentes" && (
-                          <CatBars
+                          <CatBox
+                            title="Subagentes"
                             data={(tls?.top_subagents ?? []).map((s) => ({ name: s.name, value: s.count }))}
+                            onDownload={() =>
+                              downloadJson(tls?.top_subagents ?? [], "subagentes")
+                            }
                           />
                         )}
                       </div>
@@ -705,7 +895,90 @@ export function MetricsModal({ open, onClose }: MetricsModalProps) {
                     </div>
                   </div>
                 )}
-                {activeCardId !== "sessions" && activeCardId !== "messages" && activeCardId !== "tools" && (
+                {activeCardId === "models" && (
+                  <div className="space-y-4">
+                    <div className="rounded-xl border border-app-border bg-white p-4 shadow-sm relative">
+                      {refreshing && (
+                        <div className="absolute top-3 right-3 flex items-center gap-1 text-[11px] text-app-text-secondary">
+                          <RefreshCw size={12} className="animate-spin" /> Actualizando…
+                        </div>
+                      )}
+                      <div className="text-sm font-bold text-app-text">Modelos</div>
+                      <div className="mt-2 h-[440px]">
+                        {modelsSub === "tokens_entrada" && (
+                          <HistBox
+                            queryFile="metrics/models/tokens_input_per_turn.sql"
+                            valueColumn="value"
+                            title="Tokens de entrada"
+                            timeRange={timeRange}
+                            model={selectedModel?.model}
+                            provider={selectedModel?.provider}
+                            models={mdl?.models ?? []}
+                            selectedModel={selectedModel}
+                            onSelectModel={setSelectedModel}
+                          />
+                        )}
+                        {modelsSub === "tokens_salida" && (
+                          <HistBox
+                            queryFile="metrics/models/tokens_output_per_turn.sql"
+                            valueColumn="value"
+                            title="Tokens de salida"
+                            timeRange={timeRange}
+                            model={selectedModel?.model}
+                            provider={selectedModel?.provider}
+                            models={mdl?.models ?? []}
+                            selectedModel={selectedModel}
+                            onSelectModel={setSelectedModel}
+                          />
+                        )}
+                        {modelsSub === "llamadas_herramientas" && (
+                          <CatBox
+                            title="Llamadas a herramientas"
+                            data={(mdl?.tool_calls ?? [])
+                              .filter(
+                                (r) =>
+                                  !selectedModel ||
+                                  (r.provider === selectedModel.provider &&
+                                    r.model === selectedModel.model),
+                              )
+                              .map((r) => ({
+                                name: `${r.provider}/${r.model}`,
+                                value: r.value,
+                              }))}
+                            showModelDropdown
+                            models={mdl?.models ?? []}
+                            selectedModel={selectedModel}
+                            onSelectModel={setSelectedModel}
+                            onDownload={() =>
+                              downloadJson(mdl?.tool_calls ?? [], "llamadas_herramientas")
+                            }
+                          />
+                        )}
+                        {modelsSub === "latencia" && (
+                          <HistBox
+                            queryFile="metrics/models/latency_per_turn.sql"
+                            valueColumn="latency"
+                            title="Latencia por turno"
+                            timeRange={timeRange}
+                            model={selectedModel?.model}
+                            provider={selectedModel?.provider}
+                            models={mdl?.models ?? []}
+                            selectedModel={selectedModel}
+                            onSelectModel={setSelectedModel}
+                          />
+                        )}
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-app-border bg-white p-4 shadow-sm">
+                      <div className="flex flex-wrap gap-2">
+                        {MODELS_SUBS.map((s) => (
+                          <SubCard key={s.id} id={s.id} selectedId={modelsSub} onSelect={setModelsSub} title={s.title} />
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {activeCardId !== "sessions" && activeCardId !== "messages" && activeCardId !== "tools" && activeCardId !== "models" && (
                   <div className="flex h-full items-center justify-center rounded-xl border border-dashed border-app-border bg-white p-6 text-xs text-app-text-secondary">
                     Visualización de {activeCardId} pendiente de definición paso a paso.
                   </div>

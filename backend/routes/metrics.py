@@ -383,6 +383,52 @@ async def export_messages_csv(time_range: str = "1m"):
         return make_error_response(message="Error exporting messages CSV")
 
 
+@router.get("/metrics/tools/export")
+async def export_tools_csv(time_range: str = "1m"):
+    """Download the tool calls table for the time range as a CSV file.
+
+    Args:
+        time_range: Time filter ('1h', '6h', '1d', '1w', '1m', 'all').
+
+    Returns:
+        A ``text/csv`` attachment with every tool call row in the range.
+    """
+    try:
+        time_range = _normalize_range(time_range)
+        clause, params = time_clause(time_range, "messages.created_at")
+
+        with get_connection() as conn:
+            sql = with_time(load_query("metrics/tools/export.sql"), clause)
+            rows = conn.execute(sql, params).fetchall()
+        return _rows_to_csv_response(rows, "tools")
+    except Exception as e:
+        log_error(str(e), source="backend/routes/metrics.py:export_tools_csv")
+        return make_error_response(message="Error exporting tools CSV")
+
+
+@router.get("/metrics/models/export")
+async def export_models_csv(time_range: str = "1m"):
+    """Download the assistant LLM calls table for the time range as a CSV file.
+
+    Args:
+        time_range: Time filter ('1h', '6h', '1d', '1w', '1m', 'all').
+
+    Returns:
+        A ``text/csv`` attachment with every assistant model call row in the range.
+    """
+    try:
+        time_range = _normalize_range(time_range)
+        clause, params = time_clause(time_range, "messages.created_at")
+
+        with get_connection() as conn:
+            sql = with_time(load_query("metrics/models/export.sql"), clause)
+            rows = conn.execute(sql, params).fetchall()
+        return _rows_to_csv_response(rows, "models")
+    except Exception as e:
+        log_error(str(e), source="backend/routes/metrics.py:export_models_csv")
+        return make_error_response(message="Error exporting models CSV")
+
+
 @router.post("/metrics/eda/outliers-image")
 async def eda_outliers_image(payload: dict = Body(...)):
     """Render a metric query with synapse_tools.eda.outliers (base64, no files)."""
@@ -399,6 +445,15 @@ async def eda_outliers_image(payload: dict = Body(...)):
             except (TypeError, ValueError):
                 percentile = None
 
+        # Optional provider/model filter for the {MODEL_CLAUSE} placeholder.
+        model = payload.get("model")
+        provider = payload.get("provider")
+        model_clause = ""
+        model_params: tuple = ()
+        if model and provider:
+            model_clause = " AND m.model = ? AND m.provider = ?"
+            model_params = (str(model), str(provider))
+
         result = render_outliers_figure(
             query_file=str(payload.get("query_file", "")),
             value_column=str(payload.get("value_column", "")),
@@ -409,6 +464,8 @@ async def eda_outliers_image(payload: dict = Body(...)):
             ),
             color=str(payload.get("color", "#8b5cf6")),
             percentile=percentile,
+            model_clause=model_clause,
+            model_params=model_params,
         )
         return validate_response(
             make_success_response(
@@ -554,17 +611,63 @@ async def get_model_metrics(time_range: str = "1m"):
         with get_connection() as conn:
             usage_sql = with_time(load_query("metrics/models/usage.sql"), clause)
             model_rows = conn.execute(usage_sql, params).fetchall()
+            tokens_in_sql = with_time(
+                load_query("metrics/models/tokens_input.sql"), clause
+            )
+            tokens_in_rows = conn.execute(tokens_in_sql, params).fetchall()
+            tokens_out_sql = with_time(
+                load_query("metrics/models/tokens_output.sql"), clause
+            )
+            tokens_out_rows = conn.execute(tokens_out_sql, params).fetchall()
+            tool_sql = with_time(
+                load_query("metrics/models/tool_calls.sql"), clause
+            )
+            tool_rows = conn.execute(tool_sql, params).fetchall()
         models = [
-            {"model": row["model"], "count": row["cnt"]} for row in model_rows
+            {
+                "provider": row["provider"],
+                "model": row["model"],
+                "count": row["cnt"],
+            }
+            for row in model_rows
+        ]
+        tokens_input = [
+            {
+                "provider": row["provider"],
+                "model": row["model"],
+                "value": row["value"],
+            }
+            for row in tokens_in_rows
+        ]
+        tokens_output = [
+            {
+                "provider": row["provider"],
+                "model": row["model"],
+                "value": row["value"],
+            }
+            for row in tokens_out_rows
+        ]
+        tool_calls = [
+            {
+                "provider": row["provider"],
+                "model": row["model"],
+                "value": row["value"],
+            }
+            for row in tool_rows
         ]
         total_model_calls = sum(m["count"] for m in models)
+        total_models = len(models)
 
         return validate_response(
             make_success_response(
                 message="Model metrics obtenidas",
                 data={
                     "models": models,
+                    "tokens_input": tokens_input,
+                    "tokens_output": tokens_output,
+                    "tool_calls": tool_calls,
                     "total_model_calls": total_model_calls,
+                    "total_models": total_models,
                 },
                 usage=zero_usage(),
             )

@@ -22,6 +22,7 @@ _QUERIES_DIR = os.path.join(
 )
 
 TIME_PLACEHOLDER = "{TIME_CLAUSE}"
+MODEL_PLACEHOLDER = "{MODEL_CLAUSE}"
 
 
 @lru_cache(maxsize=None)
