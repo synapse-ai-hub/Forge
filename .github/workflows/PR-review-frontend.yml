@@ -12,7 +12,10 @@ jobs:
   review:
     if: |-
       (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main') ||
-      (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '@gemini-cli /review'))
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request &&
+       startsWith(github.event.comment.body, '@gemini-cli /review') &&
+       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
     runs-on: 'ubuntu-latest'
     permissions:
       contents: 'read'
@@ -20,7 +23,12 @@ jobs:
       issues: 'write'
       pull-requests: 'write'
     steps:
+      # En issue_comment el checkout por defecto trae main, no el PR.
+      # fetch-depth: 0 permite comparar contra main con git diff / git log.
       - uses: 'actions/checkout@v4'
+        with:
+          ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || '' }}
+          fetch-depth: 0
 
       - name: 'Get PR refs'
         id: pr
@@ -56,6 +64,25 @@ jobs:
         with:
           gemini_api_key: '${{ secrets.GOOGLE_API_KEY }}'
           gemini_model: 'gemini-3.5-flash-lite'
+          # Temporal: muestra los tool calls en los logs. Sacalo cuando funcione.
+          gemini_debug: true
+          # En issue_comment el default de la action queda vacío, por eso se setea explícito.
+          github_pr_number: '${{ github.event.pull_request.number || github.event.issue.number }}'
+          # Autoriza en modo headless las tools que pide el prompt
+          # (en no interactivo, lo que requiere confirmación se deniega).
+          settings: |-
+            {
+              "tools": {
+                "allowed": [
+                  "write_file",
+                  "run_shell_command(gh pr comment)",
+                  "run_shell_command(gh pr diff)",
+                  "run_shell_command(gh pr view)",
+                  "run_shell_command(git diff)",
+                  "run_shell_command(git log)"
+                ]
+              }
+            }
           prompt: |
             Eres un revisor de código experto para el frontend de synapseForge (React 18 + Vite + TS + Tailwind).
             Revisa los cambios del Pull Request actual.
