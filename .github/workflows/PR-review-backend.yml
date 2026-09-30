@@ -1,0 +1,32 @@
+name: '🔎 Gemini Review - Backend'
+
+on:
+  pull_request:
+    branches: [main]
+    paths: ['backend/**']
+    types: [opened, synchronize, reopened]
+  issue_comment:
+    types: [created]
+
+jobs:
+  review:
+    if: |-
+      (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main') ||
+      (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '@gemini-cli /review'))
+    runs-on: 'ubuntu-latest'
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+      issues: 'write'
+      pull-requests: 'write'
+    steps:
+      - uses: 'actions/checkout@v4'
+      - uses: 'google-github-actions/run-gemini-cli@v0'
+        env:
+          GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
+          GEMINI_API_KEY: '${{ secrets.GOOGLE_API_KEY }}'
+        with:
+          gemini_api_key: '${{ secrets.GOOGLE_API_KEY }}'
+          gemini_model: 'gemini-3.5-flash-lite'
+          prompt: '/review-backend'
+          extensions: '["https://github.com/gemini-cli-extensions/code-review"]'
