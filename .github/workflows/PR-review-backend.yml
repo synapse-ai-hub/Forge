@@ -86,9 +86,7 @@ jobs:
             ## File: path/to/file/one
             ### L<LINE_NUMBER>: [<SEVERITY>] Single sentence summary of the issue.
             More details about the issue.
-            Suggested change:
-            ```
-            - old code
-            + new code
-            ```
+            Suggested change: show the diff inline, using lines that start with "- " for the old code and "+ " for the new code. Do not wrap this in triple backticks.
             </OUTPUT>
+           
+    
