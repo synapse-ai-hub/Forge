@@ -41,7 +41,7 @@ jobs:
           GEMINI_CLI_TRUST_WORKSPACE: 'true'
         with:
           gemini_api_key: '${{ secrets.GOOGLE_API_KEY }}'
-          gemini_model: 'gemini-1.5-flash'
+          gemini_model: 'gemini-3.5-flash-lite'
           prompt: |
             Eres un revisor de código experto para el frontend de synapseForge (React 18 + Vite + TS + Tailwind).
             Revisa los cambios del Pull Request actual.
