@@ -30,6 +30,10 @@ jobs:
           ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || '' }}
           fetch-depth: 0
 
+      - name: 'Record start time'
+        id: start
+        run: echo "ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
       - name: 'Get PR refs'
         id: pr
         if: github.event_name == 'issue_comment'
@@ -53,6 +57,7 @@ jobs:
               - 'frontend/**'
 
       - uses: 'google-github-actions/run-gemini-cli@v0'
+        id: gemini
         if: |-
           (github.event_name == 'pull_request') ||
           (github.event_name == 'issue_comment' && steps.filter.outputs.frontend == 'true')
@@ -64,14 +69,17 @@ jobs:
         with:
           gemini_api_key: '${{ secrets.GOOGLE_API_KEY }}'
           gemini_model: 'gemini-3.5-flash-lite'
-          # Temporal: muestra los tool calls en los logs. Sacalo cuando funcione.
-          gemini_debug: true
+          # Apagado por defecto. Para depurar: Settings > Variables > GEMINI_DEBUG = true
+          gemini_debug: '${{ fromJSON(vars.GEMINI_DEBUG || false) }}'
           # En issue_comment el default de la action queda vacío, por eso se setea explícito.
           github_pr_number: '${{ github.event.pull_request.number || github.event.issue.number }}'
-          # Autoriza en modo headless las tools que pide el prompt
-          # (en no interactivo, lo que requiere confirmación se deniega).
+          # includeDirectories: hace válido /tmp/review.md para write_file.
+          # allowed: en modo headless lo que pide confirmación se deniega.
           settings: |-
             {
+              "context": {
+                "includeDirectories": ["/tmp"]
+              },
               "tools": {
                 "allowed": [
                   "write_file",
@@ -79,7 +87,11 @@ jobs:
                   "run_shell_command(gh pr diff)",
                   "run_shell_command(gh pr view)",
                   "run_shell_command(git diff)",
-                  "run_shell_command(git log)"
+                  "run_shell_command(git log)",
+                  "run_shell_command(git show)",
+                  "run_shell_command(git diff-tree)",
+                  "run_shell_command(git status)",
+                  "run_shell_command(git branch)"
                 ]
               }
             }
@@ -115,3 +127,26 @@ jobs:
             More details about the issue.
             Suggested change: show the diff inline, using lines that start with "- " for the old code and "+ " for the new code. Do not wrap this in triple backticks.
             </OUTPUT>
+
+      # Red de seguridad: si Gemini no llegó a comentar, publica su resultado.
+      # Si el bot ya comentó durante este job, no hace nada (evita duplicados).
+      - name: 'Fallback - post review if Gemini did not'
+        if: ${{ always() && steps.gemini.conclusion != 'skipped' && steps.gemini.conclusion != 'cancelled' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
+          REPO: ${{ github.repository }}
+          START_TS: ${{ steps.start.outputs.ts }}
+          SUMMARY: ${{ steps.gemini.outputs.summary }}
+        run: |
+          POSTED=$(gh api "repos/$REPO/issues/$PR_NUMBER/comments" --paginate \
+            --jq ".[] | select(.user.login == \"github-actions[bot]\" and .created_at >= \"$START_TS\") | .id" | wc -l)
+          if [ "$POSTED" -gt 0 ]; then
+            echo "Gemini ya comentó en el PR. Nada que hacer."
+          elif [ -n "$SUMMARY" ]; then
+            printf '%s\n' "$SUMMARY" > "$RUNNER_TEMP/review.md"
+            gh pr comment "$PR_NUMBER" --body-file "$RUNNER_TEMP/review.md"
+            echo "Comentario publicado por el fallback."
+          else
+            echo "::warning::Gemini no comentó y no devolvió summary. Activá GEMINI_DEBUG=true y revisá los logs."
+          fi
