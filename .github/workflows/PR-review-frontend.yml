@@ -22,37 +22,37 @@ jobs:
     steps:
       - uses: 'actions/checkout@v4'
 
-      - name: Check if PR touches frontend files
-        id: check
+      - name: 'Check if PR touches frontend files'
+        id: filter
         if: github.event_name == 'issue_comment'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          PR_URL="${{ github.event.issue.pull_request.url }}"
-          if [ -z "$PR_URL" ] || [ "$PR_URL" == "null" ]; then
-            echo "relevant=false" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-          PR_NUM=$(basename "$PR_URL")
-          FILES=$(gh api repos/${{ github.repository }}/pulls/$PR_NUM/files --jq '.[].filename' 2>/dev/null || echo "")
-          if echo "$FILES" | grep -q '^frontend/'; then
-            echo "relevant=true" >> $GITHUB_OUTPUT
-          else
-            echo "relevant=false" >> $GITHUB_OUTPUT
-          fi
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            frontend:
+              - 'frontend/**'
 
       - uses: 'google-github-actions/run-gemini-cli@v0'
         if: |-
           (github.event_name == 'pull_request') ||
-          (github.event_name == 'issue_comment' && steps.check.outputs.relevant == 'true')
+          (github.event_name == 'issue_comment' && steps.filter.outputs.frontend == 'true')
         env:
           GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
           GEMINI_API_KEY: '${{ secrets.GOOGLE_API_KEY }}'
           GEMINI_CLI_TRUST_WORKSPACE: 'true'
         with:
           gemini_api_key: '${{ secrets.GOOGLE_API_KEY }}'
-          gemini_model: 'gemini-3.5-flash-lite'
+          gemini_model: 'gemini-1.5-flash'
           prompt: |
+            Eres un revisor de código experto para el frontend de synapseForge (React 18 + Vite + TS + Tailwind).
+            Revisa los cambios del Pull Request actual.
+
+            **Instrucción crítica**: Debes publicar tu revisión como un comentario en el PR.
+            Sigue estos pasos exactamente:
+            1. Escribe tu revisión completa en el archivo `/tmp/review.md`.
+            2. Ejecuta el comando: `gh pr comment ${{ github.event.pull_request.number || github.event.issue.number }} --body-file /tmp/review.md`
+
+            Asegúrate de que el archivo `/tmp/review.md` esté formateado correctamente. Si no hay problemas, el archivo debe contener exactamente "No issues found. Code looks clean and ready to merge.".
+
             <CONTEXT>
                 **Repository**: synapseForge - Frontend Service (React 18 + Vite + TS + Tailwind)
                 **Focus**: React components, hooks, TypeScript types, UI styling, accessibility, performance.
@@ -77,4 +77,3 @@ jobs:
             + new code
             ```
             </OUTPUT>
-          extensions: '["https://github.com/gemini-cli-extensions/code-review"]'
