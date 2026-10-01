@@ -114,7 +114,7 @@ No se encontraron problemas. El código está limpio y listo para mergear.
 ### L<NUMERO_DE_LINEA>: [<SEVERIDAD>] Resumen del problema en una sola oración.
 Más detalles sobre el problema.
 Cambio sugerido:
-```
+```diff
 - código viejo
 + código nuevo
 ```
