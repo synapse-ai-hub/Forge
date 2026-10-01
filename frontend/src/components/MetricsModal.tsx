@@ -641,15 +641,28 @@ export function MetricsModal({ open, onClose }: MetricsModalProps) {
   }, [open, timeRange]);
 
   // Reset the model selection if the selected combo is no longer present
-  // in the current time range.
+  // in any metric with data for the current time range.
   useEffect(() => {
     if (!selectedModel) return;
-    const exists = (metrics.models?.models ?? []).some(
+    const allWithData = [
+      ...(metrics.models?.models ?? []),
+      ...(metrics.models?.tokens_input ?? []),
+      ...(metrics.models?.tokens_output ?? []),
+      ...(metrics.models?.tool_calls ?? []),
+      ...(metrics.models?.latency_models ?? []),
+    ];
+    const exists = allWithData.some(
       (m) =>
         m.provider === selectedModel.provider && m.model === selectedModel.model,
     );
     if (!exists) setSelectedModel(null);
   }, [metrics.models, selectedModel]);
+
+  // Each model subcard only offers models with data for that metric,
+  // so a failing model without latency/tokens never shows an empty dropdown.
+  useEffect(() => {
+    setSelectedModel(null);
+  }, [modelsSub]);
 
   const ov = metrics.overview;
   const ses = metrics.sessions;
@@ -913,7 +926,7 @@ export function MetricsModal({ open, onClose }: MetricsModalProps) {
                             timeRange={timeRange}
                             model={selectedModel?.model}
                             provider={selectedModel?.provider}
-                            models={mdl?.models ?? []}
+                            models={mdl?.tokens_input ?? []}
                             selectedModel={selectedModel}
                             onSelectModel={setSelectedModel}
                           />
@@ -926,7 +939,7 @@ export function MetricsModal({ open, onClose }: MetricsModalProps) {
                             timeRange={timeRange}
                             model={selectedModel?.model}
                             provider={selectedModel?.provider}
-                            models={mdl?.models ?? []}
+                            models={mdl?.tokens_output ?? []}
                             selectedModel={selectedModel}
                             onSelectModel={setSelectedModel}
                           />
@@ -946,7 +959,7 @@ export function MetricsModal({ open, onClose }: MetricsModalProps) {
                                 value: r.value,
                               }))}
                             showModelDropdown
-                            models={mdl?.models ?? []}
+                            models={mdl?.tool_calls ?? []}
                             selectedModel={selectedModel}
                             onSelectModel={setSelectedModel}
                             onDownload={() =>
@@ -962,7 +975,7 @@ export function MetricsModal({ open, onClose }: MetricsModalProps) {
                             timeRange={timeRange}
                             model={selectedModel?.model}
                             provider={selectedModel?.provider}
-                            models={mdl?.models ?? []}
+                            models={mdl?.latency_models ?? []}
                             selectedModel={selectedModel}
                             onSelectModel={setSelectedModel}
                           />

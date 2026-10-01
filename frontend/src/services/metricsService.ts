@@ -55,6 +55,7 @@ export interface ModelMetrics {
   tokens_input: { provider: string; model: string; value: number }[];
   tokens_output: { provider: string; model: string; value: number }[];
   tool_calls: { provider: string; model: string; value: number }[];
+  latency_models: { provider: string; model: string; value: number }[];
   total_model_calls: number;
   total_models: number;
 }

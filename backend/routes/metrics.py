@@ -623,6 +623,10 @@ async def get_model_metrics(time_range: str = "1m"):
                 load_query("metrics/models/tool_calls.sql"), clause
             )
             tool_rows = conn.execute(tool_sql, params).fetchall()
+            latency_sql = with_time(
+                load_query("metrics/models/latency.sql"), clause
+            )
+            latency_rows = conn.execute(latency_sql, params).fetchall()
         models = [
             {
                 "provider": row["provider"],
@@ -655,6 +659,14 @@ async def get_model_metrics(time_range: str = "1m"):
             }
             for row in tool_rows
         ]
+        latency_models = [
+            {
+                "provider": row["provider"],
+                "model": row["model"],
+                "value": row["value"],
+            }
+            for row in latency_rows
+        ]
         total_model_calls = sum(m["count"] for m in models)
         total_models = len(models)
 
@@ -666,6 +678,7 @@ async def get_model_metrics(time_range: str = "1m"):
                     "tokens_input": tokens_input,
                     "tokens_output": tokens_output,
                     "tool_calls": tool_calls,
+                    "latency_models": latency_models,
                     "total_model_calls": total_model_calls,
                     "total_models": total_models,
                 },
