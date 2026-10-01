@@ -2,7 +2,6 @@ name: '🔎 Gemini Review - Backend'
 
 on:
   pull_request:
-    branches: [main]
     paths: ['backend/**']
     types: [opened, synchronize, reopened]
   issue_comment:
@@ -12,10 +11,7 @@ jobs:
   review:
     if: |-
       (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main') ||
-      (github.event_name == 'issue_comment' &&
-       github.event.issue.pull_request &&
-       startsWith(github.event.comment.body, '@gemini-cli /review') &&
-       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request && startsWith(github.event.comment.body, '@gemini-cli /review') && contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association))
     runs-on: 'ubuntu-latest'
     timeout-minutes: 10
     permissions:
@@ -24,42 +20,25 @@ jobs:
       issues: 'write'
       pull-requests: 'write'
     steps:
-      # En issue_comment el checkout por defecto trae main, no el PR.
-      # fetch-depth: 0 permite comparar contra main con git diff / git log.
+      - name: 'Check changed files (solo aplica al trigger por comentario)'
+        id: changes
+        if: github.event_name == 'issue_comment'
+        uses: 'actions/github-script@v7'
+        with:
+          script: |
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+              per_page: 100,
+            });
+            const relevant = files.some((f) => f.filename.startsWith('backend/'));
+            core.setOutput('relevant', relevant);
       - uses: 'actions/checkout@v4'
-        with:
-          ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || '' }}
-          fetch-depth: 0
-
-      - name: 'Record start time'
-        id: start
-        run: echo "ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
-
-      - name: 'Get PR refs'
-        id: pr
-        if: github.event_name == 'issue_comment'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          PR_NUM=$(basename "${{ github.event.issue.pull_request.url }}")
-          PR_JSON=$(gh api repos/${{ github.repository }}/pulls/$PR_NUM)
-          echo "base=$(echo "$PR_JSON" | jq -r '.base.ref')" >> $GITHUB_OUTPUT
-          echo "head=$(echo "$PR_JSON" | jq -r '.head.ref')" >> $GITHUB_OUTPUT
-
-      - name: 'Check if PR touches backend files'
-        id: filter
-        if: github.event_name == 'issue_comment'
-        uses: dorny/paths-filter@v3
-        with:
-          base: ${{ steps.pr.outputs.base }}
-          ref: ${{ steps.pr.outputs.head }}
-          filters: |
-            backend:
-              - 'backend/**'
-
+        if: github.event_name != 'issue_comment' || steps.changes.outputs.relevant == 'true'
       - name: 'Generar diff del PR'
         id: diff
-        if: github.event_name != 'issue_comment' || steps.filter.outputs.backend == 'true'
+        if: github.event_name != 'issue_comment' || steps.changes.outputs.relevant == 'true'
         env:
           GH_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
           PR_NUMBER: '${{ github.event.pull_request.number || github.event.issue.number }}'
@@ -77,70 +56,27 @@ jobs:
           else
             echo "empty=true" >> "${GITHUB_OUTPUT}"
           fi
-
       - uses: 'google-github-actions/run-gemini-cli@v0'
         id: gemini
-        if: |-
-          (github.event_name == 'pull_request') ||
-          (github.event_name == 'issue_comment' && steps.filter.outputs.backend == 'true')
+        if: (github.event_name != 'issue_comment' || steps.changes.outputs.relevant == 'true') && steps.diff.outputs.empty != 'true'
         env:
           GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
-          GH_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
-          GEMINI_API_KEY: '${{ secrets.GOOGLE_API_KEY }}'
+          GEMINI_API_KEY: '${{ secrets.GOOGLE_API_KEY || secrets.GEMINI_API_KEY }}'
           GEMINI_CLI_TRUST_WORKSPACE: 'true'
         with:
-          gemini_api_key: '${{ secrets.GOOGLE_API_KEY }}'
+          gemini_api_key: '${{ secrets.GOOGLE_API_KEY || secrets.GEMINI_API_KEY }}'
           gemini_model: 'gemini-3.5-flash-lite'
-          gemini_debug: '${{ fromJSON(vars.GEMINI_DEBUG || false) }}'
-          github_pr_number: '${{ github.event.pull_request.number || github.event.issue.number }}'
-          settings: |-
-            {
-              "context": {
-                "includeDirectories": ["/tmp"]
-              },
-              "tools": {
-                "allowed": [
-                  "write_file",
-                  "run_shell_command(gh pr comment)",
-                  "run_shell_command(gh pr diff)",
-                  "run_shell_command(gh pr view)",
-                  "run_shell_command(git diff)",
-                  "run_shell_command(git log)",
-                  "run_shell_command(git show)",
-                  "run_shell_command(git diff-tree)",
-                  "run_shell_command(git status)",
-                  "run_shell_command(git branch)"
-                ]
-              }
-            }
           prompt: '/review-backend'
-
-      - name: 'Fallback - post review if Gemini did not'
-        if: ${{ always() && steps.gemini.conclusion != 'skipped' && steps.gemini.conclusion != 'cancelled' }}
+      - name: 'Publicar review en el PR'
+        if: (github.event_name != 'issue_comment' || steps.changes.outputs.relevant == 'true') && steps.diff.outputs.empty != 'true'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
-          REPO: ${{ github.repository }}
-          START_TS: ${{ steps.start.outputs.ts }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          GH_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
+          PR_NUMBER: '${{ github.event.pull_request.number || github.event.issue.number }}'
+          REVIEW_BODY: '${{ steps.gemini.outputs.summary }}'
         run: |
-          POSTED=$(gh api "repos/$REPO/issues/$PR_NUMBER/comments" --paginate \
-            --jq ".[] | select(.user.login == \"github-actions[bot]\" and .created_at >= \"$START_TS\") | .id" | wc -l)
-          if [ "$POSTED" -gt 0 ]; then
-            echo "Gemini ya comentó en el PR. Nada que hacer."
+          if [[ -z "${REVIEW_BODY}" ]]; then
+            echo "Gemini no devolvió respuesta, no se publica nada."
             exit 0
           fi
-
-          REVIEW_FILE=""
-          for f in /tmp/review.md "$GITHUB_WORKSPACE/review.md" "$HOME"/.gemini/tmp/*/review.md; do
-            if [ -s "$f" ]; then REVIEW_FILE="$f"; break; fi
-          done
-
-          if [ -n "$REVIEW_FILE" ]; then
-            gh pr comment "$PR_NUMBER" --body-file "$REVIEW_FILE"
-            echo "Comentario publicado por el fallback desde $REVIEW_FILE."
-          else
-            printf 'La revisión automática no generó un reporte. Ver el log: %s\n' "$RUN_URL" > "$RUNNER_TEMP/review.md"
-            gh pr comment "$PR_NUMBER" --body-file "$RUNNER_TEMP/review.md"
-            echo "::warning::No se encontró archivo de revisión. Activá GEMINI_DEBUG=true y revisá los logs."
-          fi
+          printf '%s\n' "${REVIEW_BODY}" > review.md
+          gh pr comment "${PR_NUMBER}" --repo "${{ github.repository }}" --body-file review.md
