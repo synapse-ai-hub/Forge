@@ -45,7 +45,7 @@ from backend.agent.utils.contract import (
 from backend.agent.tools import Tools
 
 from backend.agent.utils.model_catalog import translate_reasoning, get_reasoning_streaming_config, get_provider_api_type
-from backend.utils.spend_handler import calculate_cost, record_spend
+from backend.agent.utils.spend_handler import calculate_cost, record_spend
 
 # Marcadores de comentarios usados en este proyecto:
 # TODO   : trabajo pendiente, todavía no implementado.

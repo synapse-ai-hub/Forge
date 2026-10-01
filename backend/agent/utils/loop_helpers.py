@@ -30,7 +30,7 @@ if _project_root not in sys.path:
 
 from backend.agent.permissions import get_agent_prompt, is_tool_allowed, list_agents
 from backend.agent.utils.error_logger import log_error
-from backend.utils.db import db_transaction, get_connection
+from backend.agent.utils.db import db_transaction, get_connection
 from backend.agent.utils.skill_loader import format_skills_section
 from backend.agent.utils.contract import make_error_response, make_success_response, zero_usage
 from backend.instances import agent

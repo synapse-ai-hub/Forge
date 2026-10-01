@@ -29,8 +29,8 @@ from backend.agent.utils.contract import (
     zero_usage,
 )
 from backend.agent.utils.error_logger import log_error
-from backend.utils.db import db_transaction
-from backend.utils.spend_handler import (
+from backend.agent.utils.db import db_transaction
+from backend.agent.utils.spend_handler import (
     get_all_spend,
     get_billing_stats,
     get_current_spend,
@@ -91,7 +91,7 @@ def _get_all_provider_stats() -> list[dict[str, Any]]:
         List of billing stats dicts per provider.
     """
     try:
-        from backend.utils.spend_handler import current_month
+        from backend.agent.utils.spend_handler import current_month
 
         with db_transaction() as conn:
             rows = conn.execute(

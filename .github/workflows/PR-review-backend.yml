@@ -17,6 +17,7 @@ jobs:
        startsWith(github.event.comment.body, '@gemini-cli /review') &&
        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
     runs-on: 'ubuntu-latest'
+    timeout-minutes: 10
     permissions:
       contents: 'read'
       id-token: 'write'
@@ -56,6 +57,27 @@ jobs:
             backend:
               - 'backend/**'
 
+      - name: 'Generar diff del PR'
+        id: diff
+        if: github.event_name != 'issue_comment' || steps.filter.outputs.backend == 'true'
+        env:
+          GH_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
+          PR_NUMBER: '${{ github.event.pull_request.number || github.event.issue.number }}'
+        run: |
+          gh pr diff "${PR_NUMBER}" --repo "${{ github.repository }}" > pr_full.diff
+          awk -v prefix="backend/" '
+            /^diff --git / {
+              keep = (index($0, " b/" prefix) > 0 || index($0, " \"b/" prefix) > 0) ? 1 : 0
+            }
+            keep { print }
+          ' pr_full.diff > pr.diff
+          echo "Diff filtrado a backend/: $(wc -l < pr.diff) lineas (de $(wc -l < pr_full.diff) totales)"
+          if [[ -s pr.diff ]]; then
+            echo "empty=false" >> "${GITHUB_OUTPUT}"
+          else
+            echo "empty=true" >> "${GITHUB_OUTPUT}"
+          fi
+
       - uses: 'google-github-actions/run-gemini-cli@v0'
         id: gemini
         if: |-
@@ -69,12 +91,8 @@ jobs:
         with:
           gemini_api_key: '${{ secrets.GOOGLE_API_KEY }}'
           gemini_model: 'gemini-3.5-flash-lite'
-          # Apagado por defecto. Para depurar: Settings > Variables > GEMINI_DEBUG = true
           gemini_debug: '${{ fromJSON(vars.GEMINI_DEBUG || false) }}'
-          # En issue_comment el default de la action queda vacío, por eso se setea explícito.
           github_pr_number: '${{ github.event.pull_request.number || github.event.issue.number }}'
-          # includeDirectories: hace válido /tmp/review.md para write_file.
-          # allowed: en modo headless lo que pide confirmación se deniega.
           settings: |-
             {
               "context": {
@@ -95,41 +113,8 @@ jobs:
                 ]
               }
             }
-          prompt: |
-            Eres un revisor de código experto para el backend de synapseForge (Python + FastAPI).
-            Revisa los cambios del Pull Request actual.
+          prompt: '/review-backend'
 
-            **Instrucción crítica**: Debes publicar tu revisión como un comentario en el PR.
-            Sigue estos pasos exactamente usando tus herramientas:
-            1. Usa la herramienta `write_file` para escribir tu revisión completa en el archivo `/tmp/review.md`.
-            2. Usa la herramienta `run_shell_command` para ejecutar exactamente este comando:
-               `gh pr comment ${{ github.event.pull_request.number || github.event.issue.number }} --body-file /tmp/review.md`
-
-            Asegúrate de que el archivo `/tmp/review.md` esté formateado correctamente. Si no hay problemas, el archivo debe contener exactamente "No issues found. Code looks clean and ready to merge.".
-
-            <CONTEXT>
-                **Repository**: synapseForge - Backend Service (Python + FastAPI)
-                **Focus**: Python code, FastAPI endpoints, async/await patterns, error handling, security, database operations, performance.
-            </CONTEXT>
-            <OUTPUT>
-            The output **MUST** be clean, concise, and structured exactly as follows.
-
-            **If no issues are found:**
-            # Change summary: [Single sentence description of the overall change].
-            No issues found. Code looks clean and ready to merge.
-
-            **If issues are found:**
-            # Change summary: [Single sentence description of the overall change].
-            [Optional general feedback for the entire change.]
-
-            ## File: path/to/file/one
-            ### L<LINE_NUMBER>: [<SEVERITY>] Single sentence summary of the issue.
-            More details about the issue.
-            Suggested change: show the diff inline, using lines that start with "- " for the old code and "+ " for the new code. Do not wrap this in triple backticks.
-            </OUTPUT>
-
-      # Red de seguridad: si Gemini no llegó a comentar, publica el archivo de revisión
-      # que escribió. Si el bot ya comentó durante este job, no hace nada.
       - name: 'Fallback - post review if Gemini did not'
         if: ${{ always() && steps.gemini.conclusion != 'skipped' && steps.gemini.conclusion != 'cancelled' }}
         env:

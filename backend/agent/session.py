@@ -24,8 +24,8 @@ if _project_root not in sys.path:
 from backend.agent.utils.contract import make_error_response, make_success_response, zero_usage
 from backend.agent.utils.error_logger import log_error
 from backend.agent.ddl_setup import setup_database
-from backend.utils.db import DB_PATH
-from backend.utils.spend_handler import calculate_cost
+from backend.agent.utils.db import DB_PATH
+from backend.agent.utils.spend_handler import calculate_cost
 
 logger = logging.getLogger(__name__)
 

@@ -34,7 +34,7 @@ from backend.routes.file_text_extractor import (
     ExtractionResult,
     extract_text_from_bytes,
 )
-from backend.utils.db import db_transaction, get_connection
+from backend.agent.utils.db import db_transaction, get_connection
 
 logger = logging.getLogger(__name__)
 

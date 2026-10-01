@@ -28,7 +28,7 @@ if _project_root not in sys.path:
 
 from backend.agent.loop import AgentLoop
 from backend.agent.utils.error_logger import log_error, set_error_context, reset_error_context
-from backend.utils.db import db_transaction, get_connection
+from backend.agent.utils.db import db_transaction, get_connection
 from backend.instances import agent, session_manager
 from backend.routes.file_text_extractor import (
     ExtractionResult,

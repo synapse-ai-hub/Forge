@@ -154,7 +154,7 @@ async def craft_scheduled_prompt(data: dict[str, Any]) -> JSONResponse:
         # Contemplate this crafter LLM call (tracked in creator_calls
         # since it never produces messages rows).
         try:
-            from backend.utils.spend_handler import record_creator_call
+            from backend.agent.utils.spend_handler import record_creator_call
 
             record_creator_call(
                 "agenda:craft-prompt", agent.provider, agent.default_model,

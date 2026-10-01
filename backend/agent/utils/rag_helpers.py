@@ -469,7 +469,7 @@ def reindex_collection(db, name: str) -> dict:
     # Track the embedding-model call in SQLite (one row with the embedded
     # chunk count). Never breaks the reindex flow.
     try:
-        from backend.utils.spend_handler import record_external_usage
+        from backend.agent.utils.spend_handler import record_external_usage
 
         record_external_usage(
             "embedding", "google", db.embed_func.model_name, len(all_documents),
@@ -511,7 +511,7 @@ def reindex_collection(db, name: str) -> dict:
         _sanity_duration = round(time.time() - _sanity_t0, 2)
         # Track the query-embedding call in SQLite. Never breaks the flow.
         try:
-            from backend.utils.spend_handler import record_external_usage
+            from backend.agent.utils.spend_handler import record_external_usage
 
             record_external_usage(
                 "embedding", "google", db.embed_func.model_name, 1,
@@ -639,7 +639,7 @@ def _index_turn_sync(
             indexed = 1
             # Track the embedding-model call in SQLite. Never breaks the flow.
             try:
-                from backend.utils.spend_handler import record_external_usage
+                from backend.agent.utils.spend_handler import record_external_usage
 
                 record_external_usage(
                     "embedding", "google", db.embed_func.model_name, 1,
@@ -671,7 +671,7 @@ def _index_turn_sync(
             # Track the embedding-model call in SQLite (one row with the
             # embedded chunk count). Never breaks the flow.
             try:
-                from backend.utils.spend_handler import record_external_usage
+                from backend.agent.utils.spend_handler import record_external_usage
 
                 record_external_usage(
                     "embedding", "google", db.embed_func.model_name, len(documents),

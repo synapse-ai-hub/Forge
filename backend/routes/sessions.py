@@ -14,7 +14,7 @@ import sqlite3
 import sys
 
 from backend.agent.utils.error_logger import log_error
-from backend.utils.db import db_transaction, get_connection
+from backend.agent.utils.db import db_transaction, get_connection
 
 from fastapi import APIRouter
 

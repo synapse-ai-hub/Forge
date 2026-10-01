@@ -26,7 +26,7 @@ from backend.agent.utils.contract import (
     validate_response,
     zero_usage,
 )
-from backend.utils.db import db_transaction, get_connection
+from backend.agent.utils.db import db_transaction, get_connection
 from backend.agent.utils.error_logger import log_error
 
 logger = logging.getLogger(__name__)

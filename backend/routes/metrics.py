@@ -31,7 +31,7 @@ from backend.agent.utils.contract import (
     zero_usage,
 )
 from backend.agent.utils.error_logger import log_error
-from backend.utils.db import get_connection
+from backend.agent.utils.db import get_connection
 from backend.instances import session_manager
 
 logger = logging.getLogger(__name__)

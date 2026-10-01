@@ -983,7 +983,7 @@ class Tools:
             _rag_duration = round(time.time() - _rag_t0, 2)
             # Track the query-embedding call in SQLite. Never breaks the flow.
             try:
-                from backend.utils.spend_handler import record_external_usage
+                from backend.agent.utils.spend_handler import record_external_usage
 
                 record_external_usage(
                     "embedding", "google", db.embed_func.model_name, 1,
@@ -1068,7 +1068,7 @@ class Tools:
             _mem_duration = round(time.time() - _mem_t0, 2)
             # Track the query-embedding call in SQLite. Never breaks the flow.
             try:
-                from backend.utils.spend_handler import record_external_usage
+                from backend.agent.utils.spend_handler import record_external_usage
 
                 record_external_usage(
                     "embedding", "google", db.embed_func.model_name, 1,

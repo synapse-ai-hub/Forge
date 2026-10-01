@@ -15,12 +15,20 @@ Este directorio contiene los workflows de GitHub Actions para la revisión autom
 Existen dos flujos independientes que se activan según las rutas modificadas en los PRs hacia la rama `main`:
 
 ### 1. `PR-review-backend.yml`
-- **Disparador**: Pull Request hacia `main` que incluya cambios en la carpeta `backend/**`.
-- **Propósito**: Ejecuta la revisión de código específica para el backend (Python/FastAPI) utilizando el prompt configurado en `.gemini/commands/review-backend.toml`.
+- **Disparador**: Pull Request hacia `main` que incluya cambios en la carpeta `backend/**`, o mediante comentario `@gemini-cli /review` en el PR.
+- **Propósito**: Ejecuta la revisión de código específica para el backend (Python/FastAPI) utilizando el prompt en formato TOML ubicado en `.gemini/commands/review-backend.toml`, evaluando arquitectura, calidad de código y criterios estrictos de seguridad (inyección SQL, command injection, path traversal, SSRF, prompt injection en agentes, manejo de secretos, CORS y autenticación).
 
 ### 2. `PR-review-frontend.yml`
-- **Disparador**: Pull Request hacia `main` que incluya cambios en la carpeta `frontend/**`.
-- **Propósito**: Ejecuta la revisión de código específica para el frontend (React/Vite/TypeScript) utilizando el prompt configurado en `.gemini/commands/review-frontend.toml`.
+- **Disparador**: Pull Request hacia `main` que incluya cambios en la carpeta `frontend/**`, o mediante comentario `@gemini-cli /review` en el PR.
+- **Propósito**: Ejecuta la revisión de código específica para el frontend (React/Vite/TypeScript) utilizando el prompt en formato TOML ubicado en `.gemini/commands/review-frontend.toml`, evaluando componentes, hooks, tipado estricto y criterios estrictos de seguridad (prevención de XSS con dompurify, manejo seguro de secretos en cliente, almacenamiento de tokens, CSRF y validación de inputs).
+
+---
+
+## Características Principales
+
+- **Prompts en TOML**: Los lineamientos y criterios de revisión residen en `.gemini/commands/`, permitiendo reutilización y mantenimiento centralizado.
+- **Filtrado de Diff**: Genera un diff optimizado incluyendo únicamente los archivos de la capa correspondiente (`backend/` o `frontend/`).
+- **Mecanismo de Fallback**: Si el bot no emite su comentario automático, un paso de respaldo garantiza que el reporte de revisión se publique en el PR.
 
 ---
 
@@ -55,3 +63,5 @@ Para que los workflows funcionen correctamente, se requiere configurar el siguie
      ```text
      @gemini-cli /review
      ```
+
+---
