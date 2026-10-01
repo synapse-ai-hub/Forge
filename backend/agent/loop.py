@@ -79,7 +79,6 @@ from backend.agent.utils.loop_helpers import (
 )
 from backend.agent.utils.model_resolver import (
     ensure_context_window,
-    get_vram_gb,
     ollama_default_context,
 )
 from backend.agent.utils.spend_handler import check_spend_limit

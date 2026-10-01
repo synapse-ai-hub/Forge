@@ -154,8 +154,7 @@ def make_error_response(message: str, usage: Optional[UsageReport] = None) -> di
     """
     response: dict = {
         "status": "error",
-        "message": message,
-        "data": None,
+       
         "tool_calls": None,
         "usage": usage if usage is not None else zero_usage(),
     }
