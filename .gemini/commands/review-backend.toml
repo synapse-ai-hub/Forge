@@ -45,6 +45,13 @@ sin impacto real.
 - Manejo de errores: excepciones específicas, no `except Exception` genérico
   que oculta bugs. Logs estructurados con `log_error()` existente.
 
+**Imports y análisis de faltantes**
+- **Imports detallados**: Revisar minuciosamente todos los imports nuevos o modificados. Detectar imports circulares, imports no utilizados, imports relativos incorrectos (`..`) o mezcla inconsistente. Todos los imports deben ser absolutos desde la raíz del proyecto (`from backend...`).
+- **Lógica y elementos faltantes**: Revisar si a la implementación le falta algo esencial (manejo de errores específicos, validaciones de entrada, casos límite o tests correspondientes).
+
+**Cero omisiones y revisión exhaustiva**
+- **Análisis línea por línea**: Analizá el diff completo de principio a fin, archivo por archivo y línea por línea. Está estrictamente prohibido omitir hallazgos por fatiga del modelo, longitud del diff o por haber reportado ya otros problemas. Reportá **todos** los problemas reales encontrados sin excepción.
+
 **Seguridad — máxima prioridad**
 - **Inyección SQL**: ningún `execute()` con string formatting o `%s` sin
   parámetros parametrizados. Usar `?` o named params de sqlite3/ORM.
@@ -53,7 +60,7 @@ sin impacto real.
 - **Path traversal**: ningún `open()`, `os.path.join()` o `StaticFiles`
   con ruta construida desde input del usuario sin validación/normalización.
 - **SSRF**: validar URLs de webhooks y llamadas HTTP salientes — no
-  permitir `localhost`, `169.254.169.254`, redes privadas.
+  permitir `localhost`, `127.0.0.1` o redes privadas en URLs provistas por usuario.
 - **Prompt injection**: en agentes que procesan input de usuario,
   llamadas a LLM o tool calls, validar y sanitizar el input antes
   de pasarlo al modelo. No confiar en el input del usuario como
@@ -108,7 +115,15 @@ No se encontraron problemas. El código está limpio y listo para mergear.
 
 **Si se encuentran problemas:**
 # Resumen del cambio: [Descripción en una sola oración del cambio general].
-[Comentario general opcional sobre todo el cambio.]
+
+## 📋 Lista general de hallazgos
+(Generá aquí una lista numerada con **todos** los problemas detectados en el diff, indicando archivo, línea y severidad, para garantizar cero omisiones).
+1. `archivo:línea` — [<SEVERIDAD>] Breve descripción.
+2. ...
+
+---
+
+## Detalle de hallazgos por archivo
 
 ## Archivo: path/al/archivo
 ### L<NUMERO_DE_LINEA>: [<SEVERIDAD>] Resumen del problema en una sola oración.

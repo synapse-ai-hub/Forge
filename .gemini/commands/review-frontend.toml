@@ -67,8 +67,15 @@ subjetivas sin impacto real.
   de `localStorage` — deben ser `const enum`/objetos `as const`
   compartidos, no strings sueltos copiados en cada componente.
   Revisá **todas** las ocurrencias del mismo literal en el archivo
-  (no solo la primera función o componente donde aparece) — si se
+  (not solo la primera función o componente donde aparece) — si se
   repite en varios lugares, mencionalos todos en el mismo hallazgo.
+
+**Imports y análisis de faltantes**
+- **Imports detallados**: Revisar minuciosamente todos los imports nuevos o modificados. Detectar imports circulares, imports no utilizados, imports relativos incorrectos (`..`) o mezcla inconsistente. Usar siempre rutas absolutas o alias limpios configurados en Vite/TypeScript.
+- **Componentes y lógica faltante**: Verificar si a la implementación le falta algo esencial (estados de carga `loading`, manejo de errores en llamadas API, validaciones en formularios, props requeridas o tests).
+
+**Cero omisiones y revisión exhaustiva**
+- **Análisis línea por línea**: Analizá el diff completo de principio a fin, archivo por archivo y línea por línea. Está estrictamente prohibido omitir hallazgos por fatiga del modelo, longitud del diff o por haber reportado ya otros problemas. Reportá **todos** los problemas reales encontrados sin excepción.
 
 **Seguridad — máxima prioridad**
 - **XSS**: `dangerouslySetInnerHTML` sin sanitizar con `dompurify` es
@@ -151,7 +158,15 @@ mergear.
 **Si se encuentran problemas:**
 # Resumen del cambio: [Descripción en una sola oración del cambio
 general].
-[Comentario general opcional sobre todo el cambio.]
+
+## 📋 Lista general de hallazgos
+(Generá aquí una lista numerada con **todos** los problemas detectados en el diff, indicando archivo, línea y severidad, para garantizar cero omisiones).
+1. `archivo:línea` — [<SEVERIDAD>] Breve descripción.
+2. ...
+
+---
+
+## Detalle de hallazgos por archivo
 
 ## Archivo: path/al/archivo
 ### L<NUMERO_DE_LINEA>: [<SEVERIDAD>] Resumen del problema en una
