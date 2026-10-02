@@ -200,7 +200,7 @@ def _fetch_one(conn, path: str, clause: str, params: tuple) -> Any:
     Args:
         conn: Open SQLite connection.
         path: Query path relative to ``agent_db/queries``.
-        clause: Time filter clause (`` AND col >= datetime('now', ?)``).
+        clause: Time filter clause (local-time ``strftime`` bound).
         params: Parameters for the clause.
 
     Returns:

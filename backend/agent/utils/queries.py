@@ -49,6 +49,12 @@ def time_clause(
 ) -> tuple[str, tuple[Any, ...]]:
     """Return a parameterized SQL time filter and its tuple parameters.
 
+    Bounds are computed in the server's local time with ``'T'`` separator
+    (``strftime('%Y-%m-%dT%H:%M:%S', 'now', 'localtime', ...)``) to match
+    how ``created_at`` is stored (``datetime.now().isoformat()``, local
+    naive). Using UTC ``datetime('now')`` here shifts the window and its
+    space separator breaks same-day string comparison (``'T' > ' '``).
+
     Args:
         time_range: One of ``1h``, ``6h``, ``1d``, ``1w``, ``1m``, ``all``.
         column_name: Fully qualified column the filter applies to.
@@ -59,15 +65,15 @@ def time_clause(
         prevent SQL injection.
     """
     if time_range == "1h":
-        return f" AND {column_name} >= datetime('now', ?)", ("-1 hour",)
+        return f" AND {column_name} >= strftime('%Y-%m-%dT%H:%M:%S', 'now', 'localtime', ?)", ("-1 hour",)
     if time_range == "6h":
-        return f" AND {column_name} >= datetime('now', ?)", ("-6 hours",)
+        return f" AND {column_name} >= strftime('%Y-%m-%dT%H:%M:%S', 'now', 'localtime', ?)", ("-6 hours",)
     if time_range == "1d":
-        return f" AND {column_name} >= datetime('now', ?)", ("-1 day",)
+        return f" AND {column_name} >= strftime('%Y-%m-%dT%H:%M:%S', 'now', 'localtime', ?)", ("-1 day",)
     if time_range == "1w":
-        return f" AND {column_name} >= datetime('now', ?)", ("-7 days",)
+        return f" AND {column_name} >= strftime('%Y-%m-%dT%H:%M:%S', 'now', 'localtime', ?)", ("-7 days",)
     if time_range == "1m":
-        return f" AND {column_name} >= datetime('now', ?)", ("-30 days",)
+        return f" AND {column_name} >= strftime('%Y-%m-%dT%H:%M:%S', 'now', 'localtime', ?)", ("-30 days",)
     return "", ()
 
 
