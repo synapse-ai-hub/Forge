@@ -1412,6 +1412,10 @@ class AgentLoop:
                             provider=effective_provider,
                             turn_number=turn_number,
                             step=step,
+                            # Failed tool calls are agent errors: persist the
+                            # status so error metrics can count them.
+                            status="error" if isinstance(result_data, dict) and result_data.get("status") == "error" else "success",
+                            message=str(result_data.get("message", "Tool failed"))[:500] if isinstance(result_data, dict) and result_data.get("status") == "error" else "",
                             usage={"total_time": block_durations.get(idx, 0.0)},
                         )
 

@@ -62,8 +62,8 @@ export interface ModelMetrics {
 
 export interface ErrorMetrics {
   total_errors: number;
-  errors_by_day: { date: string; count: number }[];
-  errors_by_source: { source: string; count: number }[];
+  errors_by_model: { provider: string; model: string; count: number }[];
+  errors_by_tool: { tool: string; count: number }[];
 }
 
 export interface CostMetrics {

@@ -546,13 +546,17 @@ async def get_tool_metrics(time_range: str = "1m"):
 
 @router.get("/metrics/errors")
 async def get_error_metrics(time_range: str = "1m"):
-    """Return error metrics from the error_log table with time range filter.
+    """Return agent error metrics with time range filter.
+
+    Only agent errors are counted: messages with status 'error'
+    (failed turns and failed tool calls). Backend/programming errors
+    from error_log are never included.
 
     Args:
         time_range: Time filter ('1h', '6h', '1d', '1w', '1m', 'all').
 
     Returns:
-        A contract response with total errors and per-day/per-source series.
+        A contract response with total errors and per-model/per-tool series.
     """
     try:
         time_range = _normalize_range(time_range)
@@ -560,31 +564,38 @@ async def get_error_metrics(time_range: str = "1m"):
 
         with get_connection() as conn:
             total_errors = (
-                _fetch_one(conn, "metrics/errors/total_errors.sql", clause, params)
+                _fetch_one(conn, "metrics/agent_errors/total_errors.sql", clause, params)
                 or 0
             )
 
-            by_day_sql = with_time(load_query("metrics/errors/by_day.sql"), clause)
-            day_rows = conn.execute(by_day_sql, params).fetchall()
-            errors_by_day = [
-                {"date": row["day"], "count": row["cnt"]} for row in day_rows
+            by_model_sql = with_time(
+                load_query("metrics/agent_errors/by_model.sql"), clause
+            )
+            model_rows = conn.execute(by_model_sql, params).fetchall()
+            errors_by_model = [
+                {
+                    "provider": row["provider"],
+                    "model": row["model"],
+                    "count": row["cnt"],
+                }
+                for row in model_rows
             ]
 
-            by_source_sql = with_time(
-                load_query("metrics/errors/by_source.sql"), clause
+            by_tool_sql = with_time(
+                load_query("metrics/agent_errors/by_tool.sql"), clause
             )
-            source_rows = conn.execute(by_source_sql, params).fetchall()
-        errors_by_source = [
-            {"source": row["source"], "count": row["cnt"]} for row in source_rows
-        ]
+            tool_rows = conn.execute(by_tool_sql, params).fetchall()
+            errors_by_tool = [
+                {"tool": row["tool"], "count": row["cnt"]} for row in tool_rows
+            ]
 
         return validate_response(
             make_success_response(
                 message="Error metrics obtenidas",
                 data={
                     "total_errors": total_errors,
-                    "errors_by_day": errors_by_day,
-                    "errors_by_source": errors_by_source,
+                    "errors_by_model": errors_by_model,
+                    "errors_by_tool": errors_by_tool,
                 },
                 usage=zero_usage(),
             )

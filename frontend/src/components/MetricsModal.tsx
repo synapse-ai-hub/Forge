@@ -289,6 +289,10 @@ function CatBox({
   models,
   selectedModel,
   onSelectModel,
+  showToolDropdown,
+  tools,
+  selectedTool,
+  onSelectTool,
   onDownload,
 }: {
   title: string;
@@ -298,6 +302,10 @@ function CatBox({
   models?: { provider: string; model: string }[];
   selectedModel?: { provider: string; model: string } | null;
   onSelectModel?: (m: { provider: string; model: string } | null) => void;
+  showToolDropdown?: boolean;
+  tools?: { tool: string }[];
+  selectedTool?: string | null;
+  onSelectTool?: (t: string | null) => void;
   onDownload?: () => void;
 }) {
   return (
@@ -334,6 +342,22 @@ function CatBox({
               ))}
             </select>
           )}
+          {showToolDropdown && (
+            <select
+              value={selectedTool ?? ""}
+              onChange={(e) => {
+                onSelectTool?.(e.target.value || null);
+              }}
+              className="rounded-md border border-app-border bg-white px-1.5 py-1 text-[10px] font-medium text-app-text-secondary cursor-pointer"
+            >
+              <option value="">Todas</option>
+              {(tools ?? []).map((t) => (
+                <option key={t.tool} value={t.tool}>
+                  {t.tool}
+                </option>
+              ))}
+            </select>
+          )}
           <button
             type="button"
             title="Descargar JSON"
@@ -357,6 +381,7 @@ const DOWNLOAD_SECTION: Record<string, string> = {
   messages: "mensajes",
   tools: "herramientas",
   models: "modelos",
+  agent_errors: "errores",
 };
 
 /** Figura exacta de synapse_tools.eda.outliers renderizada en el backend (base64). */
@@ -551,6 +576,13 @@ const COSTS_SUBS = [
   { id: "por_turno", title: "Costo por turno" },
 ];
 
+const ERRORS_SUBS = [
+  { id: "por_modelo", title: "Errores por modelo" },
+  { id: "por_sesion", title: "Errores por sesión" },
+  { id: "por_turno", title: "Errores por turno" },
+  { id: "por_herramienta", title: "Errores por herramienta" },
+];
+
 export function MetricsModal({ open, onClose }: MetricsModalProps) {
   const [timeRange, setTimeRange] = useState<TimeRange>("1m");
   const [loading, setLoading] = useState(false);
@@ -571,6 +603,12 @@ export function MetricsModal({ open, onClose }: MetricsModalProps) {
     provider: string;
     model: string;
   } | null>(null);
+  const [errorsSub, setErrorsSub] = useState<string>("por_modelo");
+  const [selectedErrorModel, setSelectedErrorModel] = useState<{
+    provider: string;
+    model: string;
+  } | null>(null);
+  const [selectedErrorTool, setSelectedErrorTool] = useState<string | null>(null);
 
   const hasData = metrics.overview !== null || metrics.sessions !== null;
 
@@ -1080,7 +1118,87 @@ export function MetricsModal({ open, onClose }: MetricsModalProps) {
                     </div>
                   </div>
                 )}
-                {activeCardId !== "sessions" && activeCardId !== "messages" && activeCardId !== "tools" && activeCardId !== "models" && activeCardId !== "spend" && (
+                {activeCardId === "errors" && (
+                  <div className="space-y-4">
+                    <div className="rounded-xl border border-app-border bg-white p-4 shadow-sm relative">
+                      {refreshing && (
+                        <div className="absolute top-3 right-3 flex items-center gap-1 text-[11px] text-app-text-secondary">
+                          <RefreshCw size={12} className="animate-spin" /> Actualizando…
+                        </div>
+                      )}
+                      <div className="text-sm font-bold text-app-text">Errores del agente</div>
+                      <div className="mt-1 flex flex-wrap gap-4 text-xs text-app-text-secondary">
+                        <span>Total: <span className="font-bold text-app-text">{formatNumber(errs?.total_errors ?? 0)}</span></span>
+                      </div>
+                      <div className="mt-2 h-[440px]">
+                        {errorsSub === "por_modelo" && (
+                          <CatBox
+                            title="Errores por modelo"
+                            data={(errs?.errors_by_model ?? [])
+                              .filter((r) => !selectedErrorModel || (r.provider === selectedErrorModel.provider && r.model === selectedErrorModel.model))
+                              .map((r) => ({ name: `${r.provider}/${r.model}`, value: r.count }))}
+                            showModelDropdown
+                            models={errs?.errors_by_model ?? []}
+                            selectedModel={selectedErrorModel}
+                            onSelectModel={setSelectedErrorModel}
+                            onDownload={() =>
+                              downloadJson(errs?.errors_by_model ?? [], "errores_modelo")
+                            }
+                          />
+                        )}
+                        {errorsSub === "por_sesion" && (
+                          <HistBox
+                            queryFile="metrics/agent_errors/per_session.sql"
+                            valueColumn="value"
+                            title="Errores por sesión"
+                            timeRange={timeRange}
+                            model={selectedErrorModel?.model}
+                            provider={selectedErrorModel?.provider}
+                            models={errs?.errors_by_model ?? []}
+                            selectedModel={selectedErrorModel}
+                            onSelectModel={setSelectedErrorModel}
+                          />
+                        )}
+                        {errorsSub === "por_turno" && (
+                          <HistBox
+                            queryFile="metrics/agent_errors/per_turn.sql"
+                            valueColumn="value"
+                            title="Errores por turno"
+                            timeRange={timeRange}
+                            model={selectedErrorModel?.model}
+                            provider={selectedErrorModel?.provider}
+                            models={errs?.errors_by_model ?? []}
+                            selectedModel={selectedErrorModel}
+                            onSelectModel={setSelectedErrorModel}
+                          />
+                        )}
+                        {errorsSub === "por_herramienta" && (
+                          <CatBox
+                            title="Errores por herramienta"
+                            data={(errs?.errors_by_tool ?? [])
+                              .filter((r) => !selectedErrorTool || r.tool === selectedErrorTool)
+                              .map((r) => ({ name: r.tool, value: r.count }))}
+                            showToolDropdown
+                            tools={errs?.errors_by_tool ?? []}
+                            selectedTool={selectedErrorTool}
+                            onSelectTool={setSelectedErrorTool}
+                            onDownload={() =>
+                              downloadJson(errs?.errors_by_tool ?? [], "errores_herramienta")
+                            }
+                          />
+                        )}
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-app-border bg-white p-4 shadow-sm">
+                      <div className="flex flex-wrap gap-2">
+                        {ERRORS_SUBS.map((s) => (
+                          <SubCard key={s.id} id={s.id} selectedId={errorsSub} onSelect={setErrorsSub} title={s.title} />
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {activeCardId !== "sessions" && activeCardId !== "messages" && activeCardId !== "tools" && activeCardId !== "models" && activeCardId !== "spend" && activeCardId !== "errors" && (
                   <div className="flex h-full items-center justify-center rounded-xl border border-dashed border-app-border bg-white p-6 text-xs text-app-text-secondary">
                     Visualización de {activeCardId} pendiente de definición paso a paso.
                   </div>
