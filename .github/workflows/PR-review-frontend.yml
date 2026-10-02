@@ -1,0 +1,82 @@
+name: '🔎 Gemini Review - Frontend'
+
+on:
+  pull_request:
+    paths: ['frontend/**']
+    types: [opened, synchronize, reopened]
+  issue_comment:
+    types: [created]
+
+jobs:
+  review:
+    if: |-
+      (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main') ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request && startsWith(github.event.comment.body, '@gemini-cli /review') && contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association))
+    runs-on: 'ubuntu-latest'
+    timeout-minutes: 10
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+      issues: 'write'
+      pull-requests: 'write'
+    steps:
+      - name: 'Check changed files (solo aplica al trigger por comentario)'
+        id: changes
+        if: github.event_name == 'issue_comment'
+        uses: 'actions/github-script@v7'
+        with:
+          script: |
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+              per_page: 100,
+            });
+            const relevant = files.some((f) => f.filename.startsWith('frontend/'));
+            core.setOutput('relevant', relevant);
+      - uses: 'actions/checkout@v4'
+        if: github.event_name != 'issue_comment' || steps.changes.outputs.relevant == 'true'
+      - name: 'Generar diff del PR'
+        id: diff
+        if: github.event_name != 'issue_comment' || steps.changes.outputs.relevant == 'true'
+        env:
+          GH_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
+          PR_NUMBER: '${{ github.event.pull_request.number || github.event.issue.number }}'
+        run: |
+          gh pr diff "${PR_NUMBER}" --repo "${{ github.repository }}" > pr_full.diff
+          awk -v prefix="frontend/" '
+            /^diff --git / {
+              keep = (index($0, " b/" prefix) > 0 || index($0, " \"b/" prefix) > 0) ? 1 : 0
+            }
+            keep { print }
+          ' pr_full.diff > pr.diff
+          echo "Diff filtrado a frontend/: $(wc -l < pr.diff) lineas (de $(wc -l < pr_full.diff) totales)"
+          if [[ -s pr.diff ]]; then
+            echo "empty=false" >> "${GITHUB_OUTPUT}"
+          else
+            echo "empty=true" >> "${GITHUB_OUTPUT}"
+          fi
+      - uses: 'google-github-actions/run-gemini-cli@v0'
+        id: gemini
+        if: (github.event_name != 'issue_comment' || steps.changes.outputs.relevant == 'true') && steps.diff.outputs.empty != 'true'
+        env:
+          GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
+          GEMINI_API_KEY: '${{ secrets.GOOGLE_API_KEY || secrets.GEMINI_API_KEY }}'
+          GEMINI_CLI_TRUST_WORKSPACE: 'true'
+        with:
+          gemini_api_key: '${{ secrets.GOOGLE_API_KEY || secrets.GEMINI_API_KEY }}'
+          gemini_model: 'gemini-3.5-flash-lite'
+          prompt: '/review-frontend'
+      - name: 'Publicar review en el PR'
+        if: (github.event_name != 'issue_comment' || steps.changes.outputs.relevant == 'true') && steps.diff.outputs.empty != 'true'
+        env:
+          GH_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
+          PR_NUMBER: '${{ github.event.pull_request.number || github.event.issue.number }}'
+          REVIEW_BODY: '${{ steps.gemini.outputs.summary }}'
+        run: |
+          if [[ -z "${REVIEW_BODY}" ]]; then
+            echo "Gemini no devolvió respuesta, no se publica nada."
+            exit 0
+          fi
+          printf '%s\n' "${REVIEW_BODY}" > review.md
+          gh pr comment "${PR_NUMBER}" --repo "${{ github.repository }}" --body-file review.md
