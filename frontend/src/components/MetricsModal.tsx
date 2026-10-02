@@ -23,6 +23,7 @@ import metricsService, {
   type MessageMetrics,
   type ToolMetrics,
   type ModelMetrics,
+  type CostMetrics,
   type ErrorMetrics,
 } from "../services/metricsService";
 
@@ -39,6 +40,7 @@ interface MetricsData {
   messages: MessageMetrics | null;
   tools: ToolMetrics | null;
   models: ModelMetrics | null;
+  costs: CostMetrics | null;
   errors: ErrorMetrics | null;
 }
 
@@ -48,6 +50,7 @@ const EMPTY_METRICS: MetricsData = {
   messages: null,
   tools: null,
   models: null,
+  costs: null,
   errors: null,
 };
 
@@ -542,6 +545,12 @@ const MODELS_SUBS = [
   { id: "latencia", title: "Latencia" },
 ];
 
+const COSTS_SUBS = [
+  { id: "total", title: "Costo total" },
+  { id: "por_sesion", title: "Costo por sesión" },
+  { id: "por_turno", title: "Costo por turno" },
+];
+
 export function MetricsModal({ open, onClose }: MetricsModalProps) {
   const [timeRange, setTimeRange] = useState<TimeRange>("1m");
   const [loading, setLoading] = useState(false);
@@ -553,7 +562,12 @@ export function MetricsModal({ open, onClose }: MetricsModalProps) {
   const [mensajeSub, setMensajeSub] = useState<string>("steps");
   const [toolsSub, setToolsSub] = useState<string>("llamadas");
   const [modelsSub, setModelsSub] = useState<string>("tokens_entrada");
+  const [costsSub, setCostsSub] = useState<string>("total");
   const [selectedModel, setSelectedModel] = useState<{
+    provider: string;
+    model: string;
+  } | null>(null);
+  const [selectedCostModel, setSelectedCostModel] = useState<{
     provider: string;
     model: string;
   } | null>(null);
@@ -566,13 +580,14 @@ export function MetricsModal({ open, onClose }: MetricsModalProps) {
     else setRefreshing(true);
     setError(null);
     try {
-      const [overviewRes, sessionsRes, messagesRes, toolsRes, modelsRes, errorsRes] =
+      const [overviewRes, sessionsRes, messagesRes, toolsRes, modelsRes, costsRes, errorsRes] =
         await Promise.allSettled([
           metricsService.getOverview(timeRange),
           metricsService.getSessionMetrics(timeRange),
           metricsService.getMessageMetrics(timeRange),
           metricsService.getToolMetrics(timeRange),
           metricsService.getModelMetrics(timeRange),
+          metricsService.getCostMetrics(timeRange),
           metricsService.getErrorMetrics(timeRange),
         ]);
 
@@ -582,6 +597,7 @@ export function MetricsModal({ open, onClose }: MetricsModalProps) {
         messages: messagesRes.status === "fulfilled" ? messagesRes.value : null,
         tools: toolsRes.status === "fulfilled" ? toolsRes.value : null,
         models: modelsRes.status === "fulfilled" ? modelsRes.value : null,
+        costs: costsRes.status === "fulfilled" ? costsRes.value : null,
         errors: errorsRes.status === "fulfilled" ? errorsRes.value : null,
       });
 
@@ -591,6 +607,7 @@ export function MetricsModal({ open, onClose }: MetricsModalProps) {
         messagesRes.status === "rejected" &&
         toolsRes.status === "rejected" &&
         modelsRes.status === "rejected" &&
+        costsRes.status === "rejected" &&
         errorsRes.status === "rejected"
       ) {
         setError("No se pudieron cargar las métricas. Verificá el backend.");
@@ -630,7 +647,9 @@ export function MetricsModal({ open, onClose }: MetricsModalProps) {
       setMensajeSub("steps");
       setToolsSub("llamadas");
       setModelsSub("tokens_entrada");
+      setCostsSub("total");
       setSelectedModel(null);
+      setSelectedCostModel(null);
     }
   }, [open]);
 
@@ -669,6 +688,7 @@ export function MetricsModal({ open, onClose }: MetricsModalProps) {
   const tls = metrics.tools;
   const errs = metrics.errors;
   const mdl = metrics.models;
+  const cts = metrics.costs;
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
@@ -770,6 +790,7 @@ export function MetricsModal({ open, onClose }: MetricsModalProps) {
                   title="Gasto"
                   value={`$${(ov?.total_cost ?? 0).toFixed(2)}`}
                   icon={<DollarSign size={16} />}
+                  onDownload={() => metricsService.downloadCostsCsv(timeRange)}
                 />
                 <SidebarCard
                   id="errors"
@@ -991,7 +1012,75 @@ export function MetricsModal({ open, onClose }: MetricsModalProps) {
                     </div>
                   </div>
                 )}
-                {activeCardId !== "sessions" && activeCardId !== "messages" && activeCardId !== "tools" && activeCardId !== "models" && (
+                {activeCardId === "spend" && (
+                  <div className="space-y-4">
+                    <div className="rounded-xl border border-app-border bg-white p-4 shadow-sm relative">
+                      {refreshing && (
+                        <div className="absolute top-3 right-3 flex items-center gap-1 text-[11px] text-app-text-secondary">
+                          <RefreshCw size={12} className="animate-spin" /> Actualizando…
+                        </div>
+                      )}
+                      <div className="text-sm font-bold text-app-text">Gasto</div>
+                      <div className="mt-1 flex flex-wrap gap-4 text-xs text-app-text-secondary">
+                        <span>Total: <span className="font-bold text-app-text">${(cts?.total_cost ?? 0).toFixed(2)}</span></span>
+                        <span>Entrada: <span className="font-bold text-app-text">${(cts?.total_input ?? 0).toFixed(2)}</span></span>
+                        <span>Salida: <span className="font-bold text-app-text">${(cts?.total_output ?? 0).toFixed(2)}</span></span>
+                      </div>
+                      <div className="mt-2 h-[440px]">
+                        {costsSub === "total" && (
+                          <CatBox
+                            title="Costo total"
+                            data={(cts?.cost_by_model ?? [])
+                              .filter((r) => !selectedCostModel || (r.provider === selectedCostModel.provider && r.model === selectedCostModel.model))
+                              .map((r) => ({ name: `${r.provider}/${r.model}`, value: r.total }))}
+                            valueFormatter={(v) => `$${v.toFixed(2)}`}
+                            showModelDropdown
+                            models={cts?.cost_by_model ?? []}
+                            selectedModel={selectedCostModel}
+                            onSelectModel={setSelectedCostModel}
+                            onDownload={() =>
+                              downloadJson(cts?.cost_by_model ?? [], "costo_total")
+                            }
+                          />
+                        )}
+                        {costsSub === "por_sesion" && (
+                          <HistBox
+                            queryFile="metrics/costs/cost_per_session.sql"
+                            valueColumn="value"
+                            title="Costo por sesión"
+                            timeRange={timeRange}
+                            model={selectedCostModel?.model}
+                            provider={selectedCostModel?.provider}
+                            models={cts?.cost_by_model ?? []}
+                            selectedModel={selectedCostModel}
+                            onSelectModel={setSelectedCostModel}
+                          />
+                        )}
+                        {costsSub === "por_turno" && (
+                          <HistBox
+                            queryFile="metrics/costs/cost_per_turn.sql"
+                            valueColumn="value"
+                            title="Costo por turno"
+                            timeRange={timeRange}
+                            model={selectedCostModel?.model}
+                            provider={selectedCostModel?.provider}
+                            models={cts?.cost_by_model ?? []}
+                            selectedModel={selectedCostModel}
+                            onSelectModel={setSelectedCostModel}
+                          />
+                        )}
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-app-border bg-white p-4 shadow-sm">
+                      <div className="flex flex-wrap gap-2">
+                        {COSTS_SUBS.map((s) => (
+                          <SubCard key={s.id} id={s.id} selectedId={costsSub} onSelect={setCostsSub} title={s.title} />
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {activeCardId !== "sessions" && activeCardId !== "messages" && activeCardId !== "tools" && activeCardId !== "models" && activeCardId !== "spend" && (
                   <div className="flex h-full items-center justify-center rounded-xl border border-dashed border-app-border bg-white p-6 text-xs text-app-text-secondary">
                     Visualización de {activeCardId} pendiente de definición paso a paso.
                   </div>

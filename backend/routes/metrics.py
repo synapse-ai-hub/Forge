@@ -690,6 +690,79 @@ async def get_model_metrics(time_range: str = "1m"):
         return make_error_response(message="Error fetching model metrics")
 
 
+@router.get("/metrics/costs")
+async def get_cost_metrics(time_range: str = "1m"):
+    """Return cost metrics grouped by provider/model from agent.db with time range filter.
+
+    Args:
+        time_range: Time filter ('1h', '6h', '1d', '1w', '1m', 'all').
+
+    Returns:
+        A contract response with per-model cost totals and range totals.
+    """
+    try:
+        time_range = _normalize_range(time_range)
+        clause, params = time_clause(time_range, "created_at")
+
+        with get_connection() as conn:
+            by_model_sql = with_time(
+                load_query("metrics/costs/cost_by_model.sql"), clause
+            )
+            cost_rows = conn.execute(by_model_sql, params).fetchall()
+        cost_by_model = [
+            {
+                "provider": row["provider"],
+                "model": row["model"],
+                "total": round(float(row["total"] or 0.0), 6),
+                "input": round(float(row["input"] or 0.0), 6),
+                "output": round(float(row["output"] or 0.0), 6),
+            }
+            for row in cost_rows
+        ]
+        total_cost = round(sum(c["total"] for c in cost_by_model), 6)
+        total_input = round(sum(c["input"] for c in cost_by_model), 6)
+        total_output = round(sum(c["output"] for c in cost_by_model), 6)
+
+        return validate_response(
+            make_success_response(
+                message="Cost metrics obtenidas",
+                data={
+                    "cost_by_model": cost_by_model,
+                    "total_cost": total_cost,
+                    "total_input": total_input,
+                    "total_output": total_output,
+                },
+                usage=zero_usage(),
+            )
+        )
+    except Exception as e:
+        log_error(str(e), source="backend/routes/metrics.py:get_cost_metrics")
+        return make_error_response(message="Error fetching cost metrics")
+
+
+@router.get("/metrics/costs/export")
+async def export_costs_csv(time_range: str = "1m"):
+    """Download the assistant calls with cost for the time range as a CSV file.
+
+    Args:
+        time_range: Time filter ('1h', '6h', '1d', '1w', '1m', 'all').
+
+    Returns:
+        A ``text/csv`` attachment with every cost row in the range.
+    """
+    try:
+        time_range = _normalize_range(time_range)
+        clause, params = time_clause(time_range, "messages.created_at")
+
+        with get_connection() as conn:
+            sql = with_time(load_query("metrics/costs/export.sql"), clause)
+            rows = conn.execute(sql, params).fetchall()
+        return _rows_to_csv_response(rows, "costs")
+    except Exception as e:
+        log_error(str(e), source="backend/routes/metrics.py:export_costs_csv")
+        return make_error_response(message="Error exporting costs CSV")
+
+
 @router.get("/metrics/overview")
 async def get_metrics_overview(time_range: str = "1m"):
     """Return an overview combining all metrics in a single response with time range filter.

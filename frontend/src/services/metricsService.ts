@@ -66,6 +66,13 @@ export interface ErrorMetrics {
   errors_by_source: { source: string; count: number }[];
 }
 
+export interface CostMetrics {
+  cost_by_model: { provider: string; model: string; total: number; input: number; output: number }[];
+  total_cost: number;
+  total_input: number;
+  total_output: number;
+}
+
 export interface MetricsOverview {
   total_sessions: number;
   total_messages: number;
@@ -170,6 +177,15 @@ const metricsService = {
     );
   },
 
+  /** Get cost metrics grouped by provider/model with optional time range filter. */
+  async getCostMetrics(timeRange?: string): Promise<CostMetrics> {
+    const query = timeRange ? `?time_range=${timeRange}` : "";
+    return fetchMetric<CostMetrics>(
+      `/api/metrics/costs${query}`,
+      "Error fetching cost metrics",
+    );
+  },
+
   /** Get a combined overview of all metrics with optional time range filter. */
   async getOverview(timeRange?: string): Promise<MetricsOverview> {
     const query = timeRange ? `?time_range=${timeRange}` : "";
@@ -229,6 +245,13 @@ const metricsService = {
     const range = timeRange || "1m";
     const query = timeRange ? `?time_range=${timeRange}` : "";
     return downloadFile(`${API_BASE_URL}/api/metrics/models/export${query}`, `modelos_${range}.csv`);
+  },
+
+  /** Download the calls with cost table (CSV) for the given time range. */
+  async downloadCostsCsv(timeRange?: string): Promise<void> {
+    const range = timeRange || "1m";
+    const query = timeRange ? `?time_range=${timeRange}` : "";
+    return downloadFile(`${API_BASE_URL}/api/metrics/costs/export${query}`, `gastos_${range}.csv`);
   },
 };
 
