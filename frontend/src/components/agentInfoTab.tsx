@@ -556,23 +556,33 @@ function WorkflowCreator({ onCreated }: { onCreated: () => Promise<void> | void 
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
 
+  const yamlEscape = (value: string): string => {
+    const escaped = value
+      .replace(/\\/g, "\\\\")
+      .replace(/"/g, '\\"')
+      .replace(/\n/g, "\\n")
+      .replace(/\r/g, "\\r")
+      .replace(/\t/g, "\\t");
+    return `"${escaped}"`;
+  };
+
   const syncYaml = (list: DraftNode[], wname: string) => {
     const lines = [
-      `name: ${wname || "mi-workflow"}`,
-      `description: ${description || "Workflow creado en el editor"}`,
+      `name: ${yamlEscape(wname || "mi-workflow")}`,
+      `description: ${yamlEscape(description || "Workflow creado en el editor")}`,
       `version: "1"`,
       `retries: 2`,
       `on_failure: continue`,
       `nodes:`,
     ];
     list.forEach((n, i) => {
-      lines.push(`  - id: ${n.id || `nodo${i + 1}`}`);
+      lines.push(`  - id: ${yamlEscape(n.id || `nodo${i + 1}`)}`);
       lines.push(`    type: ${n.type}`);
       lines.push(`    step: ${n.step}`);
-      if (n.type === "agent") lines.push(`    agent_name: ${n.ref || "agente"}`);
-      if (n.type === "tool") lines.push(`    tool: ${n.ref || "read"}`);
-      if (n.type === "rag") lines.push(`    collection: ${n.ref || "coleccion"}`);
-      if (n.prompt) lines.push(`    prompt: "${n.prompt.replace(/"/g, "'")}"`);
+      if (n.type === "agent") lines.push(`    agent_name: ${yamlEscape(n.ref || "agente")}`);
+      if (n.type === "tool") lines.push(`    tool: ${yamlEscape(n.ref || "read")}`);
+      if (n.type === "rag") lines.push(`    collection: ${yamlEscape(n.ref || "coleccion")}`);
+      if (n.prompt) lines.push(`    prompt: ${yamlEscape(n.prompt)}`);
       if (i === list.length - 1) lines.push(`    final: true`);
     });
     setYaml(lines.join("\n"));

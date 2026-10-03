@@ -91,7 +91,17 @@ function SidebarCard({
 
   return (
     <div
+      role="button"
+      tabIndex={0}
+      aria-pressed={selected}
       onClick={() => onSelect(id)}
+      onKeyDown={(e) => {
+        if (e.target !== e.currentTarget) return;
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onSelect(id);
+        }
+      }}
       className={`rounded-xl border transition-all duration-200 cursor-pointer bg-white p-3 shadow-sm hover:shadow-md w-full text-left ${
         selected
           ? "border-[var(--color-app-primary)] ring-2 ring-[var(--color-app-primary)]/20 shadow-md"
