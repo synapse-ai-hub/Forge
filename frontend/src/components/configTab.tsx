@@ -72,21 +72,21 @@ export function ConfigTab({ verboseMode, onVerboseModeChange }: ConfigTabProps) 
   /* ---- provider API keys ---- */
   /* Curated providers (mirrors backend PROVIDER_REGISTRY). */
   const KEY_PROVIDER_OPTIONS: Array<{ provider: string; label: string }> = [
-    { provider: "GROQ", label: "Groq" },
-    { provider: "GOOGLE", label: "Google Gemini" },
-    { provider: "OPENROUTER", label: "OpenRouter" },
-    { provider: "OPENAI", label: "OpenAI" },
-    { provider: "DEEPSEEK", label: "DeepSeek" },
-    { provider: "XAI", label: "xAI" },
-    { provider: "TOGETHER", label: "Together AI" },
-    { provider: "FIREWORKS", label: "Fireworks AI" },
-    { provider: "CEREBRAS", label: "Cerebras" },
-    { provider: "MISTRAL", label: "Mistral AI" },
-    { provider: "PERPLEXITY", label: "Perplexity" },
-    { provider: "META", label: "Meta" },
-    { provider: "MOONSHOTAI", label: "Moonshot AI" },
-    { provider: "ZHIPUAI", label: "ZhipuAI" },
-    { provider: "ALIBABA", label: "Alibaba" },
+    { provider: "groq", label: "Groq" },
+    { provider: "google", label: "Google Gemini" },
+    { provider: "openrouter", label: "OpenRouter" },
+    { provider: "openai", label: "OpenAI" },
+    { provider: "deepseek", label: "DeepSeek" },
+    { provider: "xai", label: "xAI" },
+    { provider: "togetherai", label: "Together AI" },
+    { provider: "fireworks-ai", label: "Fireworks AI" },
+    { provider: "cerebras", label: "Cerebras" },
+    { provider: "mistral", label: "Mistral AI" },
+    { provider: "perplexity", label: "Perplexity" },
+    { provider: "meta", label: "Meta" },
+    { provider: "moonshotai", label: "Moonshot AI" },
+    { provider: "zhipuai", label: "ZhipuAI" },
+    { provider: "alibaba", label: "Alibaba" },
   ];
   const [providerKeys, setProviderKeys] = useState<ProviderKeyStatus[]>([]);
   const [keyProvider, setKeyProvider] = useState<string>("");

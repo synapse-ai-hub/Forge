@@ -169,16 +169,33 @@ def find_skill_folder(skill_name: str) -> str | None:
 
     Uses the config directory ``~/.config/synapseForge/skills/``.
 
+    Only resolves inside that base directory. Names with path separators
+    or parent references are rejected, and the resolved path must stay
+    within the base directory. Normal names keep working unchanged.
+
     Args:
         skill_name: Name of the skill folder to find.
 
     Returns:
         Full path to the skill folder, or ``None`` if not found.
     """
+    import os
+
+    if not skill_name or not isinstance(skill_name, str):
+        return None
+    if "/" in skill_name or "\\" in skill_name or ".." in skill_name:
+        return None
     skills_dir = get_skills_dir()
     skill_path = skills_dir / skill_name
     if skill_path.is_dir():
-        return str(skill_path)
+        try:
+            base_real = os.path.realpath(str(skills_dir))
+            target_real = os.path.realpath(str(skill_path))
+            if target_real == base_real or target_real.startswith(base_real + os.sep):
+                return str(skill_path)
+        except (OSError, ValueError):
+            return None
+        return None
     return None
 
 

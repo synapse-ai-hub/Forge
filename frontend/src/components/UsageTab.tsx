@@ -136,7 +136,7 @@ export function UsageTab() {
                   <div className="flex gap-4 text-xs text-app-text-secondary">
                     <span>Req: {p.requests}</span>
                     <span>Tokens: {p.total_tokens}</span>
-                    <span>USD: {(p.cost ?? 0).toFixed(4)}</span>
+                    <span>USD: {(p.cost ?? 0).toFixed(2)}</span>
                   </div>
                 </div>
               ))}

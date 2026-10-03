@@ -83,7 +83,19 @@ def _read_markdown(agent_name: str) -> tuple[str | None, str | None]:
     agents_dir = _locate_agents_dir()
     if not agents_dir:
         return None, None
+    # Containment: only resolve inside agents_dir. Normal names keep
+    # working unchanged. Parent references or absolute paths outside
+    # are rejected by returning not found.
+    if "/" in agent_name or "\\" in agent_name or ".." in agent_name:
+        return None, None
     md_path = os.path.join(agents_dir, f"{agent_name}.md")
+    try:
+        base_real = os.path.realpath(agents_dir)
+        target_real = os.path.realpath(md_path)
+        if target_real != base_real and not target_real.startswith(base_real + os.sep):
+            return None, None
+    except (OSError, ValueError):
+        return None, None
     if not os.path.isfile(md_path):
         return None, None
     try:
@@ -156,12 +168,8 @@ def _read_prompt_body(content: str) -> str:
 def get_tool_permissions(agent_name: str | None) -> dict[str, Any]:
     """Resolve an agent's **tool** permissions at runtime.
 
-    Reads ``agents/<agent_name>.md`` and returns the top-level
-    ``permission`` entries excluding the ``skill`` block (handled
-    separately by :func:`get_skill_permissions`).
-
-    Flat entries (``query: allow``) and nested entries
-    (``task: {explorer: allow}``) are both preserved.
+    Reads ``agents/<agent_name>.md`` and returns the ``tools`` block
+    under ``permissions``, combining it with the ``task`` block if present.
 
     Args:
         agent_name: Agent name (without ``.md``). ``None``/empty → empty
@@ -181,9 +189,12 @@ def get_tool_permissions(agent_name: str | None) -> dict[str, Any]:
         return make_error_response(message=f"Agent '{agent_name}' not found.")
 
     fm = _parse_frontmatter(content)
-    permission = fm.get("permission", {}) or {}
-    # Keep both flat and nested entries; only exclude "skill"
-    tools_perms = {k: v for k, v in permission.items() if k != "skill"}
+    permissions = fm.get("permissions", {}) or {}
+    
+    tools_perms = dict(permissions.get("tools", {}) or {})
+    tasks_perms = permissions.get("tasks")
+    if isinstance(tasks_perms, dict) and tasks_perms:
+        tools_perms["task"] = tasks_perms
 
     return make_success_response(
         message=f"Tool permissions for agent '{agent_name}'.",
@@ -194,8 +205,8 @@ def get_tool_permissions(agent_name: str | None) -> dict[str, Any]:
 def get_skill_permissions(agent_name: str | None) -> dict[str, Any]:
     """Resolve an agent's **skill** permissions at runtime.
 
-    Reads ``agents/<agent_name>.md`` and returns only the ``skill``
-    sub-block of ``permission`` via the unified contract.
+    Reads ``agents/<agent_name>.md`` and returns only the ``skills``
+    sub-block of ``permissions`` via the unified contract.
 
     Args:
         agent_name: Agent name (without ``.md``). ``None``/empty → empty
@@ -215,8 +226,8 @@ def get_skill_permissions(agent_name: str | None) -> dict[str, Any]:
         return make_error_response(message=f"Agent '{agent_name}' not found.")
 
     fm = _parse_frontmatter(content)
-    permission = fm.get("permission", {}) or {}
-    skills_perms = permission.get("skill", {}) or {}
+    permissions = fm.get("permissions", {}) or {}
+    skills_perms = permissions.get("skills", {}) or {}
 
     return make_success_response(
         message=f"Skill permissions for agent '{agent_name}'.",

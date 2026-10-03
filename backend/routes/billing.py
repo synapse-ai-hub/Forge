@@ -30,6 +30,7 @@ from backend.agent.utils.contract import (
 )
 from backend.agent.utils.error_logger import log_error
 from backend.agent.utils.db import db_transaction
+from backend.agent.utils.queries import load_query
 from backend.agent.utils.spend_handler import (
     get_all_spend,
     get_billing_stats,
@@ -70,11 +71,7 @@ def _get_all_spend_configs() -> list[dict[str, Any]]:
     """
     try:
         with db_transaction() as conn:
-            rows = conn.execute(
-                """SELECT provider, model, limit_amount, created_at, updated_at
-                   FROM spend_limits
-                   ORDER BY provider, model"""
-            ).fetchall()
+            rows = conn.execute(load_query("spend/list_all_configs.sql")).fetchall()
             return [dict(row) for row in rows]
     except Exception as e:
         log_error(str(e), source="billing.py:_get_all_spend_configs")
@@ -95,16 +92,7 @@ def _get_all_provider_stats() -> list[dict[str, Any]]:
 
         with db_transaction() as conn:
             rows = conn.execute(
-                """SELECT provider,
-                          SUM(requests) as requests,
-                          SUM(prompt_tokens) as prompt_tokens,
-                          SUM(completion_tokens) as completion_tokens,
-                          SUM(total_tokens) as total_tokens,
-                          SUM(cost_total) as cost
-                   FROM spend
-                   WHERE month = ?
-                   GROUP BY provider
-                   ORDER BY provider""",
+                load_query("spend/stats_by_provider.sql"),
                 (current_month(),),
             ).fetchall()
             return [dict(row) for row in rows]

@@ -12,7 +12,7 @@ import sys
 from typing import Any
 
 from fastapi import APIRouter
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 # ---------------------------------------------------------------------------
 # Ensure the project root is in sys.path so absolute imports (backend.*)

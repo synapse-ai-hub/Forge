@@ -1,0 +1,51 @@
+{
+  "timestamp": "2026-09-20T12:53:26",
+  "base_url": "http://127.0.0.1:8000",
+  "total": 3,
+  "passed": 3,
+  "failed": 0,
+  "results": [
+    {
+      "scenario": "main-flow-basic-chat",
+      "file": "main_flow.yaml",
+      "passed": true,
+      "failures": [],
+      "steps": [
+        {
+          "step": 1,
+          "action": "chat",
+          "failures": []
+        }
+      ],
+      "duration_s": 6.2
+    },
+    {
+      "scenario": "main-flow-with-attachment-context",
+      "file": "main_flow.yaml",
+      "passed": true,
+      "failures": [],
+      "steps": [
+        {
+          "step": 1,
+          "action": "request",
+          "failures": []
+        }
+      ],
+      "duration_s": 0.0
+    },
+    {
+      "scenario": "main-flow-cancel-stream",
+      "file": "main_flow.yaml",
+      "passed": true,
+      "failures": [],
+      "steps": [
+        {
+          "step": 1,
+          "action": "chat",
+          "failures": []
+        }
+      ],
+      "duration_s": 3.9
+    }
+  ]
+}

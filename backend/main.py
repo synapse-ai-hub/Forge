@@ -365,7 +365,7 @@ def health_check() -> Dict[str, object]:
     return {
         "status": "ok",
         "version": app.version,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now().isoformat(),
     }
 
 

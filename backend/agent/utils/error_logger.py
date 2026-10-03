@@ -120,30 +120,14 @@ def _get_connection() -> sqlite3.Connection:
 def _ensure_error_table(conn: sqlite3.Connection) -> None:
     """Create the ``error_log`` table if it does not exist.
 
+    DDL lives in ``queries/ddl/error_log.sql`` (shared with ddl_setup).
+
     Args:
         conn: An open SQLite connection.
     """
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS error_log (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            session_id TEXT,
-            parent_id TEXT,
-            turn_number INTEGER,
-            exception TEXT NOT NULL,
-            source TEXT,
-            created_at TEXT NOT NULL
-        )
-        """
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_error_log_session_id "
-        "ON error_log(session_id)"
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_error_log_created_at "
-        "ON error_log(created_at)"
-    )
+    from backend.agent.utils.queries import load_query
+
+    conn.executescript(load_query("ddl/error_log.sql"))
 
 
 def log_error(
@@ -193,14 +177,15 @@ def log_error(
                 source = f"context:{','.join(parts)}"
 
     try:
+        # Lazy import: error_logger is imported very early in the app
+        # bootstrap and a module-level import of backend.agent.utils would close
+        # an import cycle (backend.agent.utils -> spend_handler -> error_logger).
+        from backend.agent.utils.queries import load_query
+
         conn = _get_connection()
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now().isoformat()
         conn.execute(
-            """
-            INSERT INTO error_log
-                (session_id, parent_id, turn_number, exception, source, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
+            load_query("errors/insert_error.sql"),
             (session_id, parent_id, turn_number, exception, source, now),
         )
         conn.commit()

@@ -57,7 +57,7 @@ export function RagInterface() {
       .getProviderKeys()
       .then((data) => {
         if (cancelled) return;
-        const google = (data.keys || []).find((k) => k.provider === "GOOGLE");
+        const google = (data.keys || []).find((k) => k.provider === "google");
         setRagBlocked(!(google && google.configured));
       })
       .catch(() => {

@@ -1137,9 +1137,13 @@ class TelegramBot:
             await self.send_message(chat_id, f"¿Qué proveedor? ({', '.join(valid)}, o 'cancelar')")
             return
         provider = provider.strip()
-        if provider not in valid:
+        exact = next((v for v in valid if v == provider), None)
+        if exact is None:
+            exact = next((v for v in valid if v.lower() == provider.lower()), None)
+        if exact is None:
             await self.send_message(chat_id, f"Proveedor inválido. Usá {', '.join(valid)}.")
             return
+        provider = exact
         try:
             from backend.instances import agent
             agent.provider = provider
@@ -1281,7 +1285,7 @@ class TelegramBot:
     async def _cmd_usage(self, chat_id: int) -> None:
         """Show usage metrics per provider."""
         try:
-            from backend.utils.spend_handler import get_all_spend
+            from backend.agent.utils.spend_handler import get_all_spend
             spend = get_all_spend()
             if not spend:
                 await self.send_message(chat_id, "No hay datos de uso aún.")
@@ -1307,7 +1311,7 @@ class TelegramBot:
         Shows current limits and asks what to configure via question-response flow.
         """
         try:
-            from backend.utils.spend_handler import get_spend_config
+            from backend.agent.utils.spend_handler import get_spend_config
             from backend.agent.utils.provider_keys import list_configured
 
             # Get providers with keys
@@ -1351,7 +1355,7 @@ class TelegramBot:
             if text.strip() == "1":
                 # Show current spend
                 try:
-                    from backend.utils.spend_handler import get_all_spend
+                    from backend.agent.utils.spend_handler import get_all_spend
                     spend = get_all_spend()
                     if not spend:
                         await self.send_message(chat_id, "No hay datos de gasto.")
@@ -1401,6 +1405,21 @@ class TelegramBot:
             if not provider:
                 await self.send_message(chat_id, "Proveedor inválido.")
                 return
+            if not provider.isdigit():
+                try:
+                    from backend.agent.utils.provider_keys import list_configured
+                    configured = list_configured()
+                    names = [p["provider"] for p in configured if p.get("configured")]
+                    match = next((n for n in names if n == provider), None)
+                    if match is None:
+                        match = next((n for n in names if n.lower() == provider.lower()), None)
+                    if match is not None:
+                        provider = match
+                except Exception:
+                    pass
+            if not provider:
+                await self.send_message(chat_id, "Proveedor inválido.")
+                return
             self._awaiting[chat_id] = f"billing_model_{provider}"
             await self.send_message(
                 chat_id,
@@ -1428,7 +1447,7 @@ class TelegramBot:
     async def _apply_billing_limit(self, chat_id: int, provider: str, model: str | None, limit: float) -> None:
         """Apply a billing limit for a provider/model."""
         try:
-            from backend.utils.spend_handler import set_spend_limit
+            from backend.agent.utils.spend_handler import set_spend_limit
             success = set_spend_limit(provider.strip(), model, limit)
             if success:
                 msg = f"Límite configurado: {provider}"
@@ -1934,7 +1953,7 @@ class TelegramBot:
         # Contemplate the transcription call. Failures are never recorded
         # and never break the transcription flow.
         try:
-            from backend.utils.spend_handler import record_external_usage
+            from backend.agent.utils.spend_handler import record_external_usage
 
             record_external_usage(
                 "transcription", "groq", "whisper-large-v3-turbo", 1,

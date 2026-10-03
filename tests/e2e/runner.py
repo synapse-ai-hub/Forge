@@ -21,6 +21,7 @@ Scenario YAML schema::
           no_tool_error: true          # no tool_result with status error
           events_include: [chunk]      # event types that must appear
           tools_called_any_of: []      # tool names that must appear (any of)
+          parallel_block: true         # 2+ tool_calls before the first tool_result
       - action: request                # direct API call
         method: GET                    # GET (default) | POST | PUT | DELETE
         path: /api/scheduler/tasks
@@ -170,6 +171,24 @@ def evaluate_chat_expectations(expect: dict[str, Any], obs: dict[str, Any]) -> l
             f"none of the expected tools {wanted_tools} were called "
             f"(called: {obs['tools_called']})"
         )
+    if expect.get("parallel_block"):
+        # All tool_call events must arrive before the first tool_result:
+        # the loop emits every tool_call of a block upfront (in order) and
+        # commits results afterwards. A tool_result interleaved between
+        # tool_calls means the model used sequential blocks, not one
+        # parallel block.
+        tc_idx = [i for i, e in enumerate(obs["events"]) if e.get("type") == "tool_call"]
+        tr_idx = [i for i, e in enumerate(obs["events"]) if e.get("type") == "tool_result"]
+        if len(tc_idx) < 2:
+            failures.append(
+                f"parallel_block: expected 2+ tool_call events in one block "
+                f"(got {len(tc_idx)})"
+            )
+        elif tr_idx and max(tc_idx) > min(tr_idx):
+            failures.append(
+                "parallel_block: tool_result interleaved between tool_call "
+                "events (calls ran in sequential blocks, not one parallel block)"
+            )
     return failures
 
 

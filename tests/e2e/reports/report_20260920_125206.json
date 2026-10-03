@@ -1,0 +1,84 @@
+{
+  "timestamp": "2026-09-20T12:52:06",
+  "base_url": "http://127.0.0.1:8000",
+  "total": 3,
+  "passed": 2,
+  "failed": 1,
+  "results": [
+    {
+      "scenario": "scheduler-create-toggle-delete",
+      "file": "scheduler.yaml",
+      "passed": false,
+      "failures": [
+        "POST /api/scheduler/tasks: HTTP 400 != 200",
+        "POST /api/scheduler/tasks: contract status 'error' != 'success'",
+        "POST /api/scheduler/tasks: nothing to save at 'task.id' for 'task_id'",
+        "PUT /api/scheduler/tasks/{task_id}: HTTP 400 != 200",
+        "PUT /api/scheduler/tasks/{task_id}: contract status 'error' != 'success'",
+        "DELETE /api/scheduler/tasks/{task_id}: HTTP 404 != 200",
+        "DELETE /api/scheduler/tasks/{task_id}: contract status 'error' != 'success'"
+      ],
+      "steps": [
+        {
+          "step": 1,
+          "action": "request",
+          "failures": [
+            "POST /api/scheduler/tasks: HTTP 400 != 200",
+            "POST /api/scheduler/tasks: contract status 'error' != 'success'",
+            "POST /api/scheduler/tasks: nothing to save at 'task.id' for 'task_id'"
+          ]
+        },
+        {
+          "step": 2,
+          "action": "request",
+          "failures": [
+            "PUT /api/scheduler/tasks/{task_id}: HTTP 400 != 200",
+            "PUT /api/scheduler/tasks/{task_id}: contract status 'error' != 'success'"
+          ]
+        },
+        {
+          "step": 3,
+          "action": "request",
+          "failures": []
+        },
+        {
+          "step": 4,
+          "action": "request",
+          "failures": [
+            "DELETE /api/scheduler/tasks/{task_id}: HTTP 404 != 200",
+            "DELETE /api/scheduler/tasks/{task_id}: contract status 'error' != 'success'"
+          ]
+        }
+      ],
+      "duration_s": 0.0
+    },
+    {
+      "scenario": "scheduler-rejects-invalid-task",
+      "file": "scheduler.yaml",
+      "passed": true,
+      "failures": [],
+      "steps": [
+        {
+          "step": 1,
+          "action": "request",
+          "failures": []
+        }
+      ],
+      "duration_s": 0.0
+    },
+    {
+      "scenario": "scheduler-delete-nonexistent",
+      "file": "scheduler.yaml",
+      "passed": true,
+      "failures": [],
+      "steps": [
+        {
+          "step": 1,
+          "action": "request",
+          "failures": []
+        }
+      ],
+      "duration_s": 0.0
+    }
+  ]
+}

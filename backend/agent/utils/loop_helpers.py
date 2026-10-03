@@ -7,6 +7,7 @@ receives its dependencies as arguments (no hidden shared state).
 
 from __future__ import annotations
 
+import contextvars
 import json
 import logging
 import os
@@ -31,12 +32,28 @@ if _project_root not in sys.path:
 from backend.agent.permissions import get_agent_prompt, is_tool_allowed, list_agents
 from backend.agent.utils.error_logger import log_error
 from backend.agent.utils.db import db_transaction, get_connection
+from backend.agent.utils.queries import load_query
 from backend.agent.utils.skill_loader import format_skills_section
 from backend.agent.utils.contract import make_error_response, make_success_response, zero_usage
 from backend.instances import agent
 from backend.agent.utils.config_dir import get_agents_dir
 
 logger = logging.getLogger(__name__)
+
+_tool_call_ctx: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
+    "synapse_tool_call_ctx", default=None
+)
+"""Per-tool-call snapshot for parallel execution.
+
+Each asyncio task running a tool call sets its own snapshot (parent
+session id, depth, tool permissions, resolved sub-agent config and
+dedicated sub-agent event queue) before invoking ``execute_tool``.
+``execute_tool`` and the ``task`` tool prefer the snapshot over the
+shared ``Tools`` attributes, so parallel calls (tools and sub-agents
+alike) can never overwrite each other's context. Callers outside the
+agent loop simply leave it unset and the legacy shared attributes
+are used, exactly as before.
+"""
 
 _CONFIG_BASE_URL = os.getenv("CONFIG_BASE_URL", "http://127.0.0.1:8000/api/config")
 
@@ -67,7 +84,7 @@ def load_context_text() -> str:
     try:
         with get_connection() as conn:
             rows = conn.execute(
-                "SELECT filename, content FROM context_files ORDER BY id"
+                load_query("context_files/list_all.sql"),
             ).fetchall()
         if not rows:
             return ""
@@ -181,6 +198,16 @@ def build_system_prompt(agent_name: str | None = None) -> str:
     
     if agents_str:
         parts.append(f"## Agentes\n{agents_str}")
+
+    # Fase 6: el router decide cuándo paralelizar. Llamadas independientes
+    # en el mismo bloque corren en paralelo con gather y barrera.
+    try:
+        paralelizacion = agent.prompt("paralelizacion")
+    except FileNotFoundError:
+        logger.warning("Prompt paralelizacion.md no encontrado; no se inyecta Paralelización.")
+        paralelizacion = ""
+    if paralelizacion:
+        parts.append(f"## Paralelización\n{paralelizacion}")
 
     # Append context files content 
     context_text = load_context_text()
@@ -304,7 +331,13 @@ async def execute_tool(agent, tc: dict[str, Any]) -> Any:
     tool_args = tc.get("args", {})
 
     # --- Runtime permission check (deny by default) ---
-    effective_perms = getattr(agent.tools, "_current_tool_permissions", None)
+    # A parallel-loop snapshot (ContextVar) takes precedence over the shared
+    # Tools attribute, so concurrent calls cannot overwrite each other.
+    snapshot = _tool_call_ctx.get()
+    if snapshot is not None and "tool_permissions" in snapshot:
+        effective_perms = snapshot["tool_permissions"]
+    else:
+        effective_perms = getattr(agent.tools, "_current_tool_permissions", None)
     if not is_tool_allowed(effective_perms, tool_name, tool_args):
         logger.warning(
             "Permission denied: tool '%s' is not explicitly allowed for the "

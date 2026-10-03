@@ -27,6 +27,7 @@ from backend.agent.utils.contract import (
     zero_usage,
 )
 from backend.agent.utils.db import db_transaction, get_connection
+from backend.agent.utils.queries import load_query
 from backend.agent.utils.error_logger import log_error
 
 logger = logging.getLogger(__name__)
@@ -39,10 +40,9 @@ def current_month() -> str:
     history is never reset and the tabs show the current month.
 
     Returns:
-        The current month as ``"YYYY-MM"`` (UTC, like every timestamp
-        stored by this module).
+        The current month as ``"YYYY-MM"`` (Local time).
     """
-    return datetime.now(timezone.utc).strftime("%Y-%m")
+    return datetime.now().strftime("%Y-%m")
 
 
 # ---------------------------------------------------------------------------
@@ -87,15 +87,14 @@ def check_spend_limit(provider: str, model: str | None) -> tuple[bool, dict | No
             # Check model-specific limit if model is provided
             if model_value:
                 model_limit_row = conn.execute(
-                    """SELECT limit_amount FROM spend_limits
-                       WHERE provider = ? AND model = ? AND limit_amount > 0""",
+                    load_query("spend/get_model_limit.sql"),
                     (provider_value, model_value),
                 ).fetchone()
 
                 if model_limit_row:
                     spend_info["model_limit"] = float(model_limit_row["limit_amount"])
                     model_spend_row = conn.execute(
-                        "SELECT cost_total FROM spend WHERE provider = ? AND model = ? AND month = ?",
+                        load_query("spend/get_model_spend.sql"),
                         (provider_value, model_value, month_value),
                     ).fetchone()
                     spend_info["current_model_spend"] = (
@@ -110,15 +109,14 @@ def check_spend_limit(provider: str, model: str | None) -> tuple[bool, dict | No
 
             # Check provider-level limit
             provider_limit_row = conn.execute(
-                """SELECT limit_amount FROM spend_limits
-                   WHERE provider = ? AND model IS NULL AND limit_amount > 0""",
+                load_query("spend/get_provider_limit.sql"),
                 (provider_value,),
             ).fetchone()
 
             if provider_limit_row:
                 spend_info["provider_limit"] = float(provider_limit_row["limit_amount"])
                 provider_spend_row = conn.execute(
-                    "SELECT SUM(cost_total) as total_cost FROM spend WHERE provider = ? AND month = ?",
+                    load_query("spend/get_provider_spend.sql"),
                     (provider_value, month_value),
                 ).fetchone()
                 spend_info["current_provider_spend"] = (
@@ -186,20 +184,11 @@ def record_spend(
         month_value = current_month()
         cost_total = cost_input + cost_output
         total_tokens = prompt_tokens + completion_tokens
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now().isoformat()
 
         with db_transaction() as conn:
             cursor = conn.execute(
-                """UPDATE spend
-                   SET requests = requests + ?,
-                       prompt_tokens = prompt_tokens + ?,
-                       completion_tokens = completion_tokens + ?,
-                       total_tokens = total_tokens + ?,
-                       cost_input = cost_input + ?,
-                       cost_output = cost_output + ?,
-                       cost_total = cost_total + ?,
-                       updated_at = ?
-                   WHERE provider = ? AND model = ? AND month = ?""",
+                load_query("spend/record_update.sql"),
                 (
                     requests,
                     prompt_tokens,
@@ -217,10 +206,7 @@ def record_spend(
 
             if cursor.rowcount == 0:
                 conn.execute(
-                    """INSERT INTO spend
-                       (provider, model, month, requests, prompt_tokens, completion_tokens, total_tokens,
-                        cost_input, cost_output, cost_total, updated_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    load_query("spend/record_insert.sql"),
                     (
                         provider_value,
                         model_value,
@@ -287,9 +273,7 @@ def calculate_cost(
 
         with get_connection() as conn:
             row = conn.execute(
-                """SELECT cost_input, cost_output
-                   FROM model_catalog
-                   WHERE provider = ? AND model_id = ?""",
+                load_query("model_catalog/get_rates.sql"),
                 (provider_value, model),
             ).fetchone()
 
@@ -348,18 +332,14 @@ def get_spend_config(provider: str, model: str | None) -> dict | None:
         with get_connection() as conn:
             if model_value:
                 row = conn.execute(
-                    """SELECT provider, model, limit_amount, created_at, updated_at
-                       FROM spend_limits
-                       WHERE provider = ? AND model = ?""",
+                    load_query("spend/get_config_model.sql"),
                     (provider_value, model_value),
                 ).fetchone()
                 if row:
                     return dict(row)
 
             row = conn.execute(
-                """SELECT provider, model, limit_amount, created_at, updated_at
-                   FROM spend_limits
-                   WHERE provider = ? AND model IS NULL""",
+                load_query("spend/get_config_provider.sql"),
                 (provider_value,),
             ).fetchone()
             if row:
@@ -396,31 +376,22 @@ def set_spend_limit(
     try:
         provider_value = provider.strip()
         model_value = model.strip() if model else None
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now().isoformat()
 
         with db_transaction() as conn:
             if model_value:
                 conn.execute(
-                    """INSERT INTO spend_limits
-                       (provider, model, limit_amount, created_at, updated_at)
-                       VALUES (?, ?, ?, ?, ?)
-                       ON CONFLICT(provider, model) DO UPDATE SET
-                           limit_amount = excluded.limit_amount,
-                           updated_at = excluded.updated_at""",
+                    load_query("spend/upsert_limit_model.sql"),
                     (provider_value, model_value, limit_amount, now, now),
                 )
             else:
                 cursor = conn.execute(
-                    """UPDATE spend_limits
-                       SET limit_amount = ?, updated_at = ?
-                       WHERE provider = ? AND model IS NULL""",
+                    load_query("spend/update_limit_provider.sql"),
                     (limit_amount, now, provider_value),
                 )
                 if cursor.rowcount == 0:
                     conn.execute(
-                        """INSERT INTO spend_limits
-                           (provider, model, limit_amount, created_at, updated_at)
-                           VALUES (?, NULL, ?, ?, ?)""",
+                        load_query("spend/insert_limit_provider.sql"),
                         (provider_value, limit_amount, now, now),
                     )
 
@@ -468,15 +439,7 @@ def get_spend_by_provider(provider: str) -> list[dict]:
 
         with get_connection() as conn:
             rows = conn.execute(
-                """SELECT s.provider, s.model, s.requests, s.prompt_tokens,
-                          s.completion_tokens, s.total_tokens, s.cost_input,
-                          s.cost_output, s.cost_total, s.updated_at,
-                          c.cost_input AS cost_input_rate,
-                          c.cost_output AS cost_output_rate
-                   FROM spend s LEFT JOIN model_catalog c
-                     ON c.provider = s.provider AND c.model_id = s.model
-                   WHERE s.provider = ? AND s.month = ?
-                   ORDER BY s.updated_at DESC""",
+                load_query("spend/by_provider.sql"),
                 (provider_value, current_month()),
             ).fetchall()
 
@@ -535,15 +498,7 @@ def get_all_spend() -> list[dict]:
     try:
         with get_connection() as conn:
             rows = conn.execute(
-                """SELECT s.provider, s.model, s.requests, s.prompt_tokens,
-                          s.completion_tokens, s.total_tokens, s.cost_input,
-                          s.cost_output, s.cost_total, s.updated_at,
-                          c.cost_input AS cost_input_rate,
-                          c.cost_output AS cost_output_rate
-                   FROM spend s LEFT JOIN model_catalog c
-                     ON c.provider = s.provider AND c.model_id = s.model
-                   WHERE s.month = ?
-                   ORDER BY s.provider, s.model""",
+                load_query("spend/all_current_month.sql"),
                 (current_month(),),
             ).fetchall()
 
@@ -596,13 +551,7 @@ def get_billing_stats(provider: str) -> dict | None:
 
         with get_connection() as conn:
             row = conn.execute(
-                """SELECT SUM(requests) as requests,
-                          SUM(prompt_tokens) as prompt_tokens,
-                          SUM(completion_tokens) as completion_tokens,
-                          SUM(total_tokens) as total_tokens,
-                          SUM(cost_total) as cost
-                   FROM spend
-                   WHERE provider = ? AND month = ?""",
+                load_query("spend/billing_stats.sql"),
                 (provider_value, current_month()),
             ).fetchone()
 
@@ -638,7 +587,7 @@ def get_current_spend(provider: str) -> float:
 
         with get_connection() as conn:
             row = conn.execute(
-                "SELECT SUM(cost_total) as total FROM spend WHERE provider = ? AND month = ?",
+                load_query("spend/current_total.sql"),
                 (provider_value, current_month()),
             ).fetchone()
             return float(row["total"] or 0.0) if row else 0.0
@@ -656,6 +605,9 @@ def record_external_usage(
     units: int = 1,
     duration: float | None = None,
     prompt_tokens: int = 0,
+    session_id: str | None = None,
+    turn_number: int | None = None,
+    step: int | None = None,
 ) -> bool:
     """Record a non-LLM usage call (embeddings, transcription).
 
@@ -676,6 +628,9 @@ def record_external_usage(
         units: Processed units this call counts (default 1).
         duration: Measured wall-clock seconds for the call, if known.
         prompt_tokens: Input tokens counted up front (embeddings only).
+        session_id: Optional session identifier if called within a chat turn.
+        turn_number: Optional turn number if called within a chat turn.
+        step: Optional step number if called within a chat turn.
 
     Returns:
         True if the usage was recorded successfully, False otherwise.
@@ -686,15 +641,24 @@ def record_external_usage(
         model_value = (model or "").strip()
         units_value = units or 0
         prompt_value = int(prompt_tokens or 0)
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now().isoformat()
+
+        if session_id is None or turn_number is None:
+            try:
+                from backend.agent.utils.error_logger import get_error_context
+                ctx = get_error_context()
+                if ctx:
+                    if session_id is None:
+                        session_id = ctx.get("session_id")
+                    if turn_number is None:
+                        turn_number = ctx.get("turn_number")
+            except Exception:
+                pass
 
         with db_transaction() as conn:
             conn.execute(
-                """INSERT INTO external_usage
-                   (kind, provider, model, units, prompt_tokens,
-                    completion_tokens, duration, created_at)
-                   VALUES (?, ?, ?, ?, ?, 0, ?, ?)""",
-                (kind_value, provider_value, model_value, units_value, prompt_value, duration, now),
+                load_query("spend/insert_external_usage.sql"),
+                (kind_value, provider_value, model_value, units_value, prompt_value, duration, session_id, turn_number, step, now),
             )
         # Contemplate the call in spend too (one request plus the counted
         # input tokens and their cost; transcription reports no tokens so
@@ -755,15 +719,11 @@ def record_creator_call(
         cost_input, cost_output, cost_total = calculate_cost(
             provider_value, model_value, prompt_tokens, completion_tokens
         )
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now().isoformat()
 
         with db_transaction() as conn:
             conn.execute(
-                """INSERT INTO creator_calls
-                   (caller, provider, model, prompt_tokens, completion_tokens,
-                    total_tokens, total_time, cost_input, cost_output,
-                    cost_total, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                load_query("spend/insert_creator_call.sql"),
                 (
                     caller_value, provider_value, model_value, prompt_tokens,
                     completion_tokens, total_tokens, total_time, cost_input,

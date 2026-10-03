@@ -9,13 +9,13 @@ import { configService } from "../services/configService";
  */
 const SETUP_PROVIDERS: Array<{ id: string; label: string; hint: string; url: string }> = [
   {
-    id: "GROQ",
+    id: "groq",
     label: "Groq",
     hint: "transcripción de voz",
     url: "https://console.groq.com/keys",
   },
   {
-    id: "GOOGLE",
+    id: "google",
     label: "Google Gemini",
     hint: "fuente de conocimiento",
     url: "https://aistudio.google.com/apikey",

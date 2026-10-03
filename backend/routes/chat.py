@@ -29,6 +29,7 @@ if _project_root not in sys.path:
 from backend.agent.loop import AgentLoop
 from backend.agent.utils.error_logger import log_error, set_error_context, reset_error_context
 from backend.agent.utils.db import db_transaction, get_connection
+from backend.agent.utils.queries import load_query
 from backend.instances import agent, session_manager
 from backend.routes.file_text_extractor import (
     ExtractionResult,
@@ -57,11 +58,10 @@ def _save_attachments(session_id: str, turn_number: int, files_data: list[tuple[
         return
     try:
         with db_transaction() as conn:
-            now = datetime.now(timezone.utc).isoformat()
+            now = datetime.now().isoformat()
             for filename, binary_content, _extracted_text in files_data:
                 conn.execute(
-                    "INSERT INTO attachments (session_id, turn_number, file_name, size, content, created_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    load_query("attachments/insert.sql"),
                     (session_id, turn_number, filename, len(binary_content), binary_content, now),
                 )
     except Exception as exc:
@@ -178,16 +178,59 @@ async def chat_endpoint(
         # Set error context for this request (inside event_stream so set/reset share same async context)
         error_ctx_token = set_error_context(session_id=session_id, turn_number=turn_number)
         try:
-            agent_loop = AgentLoop(
-                agent=agent,
-                session_manager=session_manager,
-            )
-            async for sse_event in agent_loop.run(
-                session_id=session_id,
-                user_message=message,
-                file_contents=file_contents,
-                stream_cancel_event=stream_cancel_event,
-            ):
+            # Fase 3: si hay workflow seleccionado y válido, corre el
+            # WorkflowRunner determinista. Si falla la carga, fallback a
+            # smart con aviso. Mismos eventos SSE y Telegram.
+            selected_workflow = "smart"
+            try:
+                raw_selection = session_manager.get_config("selected_workflow")
+                if raw_selection and raw_selection.strip():
+                    selected_workflow = raw_selection.strip()
+            except Exception as exc:
+                log_error(str(exc), source="backend/routes/chat.py:selected_workflow")
+                selected_workflow = "smart"
+            workflow_data = None
+            if selected_workflow != "smart":
+                try:
+                    from backend.agent.utils.workflow_loader import load_workflow
+
+                    loaded = load_workflow(selected_workflow)
+                    if isinstance(loaded, dict) and loaded.get("status") == "success":
+                        workflow_data = loaded.get("data")
+                    else:
+                        logger.warning("Workflow '%s' inválido, fallback a smart", selected_workflow)
+                        yield f"data: {json.dumps({'type': 'chunk', 'content': f'_Workflow {selected_workflow} inválido, usando flujo smart._'}, ensure_ascii=False)}\n\n"
+                        workflow_data = None
+                except Exception as exc:
+                    log_error(str(exc), source="backend/routes/chat.py:load_workflow")
+                    yield f"data: {json.dumps({'type': 'chunk', 'content': f'_Workflow {selected_workflow} no disponible, usando flujo smart._'}, ensure_ascii=False)}\n\n"
+                    workflow_data = None
+            # Fase 6: fuente única de eventos. Workflow válido usa el runner
+            # determinista, si no el flujo smart. Ambos pasan por el mismo
+            # consumo y el mismo envío a Telegram.
+            if workflow_data is not None:
+                from backend.agent.utils.workflow_runner import WorkflowRunner
+
+                runner = WorkflowRunner(agent=agent, session_manager=session_manager)
+                event_source = runner.run(
+                    session_id=session_id,
+                    user_message=message,
+                    workflow=workflow_data,
+                    turn_number=turn_number,
+                    stream_cancel_event=stream_cancel_event,
+                )
+            else:
+                agent_loop = AgentLoop(
+                    agent=agent,
+                    session_manager=session_manager,
+                )
+                event_source = agent_loop.run(
+                    session_id=session_id,
+                    user_message=message,
+                    file_contents=file_contents,
+                    stream_cancel_event=stream_cancel_event,
+                )
+            async for sse_event in event_source:
                 # If client disconnected, signal cancellation but let generator finish naturally
                 # (loop.py will handle aborted event, save partial response, and yield [DONE])
                 if await request.is_disconnected():

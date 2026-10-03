@@ -18,7 +18,7 @@ Se asume que todos tienen configurado Git y acceso al repositorio remoto. Si no,
 
 - Trabajar siempre desde ramas feature/bugfix/refactor o release, nunca directamente en `main`.
 - `main` debe reflejar siempre una versión estable que puede desplegarse.
-- Usar commits pequeños y atómicos con mensajes claros (imperativos): "Agregar validación X", "Corregir bug en Y".
+- Usar commits pequeños y atómicos con mensajes claros en español e imperativo, con prefijo de tipo: "Feat: agregar validación X", "Fix: corregir bug en Y".
 - Antes de push, actualizar la rama local con la rama remota base (ver más abajo) y correr tests/linter si aplica.
 - Los merges a `main` se hacen mediante Pull Requests (PR) revisados por al menos una persona. Si hay una persona designada para merge, seguirá el mismo procedimiento pero cualquiera puede hacerlo si está autorizado.
 
@@ -88,11 +88,15 @@ graph TD
 
 ### 3. Flujo típico para desarrollar una feature (local)
 
-1. Sincronizar `main` y crear la rama desde `main`:
+1. Sincronizar `main` y crear la rama desde `main` (elegir una opción):
 
 ```bash
 >>> git checkout main
->>> git pull origin main
+>>> # Opción A (corta):
+>>> git pull --rebase origin main
+>>> # Opción B (explícita):
+>>> git fetch origin
+>>> git rebase origin/main
 >>> git checkout -b feature/nombre-descriptivo
 ```
 
@@ -100,20 +104,20 @@ graph TD
 
 ```bash
 >>> git add <archivos>
->>> git commit -m "Agregar: descripción breve en imperativo"
+>>> git commit -m "Feat: descripción breve en español e imperativo"
 ```
 
-> Los commits deben estar siempre en español, escritos en modo imperativo (como si dieras una orden) y deben ser atómicos, es decir, representar un cambio pequeño, claro y coherente.
+> Los commits deben estar siempre en español, escritos en modo imperativo (como si dieras una orden), deben ser atómicos, es decir, representar un cambio pequeño, claro y coherente, y deben iniciar con un prefijo de tipo: `Fix:`, `Feat:`, `Chore:`, `Docs:`, `Refactor:`, `Update:`.
 El título debe indicar qué hace el cambio, no por qué ni cómo.
 
 ```bash
 Ejemplos:
 
->>> git commit -m "Agregar: endpoint para obtener estadísticas de usuarios"
->>> git commit -m "Corregir: error en la carga de datos desde CSV"
->>> git commit -m "Refactorizar: función de limpieza de texto"
->>> git commit -m "Actualizar: documentación del README"
->>> git commit -m "Optimizar: consultas a la base de datos"
+>>> git commit -m "Feat: agregar endpoint para obtener estadísticas de usuarios"
+>>> git commit -m "Fix: corregir error en la carga de datos desde CSV"
+>>> git commit -m "Refactor: refactorizar función de limpieza de texto"
+>>> git commit -m "Docs: actualizar documentación del README"
+>>> git commit -m "Refactor: optimizar consultas a la base de datos"
 ```
 
 3. Primer push y set-upstream (se configura la rama remota)
@@ -278,12 +282,15 @@ https://github.com/<owner>nombre_owner</owner>/<repo>nombre_repo</repo>/compare/
 
 Este procedimiento está pensado para que cualquiera pueda hacerlo de forma segura.
 
-1. Antes de mergear, desde la rama remota base (`main`) tráela y actualízala localmente:
+1. Antes de mergear, desde la rama remota base (`main`) tráela y actualízala localmente (elegir una opción):
 
 ```bash
 >>> git checkout main
->>> # Recomendado: mantener historial lineal localmente
+>>> # Opción A (corta):
 >>> git pull --rebase origin main
+>>> # Opción B (explícita):
+>>> git fetch origin
+>>> git rebase origin/main
 ```
 
 2. Traer la rama feature localmente si no existe:
@@ -315,11 +322,15 @@ Este procedimiento está pensado para que cualquiera pueda hacerlo de forma segu
 - Squash and merge: mantiene `main` con commits ordenados y un único commit por PR.
 - Merge commit: preserva commits individuales.
 
-7. Tras mergear, actualizar `main` local y borrar la rama remota y local:
+7. Tras mergear, actualizar `main` local y borrar la rama remota y local (elegir una opción para actualizar):
 
 ```bash
 >>> git checkout main
->>> git pull origin main
+>>> # Opción A (corta):
+>>> git pull --rebase origin main
+>>> # Opción B (explícita):
+>>> git fetch origin
+>>> git rebase origin/main
 >>> git push origin --delete feature/nombre-descriptivo
 >>> git branch -d feature/nombre-descriptivo
 ```
@@ -357,7 +368,7 @@ Si van a crear un repositorio nuevo para "limpiar" el historial, seguir estos pa
 ```bash
 >>> git checkout --orphan clean-start
 >>> git add -A
->>> git commit -m "Initial clean commit: estado actual del proyecto"
+>>> git commit -m "Chore: crear commit inicial limpio con estado actual del proyecto"
 >>> git push origin clean-start
 ```
 

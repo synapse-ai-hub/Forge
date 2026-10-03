@@ -26,6 +26,7 @@ Tests end-to-end declarativos basados en escenarios YAML. Cada escenario ejecuta
 | **creators** (5) | ✅ | — | solo `creators-chat-delegates-to-agent` |
 | **main_flow** (3) | ✅ | — | — |
 | **rag** (3) | ✅ | ✅ | solo `rag-chat-search-memory-available` |
+| **parallel** (2) | ✅ | — | ✅ (los dos escenarios) |
 
 - **API Key de OpenRouter**: necesaria para los tests de RAG. Se carga desde **Configuración → Providers** en la UI. Sin ella, los endpoints RAG devuelven error al intentar instanciar ChromaDB.
 - **LLM configurado**: necesario para los escenarios de chat que hacen streaming SSE.
@@ -74,6 +75,7 @@ python -m tests.e2e.runner --base-url http://127.0.0.1:8000
 | `scheduler.yaml` | `scheduler-create-toggle-delete`, `scheduler-rejects-invalid-task`, `scheduler-delete-nonexistent` |
 | `creators.yaml` | `creators-list-agents`, `creators-list-tools`, `creators-list-skills`, `creators-delete-nonexistent-skill`, `creators-chat-delegates-to-agent` |
 | `main_flow.yaml` | `main-flow-basic-chat`, `main-flow-with-attachment-context`, `main-flow-cancel-stream` |
+| `parallel.yaml` | `parallel-two-list-dir-same-block`, `parallel-three-list-dir-same-block` |
 
 ---
 

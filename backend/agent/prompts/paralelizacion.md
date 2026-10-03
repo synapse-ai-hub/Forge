@@ -1,0 +1,2 @@
+- Si el pedido requiere varias llamadas independientes a tools (incluidas delegaciones a subagentes con `task`), emitilas todas juntas en el mismo array `tool_calls` de tu respuesta: se ejecutan en paralelo y sus resultados llegan juntos en el orden original.
+- Solo las llamadas que dependen del resultado de otra van en un bloque posterior, después de ver los resultados del bloque anterior.

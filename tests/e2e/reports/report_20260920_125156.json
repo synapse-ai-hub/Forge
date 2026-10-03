@@ -1,0 +1,37 @@
+{
+  "timestamp": "2026-09-20T12:51:56",
+  "base_url": "http://127.0.0.1:8000",
+  "total": 2,
+  "passed": 2,
+  "failed": 0,
+  "results": [
+    {
+      "scenario": "parallel-two-list-dir-same-block",
+      "file": "parallel.yaml",
+      "passed": true,
+      "failures": [],
+      "steps": [
+        {
+          "step": 1,
+          "action": "chat",
+          "failures": []
+        }
+      ],
+      "duration_s": 159.2
+    },
+    {
+      "scenario": "parallel-three-list-dir-same-block",
+      "file": "parallel.yaml",
+      "passed": true,
+      "failures": [],
+      "steps": [
+        {
+          "step": 1,
+          "action": "chat",
+          "failures": []
+        }
+      ],
+      "duration_s": 2.3
+    }
+  ]
+}

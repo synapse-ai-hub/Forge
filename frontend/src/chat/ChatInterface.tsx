@@ -276,6 +276,43 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
     return () => window.removeEventListener("model-changed", onModelChange);
   }, [loadCurrentProvider]);
 
+  /* ---- workflow mode: smart or one deterministic workflow ---- */
+  const [workflowSelected, setWorkflowSelected] = useState("smart");
+  const [workflowAvailable, setWorkflowAvailable] = useState<string[]>(["smart"]);
+
+  const loadWorkflowSelection = useCallback(() => {
+    configService
+      .getWorkflowSelection()
+      .then((data) => {
+        if (cancelledRef.current) return;
+        setWorkflowAvailable(data.available?.length ? data.available : ["smart"]);
+        setWorkflowSelected(data.selected || "smart");
+      })
+      .catch(() => {
+        if (!cancelledRef.current) {
+          setWorkflowAvailable(["smart"]);
+          setWorkflowSelected("smart");
+        }
+      });
+  }, []);
+
+  useEffect(() => {
+    loadWorkflowSelection();
+  }, [loadWorkflowSelection]);
+
+  useEffect(() => {
+    const onChanged = (e: Event) => {
+      const w = (e as CustomEvent).detail?.workflow;
+      if (w) {
+        setWorkflowSelected(w);
+      } else {
+        loadWorkflowSelection();
+      }
+    };
+    window.addEventListener("workflow-changed", onChanged);
+    return () => window.removeEventListener("workflow-changed", onChanged);
+  }, [loadWorkflowSelection]);
+
   /* ---- blocked state: no provider/model selected yet ---- */
   const [modelSelected, setModelSelected] = useState<boolean | null>(null);
   const loadModelSelected = useCallback(() => {
@@ -898,8 +935,29 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
           </h1>
         </div>
 
-        {/* Right: Telegram toggle + scheduler + docs + métricas + salir */}
+        {/* Right: workflow mode + Telegram toggle + scheduler + docs + métricas + salir */}
         <div className="flex items-center gap-1 shrink-0">
+          {/* Workflow mode — smart o un workflow determinista */}
+          <select
+            value={workflowSelected}
+            onChange={async (e) => {
+              const w = e.target.value;
+              try {
+                const sel = await configService.selectWorkflow(w);
+                setWorkflowSelected(sel);
+              } catch {
+                loadWorkflowSelection();
+              }
+            }}
+            title="Modo: smart o workflow determinista"
+            className="h-9 sm:h-10 px-2 text-xs font-medium rounded-md border border-app-border bg-white text-app-text hover:bg-app-bg-tertiary/60 transition-colors max-w-[140px]"
+          >
+            {workflowAvailable.map((w) => (
+              <option key={w} value={w}>
+                {w === "smart" ? "Smart" : w}
+              </option>
+            ))}
+          </select>
           {/* Telegram toggle — mismo formato y colores que el toggle de verbose */}
           <button
             type="button"

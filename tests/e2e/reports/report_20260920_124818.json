@@ -1,0 +1,45 @@
+{
+  "timestamp": "2026-09-20T12:48:18",
+  "base_url": "http://127.0.0.1:8000",
+  "total": 2,
+  "passed": 0,
+  "failed": 2,
+  "results": [
+    {
+      "scenario": "parallel-two-list-dir-same-block",
+      "file": "parallel.yaml",
+      "passed": false,
+      "failures": [
+        "none of the expected tools ['list_dir'] were called (called: ['read', 'read'])"
+      ],
+      "steps": [
+        {
+          "step": 1,
+          "action": "chat",
+          "failures": [
+            "none of the expected tools ['list_dir'] were called (called: ['read', 'read'])"
+          ]
+        }
+      ],
+      "duration_s": 3.0
+    },
+    {
+      "scenario": "parallel-three-list-dir-same-block",
+      "file": "parallel.yaml",
+      "passed": false,
+      "failures": [
+        "none of the expected tools ['list_dir'] were called (called: ['read', 'read', 'read'])"
+      ],
+      "steps": [
+        {
+          "step": 1,
+          "action": "chat",
+          "failures": [
+            "none of the expected tools ['list_dir'] were called (called: ['read', 'read', 'read'])"
+          ]
+        }
+      ],
+      "duration_s": 1.8
+    }
+  ]
+}

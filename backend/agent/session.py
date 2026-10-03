@@ -25,6 +25,7 @@ from backend.agent.utils.contract import make_error_response, make_success_respo
 from backend.agent.utils.error_logger import log_error
 from backend.agent.ddl_setup import setup_database
 from backend.agent.utils.db import DB_PATH
+from backend.agent.utils.queries import load_query
 from backend.agent.utils.spend_handler import calculate_cost
 
 logger = logging.getLogger(__name__)
@@ -117,7 +118,7 @@ class SessionManager:
                 conn = self._get_connection()
                 try:
                     existing = conn.execute(
-                        "SELECT session_id FROM sessions WHERE session_id = ?",
+                        load_query("sessions/exists.sql"),
                         (session_id,),
                     ).fetchone()
 
@@ -127,12 +128,11 @@ class SessionManager:
                             usage=zero_usage(),
                         )
 
-                    now = datetime.now(timezone.utc).isoformat()
+                    now = datetime.now().isoformat()
                     metadata_json = json.dumps(metadata) if metadata is not None else None
 
                     conn.execute(
-                        "INSERT INTO sessions (session_id, created_at, updated_at, metadata, parent_id) "
-                        "VALUES (?, ?, ?, ?, ?)",
+                        load_query("sessions/create.sql"),
                         (session_id, now, now, metadata_json, parent_id),
                     )
                     conn.commit()
@@ -175,13 +175,13 @@ class SessionManager:
             if max_turns <= 0:
                 # Load ALL messages
                 rows = conn.execute(
-                    "SELECT * FROM messages WHERE session_id = ? ORDER BY turn_number, step, id ASC",
+                    load_query("messages/load_all.sql"),
                     (session_id,),
                 ).fetchall()
             else:
                 # Find the max turn_number for this session
                 row = conn.execute(
-                    "SELECT MAX(turn_number) AS max_turn FROM messages WHERE session_id = ?",
+                    load_query("messages/get_max_turn.sql"),
                     (session_id,),
                 ).fetchone()
                 max_turn = row["max_turn"] if row and row["max_turn"] is not None else 0
@@ -189,8 +189,7 @@ class SessionManager:
                 min_turn = max(max_turn - max_turns + 1, 0)
                 # +1 to include the current incomplete turn as well
                 rows = conn.execute(
-                    "SELECT * FROM messages WHERE session_id = ? AND "
-                    "turn_number >= ? ORDER BY turn_number, step, id ASC",
+                    load_query("messages/load_from_turn.sql"),
                     (session_id, min_turn),
                 ).fetchall()
 
@@ -246,7 +245,7 @@ class SessionManager:
         conn = self._get_connection()
         try:
             row = conn.execute(
-                "SELECT metadata FROM sessions WHERE session_id = ?",
+                load_query("sessions/get_metadata.sql"),
                 (session_id,),
             ).fetchone()
             if not row or not row["metadata"]:
@@ -275,7 +274,7 @@ class SessionManager:
         conn = self._get_connection()
         try:
             row = conn.execute(
-                "SELECT title FROM sessions WHERE session_id = ?",
+                load_query("sessions/get_title.sql"),
                 (session_id,),
             ).fetchone()
             if not row or not row["title"]:
@@ -301,19 +300,14 @@ class SessionManager:
         """
         conn = self._get_connection()
         try:
-            rows = conn.execute(
-                "SELECT session_id, created_at, updated_at, metadata, title "
-                "FROM sessions WHERE parent_id IS NULL ORDER BY updated_at DESC"
-            ).fetchall()
+            rows = conn.execute(load_query("sessions/list_sessions.sql")).fetchall()
 
             sessions: list[dict] = []
             for row in rows:
                 session_id = row["session_id"]
 
                 preview_row = conn.execute(
-                    "SELECT content FROM messages "
-                    "WHERE session_id = ? AND role = 'user' "
-                    "ORDER BY id ASC LIMIT 1",
+                    load_query("messages/first_user_content.sql"),
                     (session_id,),
                 ).fetchone()
                 first_user = (
@@ -330,7 +324,7 @@ class SessionManager:
                 )
 
                 count_row = conn.execute(
-                    "SELECT COUNT(*) AS cnt FROM messages WHERE session_id = ?",
+                    load_query("messages/count_by_session.sql"),
                     (session_id,),
                 ).fetchone()
                 message_count = int(count_row["cnt"]) if count_row else 0
@@ -369,7 +363,8 @@ class SessionManager:
         model: str | None = None,
         provider: str | None = None,
         turn_number: int | None = None,
-        step: int = 0,
+        step: int | None = 0,
+        substep: int | None = None,
     ) -> dict:
         """Persist a single message and update the session timestamp.
 
@@ -396,6 +391,12 @@ class SessionManager:
                 Used to calculate cost per message when combined with model and usage.
             turn_number: Turn number for grouping messages by
                 conversation turn.
+            step: Step within the turn. Always None for roles
+                "user" and "title" (those messages carry no step).
+            substep: Ordinal within the same turn and step
+                (differentiates parallel messages sharing a step).
+                Auto-assigned as MAX+1 when None. Always None for
+                roles "user" and "title".
 
         Returns:
             A contract response dict indicating success or failure.
@@ -425,16 +426,21 @@ class SessionManager:
         conn = self._get_connection()
         try:
             with self._lock:
-                now = datetime.now(timezone.utc).isoformat()
+                now = datetime.now().isoformat()
+
+                if role in ("user", "title"):
+                    step = None
+                    substep = None
+
+                if substep is None and step is not None:
+                    row = conn.execute(
+                        load_query("messages/get_max_substep.sql"),
+                        (session_id, turn_number, step),
+                    ).fetchone()
+                    substep = int(row[0]) + 1 if row else 1
 
                 conn.execute(
-                    "INSERT INTO messages "
-                    "(session_id, role, content, reasoning, tool_calls, tool_results, "
-                    "status, message, prompt_tokens, completion_tokens, total_tokens, total_time, "
-                    "time_to_first_token, "
-                    "tool_call_id, tool_name, model, provider, cost_input, cost_output, cost_total, "
-                    "turn_number, step, created_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    load_query("messages/insert.sql"),
                     (
                         session_id,
                         role,
@@ -458,11 +464,12 @@ class SessionManager:
                         cost_total,
                         turn_number,
                         step,
+                        substep,
                         now,
                     ),
                 )
                 conn.execute(
-                    "UPDATE sessions SET updated_at = ? WHERE session_id = ?",
+                    load_query("sessions/update_updated_at.sql"),
                     (now, session_id),
                 )
                 conn.commit()
@@ -484,6 +491,58 @@ class SessionManager:
         finally:
             conn.close()
 
+    def save_turn_latency(self, session_id: str, turn_number: int) -> dict:
+        """Compute and store the latency of a single turn.
+
+        Latency = SUM over steps of MAX(non-null total_time) for every
+            row except the final assistant row (parallel calls share the
+            step, only the group maximum counts) + time_to_first_token
+            of the final assistant message.
+        NULL times are skipped, never stored as 0; when the final
+        assistant is missing or its time_to_first_token is NULL the row
+        stores NULL so averages skip the turn instead of counting 0.
+
+        Args:
+            session_id: The session identifier.
+            turn_number: The turn number to compute.
+
+        Returns:
+            A contract response dict with the stored latency.
+        """
+        conn = self._get_connection()
+        try:
+            with self._lock:
+                row = conn.execute(
+                    load_query("turn_latency/compute.sql"),
+                    (
+                        session_id, turn_number,
+                        session_id, turn_number,
+                        session_id, turn_number,
+                    ),
+                ).fetchone()
+                latency = row[0] if row else None
+                conn.execute(
+                    load_query("turn_latency/insert.sql"),
+                    (session_id, turn_number, latency),
+                )
+                conn.commit()
+            return make_success_response(
+                message="Turn latency saved.",
+                data={"session_id": session_id, "turn_number": turn_number, "latency": latency},
+                usage=zero_usage(),
+            )
+        except Exception as e:
+            log_error(str(e), source="backend/agent/session.py")
+            logger.exception(
+                "Failed to save turn latency for session '%s' turn %s", session_id, turn_number
+            )
+            return make_error_response(
+                message=f"Failed to save turn latency for session '{session_id}'.",
+                usage=zero_usage(),
+            )
+        finally:
+            conn.close()
+
     def get_last_turn_number(self, session_id: str) -> int:
         """Return the highest ``turn_number`` stored for a session.
 
@@ -496,8 +555,7 @@ class SessionManager:
         conn = self._get_connection()
         try:
             row = conn.execute(
-                "SELECT COALESCE(MAX(turn_number), 0) AS max_turn "
-                "FROM messages WHERE session_id = ?",
+                load_query("messages/get_max_turn_or_zero.sql"),
                 (session_id,),
             ).fetchone()
             return int(row["max_turn"]) if row else 0
@@ -521,11 +579,13 @@ class SessionManager:
         try:
             with self._lock:
                 conn.execute(
-                    "DELETE FROM messages WHERE session_id = ?", (session_id,)
+                    load_query("messages/delete_by_session.sql"),
+                    (session_id,),
                 )
 
                 cursor = conn.execute(
-                    "DELETE FROM sessions WHERE session_id = ?", (session_id,)
+                    load_query("sessions/delete_session.sql"),
+                    (session_id,),
                 )
 
                 if cursor.rowcount == 0:
@@ -566,7 +626,7 @@ class SessionManager:
         try:
             with self._lock:
                 row = conn.execute(
-                    "SELECT value FROM config_kv WHERE key = ?", (key,)
+                    load_query("config/get_value.sql"), (key,)
                 ).fetchone()
             return row["value"] if row else None
         except Exception as e:
@@ -590,8 +650,7 @@ class SessionManager:
         try:
             with self._lock:
                 conn.execute(
-                    "INSERT INTO config_kv (key, value) VALUES (?, ?) "
-                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    load_query("config/upsert_value.sql"),
                     (key, value),
                 )
                 conn.commit()
@@ -612,9 +671,7 @@ class SessionManager:
         """
         conn = self._get_connection()
         try:
-            rows = conn.execute(
-                "SELECT provider, label, models FROM providers ORDER BY provider"
-            ).fetchall()
+            rows = conn.execute(load_query("providers/list.sql")).fetchall()
             result: list[dict] = []
             for row in rows:
                 models = json.loads(row["models"]) if row["models"] else []
@@ -645,14 +702,10 @@ class SessionManager:
         conn = self._get_connection()
         try:
             with self._lock:
-                now = datetime.now(timezone.utc).isoformat()
+                now = datetime.now().isoformat()
                 for p in providers:
                     conn.execute(
-                        "INSERT INTO providers (provider, label, models, updated_at) "
-                        "VALUES (?, ?, ?, ?) "
-                        "ON CONFLICT(provider) DO UPDATE SET "
-                        "label = excluded.label, models = excluded.models, "
-                        "updated_at = excluded.updated_at",
+                        load_query("providers/upsert.sql"),
                         (p["provider"], p["label"], json.dumps(p.get("models") or []), now),
                     )
                 conn.commit()
@@ -678,7 +731,7 @@ class SessionManager:
         try:
             with self._lock:
                 conn.execute(
-                    "UPDATE sessions SET title = ? WHERE session_id = ?",
+                    load_query("sessions/update_title.sql"),
                     (title, session_id),
                 )
                 conn.commit()
@@ -705,7 +758,7 @@ class SessionManager:
         try:
             with self._lock:
                 conn.execute(
-                    "UPDATE messages SET tool_results = ? WHERE session_id = ? AND role = 'assistant' AND turn_number = ?",
+                    load_query("messages/update_tool_results.sql"),
                     (json.dumps(tool_results), session_id, turn_number),
                 )
                 conn.commit()
@@ -725,9 +778,7 @@ class SessionManager:
         """
         conn = self._get_connection()
         try:
-            rows = conn.execute(
-                "SELECT title FROM sessions WHERE title IS NOT NULL AND title != '' AND parent_id IS NULL"
-            ).fetchall()
+            rows = conn.execute(load_query("sessions/list_titles.sql")).fetchall()
             return [row["title"] for row in rows]
         except Exception as e:
             log_error(str(e), source="backend/agent/session.py")

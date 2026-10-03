@@ -56,8 +56,12 @@ template/
 ideas.md
 
 # DB
-backend/agent/agent_db/agent.db
+backend/agent/agent_db/*
+!backend/agent/agent_db/queries/
 
 # Test Whisper
 tests/whisper/data/
 tests/whisper/result/
+
+# Pruebas embeddings
+pruebas_chroma.ipynb

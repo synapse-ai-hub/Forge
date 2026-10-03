@@ -202,7 +202,7 @@ export function BillingTab() {
                     <td className="py-1 pr-2 text-right">{(s.prompt_tokens || 0).toLocaleString()}</td>
                     <td className="py-1 pr-2 text-right">{formatRate(s.cost_input_rate)}</td>
                     <td className="py-1 text-right font-medium text-app-text">
-                      ${(s.cost_input || 0).toFixed(4)}
+                      ${(s.cost_input || 0).toFixed(2)}
                     </td>
                   </tr>
                   <tr className="border-t border-app-border text-app-text-secondary">
@@ -210,14 +210,14 @@ export function BillingTab() {
                     <td className="py-1 pr-2 text-right">{(s.completion_tokens || 0).toLocaleString()}</td>
                     <td className="py-1 pr-2 text-right">{formatRate(s.cost_output_rate)}</td>
                     <td className="py-1 text-right font-medium text-app-text">
-                      ${(s.cost_output || 0).toFixed(4)}
+                      ${(s.cost_output || 0).toFixed(2)}
                     </td>
                   </tr>
                   <tr className="border-t border-app-border font-medium text-app-text">
                     <td className="py-1 pr-2">Total ({s.requests || 0} req)</td>
                     <td className="py-1 pr-2 text-right">{(s.total_tokens || 0).toLocaleString()}</td>
                     <td className="py-1 pr-2 text-right">—</td>
-                    <td className="py-1 text-right">${(s.cost_total || 0).toFixed(4)}</td>
+                    <td className="py-1 text-right">${(s.cost_total || 0).toFixed(2)}</td>
                   </tr>
                 </tbody>
               </table>
@@ -231,9 +231,9 @@ export function BillingTab() {
               <span>Total{providerFilter ? ` (${providerFilter})` : ""}</span>
               <div className="flex gap-4 text-xs text-app-text-secondary">
                 <span>Req: {totals.requests}</span>
-                <span>In: {totals.prompt_tokens.toLocaleString()} (${totals.cost_input.toFixed(4)})</span>
-                <span>Out: {totals.completion_tokens.toLocaleString()} (${totals.cost_output.toFixed(4)})</span>
-                <span className="font-medium text-app-text">USD: {totals.cost_total.toFixed(4)}</span>
+                <span>In: {totals.prompt_tokens.toLocaleString()} (${totals.cost_input.toFixed(2)})</span>
+                <span>Out: {totals.completion_tokens.toLocaleString()} (${totals.cost_output.toFixed(2)})</span>
+                <span className="font-medium text-app-text">USD: {totals.cost_total.toFixed(2)}</span>
               </div>
             </div>
           )}

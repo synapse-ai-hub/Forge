@@ -1,0 +1,44 @@
+scenario: parallel-two-list-dir-same-block
+description: >
+  Paralelismo real: se le pide al router que inspeccione dos directorios
+  independientes emitiendo todas las llamadas en el mismo bloque tool_calls.
+  El runner verifica estructura del contrato: las tool_call llegan juntas
+  antes del primer tool_result (un solo bloque paralelo), el stream termina
+  con [DONE] y no hay errores de tools. Requiere LLM configurado.
+cleanup: true
+steps:
+  - action: chat
+    message: "Inspeccioná el contenido de los directorios 'backend' y 'frontend' con las herramientas que prefieras, emitiendo todas las llamadas independientes juntas en el mismo bloque. Después resumí en una frase qué hay en cada uno."
+    expect:
+      done: true
+      nonempty: true
+      no_tool_error: true
+      parallel_block: true
+      events_include:
+        - tool_call
+        - tool_result
+      tools_called_any_of:
+        - list_dir
+        - read
+---
+scenario: parallel-three-list-dir-same-block
+description: >
+  Paralelismo a tres vías: tres inspecciones independientes en el mismo
+  bloque. Verifica que el bloque paralelo ordena el commit por índice y que
+  el multiplexado de resultados no rompe el stream ni la persistencia.
+  Requiere LLM configurado.
+cleanup: true
+steps:
+  - action: chat
+    message: "Inspeccioná el contenido de los directorios 'backend', 'frontend' y 'docs' con las herramientas que prefieras, emitiendo todas las llamadas independientes juntas en el mismo bloque. Después decí cuántas entradas tiene cada uno."
+    expect:
+      done: true
+      nonempty: true
+      no_tool_error: true
+      parallel_block: true
+      events_include:
+        - tool_call
+        - tool_result
+      tools_called_any_of:
+        - list_dir
+        - read

@@ -1,0 +1,83 @@
+{
+  "timestamp": "2026-09-20T12:52:14",
+  "base_url": "http://127.0.0.1:8000",
+  "total": 5,
+  "passed": 4,
+  "failed": 1,
+  "results": [
+    {
+      "scenario": "creators-list-agents",
+      "file": "creators.yaml",
+      "passed": true,
+      "failures": [],
+      "steps": [
+        {
+          "step": 1,
+          "action": "request",
+          "failures": []
+        }
+      ],
+      "duration_s": 0.0
+    },
+    {
+      "scenario": "creators-list-tools",
+      "file": "creators.yaml",
+      "passed": true,
+      "failures": [],
+      "steps": [
+        {
+          "step": 1,
+          "action": "request",
+          "failures": []
+        }
+      ],
+      "duration_s": 0.0
+    },
+    {
+      "scenario": "creators-list-skills",
+      "file": "creators.yaml",
+      "passed": true,
+      "failures": [],
+      "steps": [
+        {
+          "step": 1,
+          "action": "request",
+          "failures": []
+        }
+      ],
+      "duration_s": 0.0
+    },
+    {
+      "scenario": "creators-delete-nonexistent-skill",
+      "file": "creators.yaml",
+      "passed": true,
+      "failures": [],
+      "steps": [
+        {
+          "step": 1,
+          "action": "request",
+          "failures": []
+        }
+      ],
+      "duration_s": 0.0
+    },
+    {
+      "scenario": "creators-chat-delegates-to-agent",
+      "file": "creators.yaml",
+      "passed": false,
+      "failures": [
+        "tool errors reported for: task"
+      ],
+      "steps": [
+        {
+          "step": 1,
+          "action": "chat",
+          "failures": [
+            "tool errors reported for: task"
+          ]
+        }
+      ],
+      "duration_s": 7.2
+    }
+  ]
+}

@@ -221,6 +221,13 @@ def get_agents_dir() -> Path:
     return get_config_dir() / "agents"
 
 
+def get_workflows_dir() -> Path:
+    """Return the workflows directory path."""
+    workflows_dir = get_config_dir() / "workflows"
+    workflows_dir.mkdir(parents=True, exist_ok=True)
+    return workflows_dir
+
+
 def get_knowledge_dir() -> Path:
     """Return the knowledge (vector store) directory path."""
     return get_config_dir() / "knowledge"
