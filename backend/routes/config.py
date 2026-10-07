@@ -1175,28 +1175,14 @@ _SELECTED_WORKFLOW_DEFAULT = "smart"
 def _list_workflow_names() -> list[str]:
     """List available workflow names from disk.
 
-    Scans ``~/.config/synapseForge/workflows/*/workflow.yaml`` with
-    containment checks. Returns sorted names. Never raises.
+    Delegates to ``workflow_loader.list_workflows`` (flat
+    ``~/.config/synapseForge/workflows/<nombre>.yaml`` files).
+    Returns sorted names. Never raises.
     """
     try:
-        from backend.agent.utils.config_dir import get_workflows_dir
+        from backend.agent.utils.workflow_loader import list_workflows
 
-        workflows_dir = get_workflows_dir()
-        names: list[str] = []
-        if not workflows_dir.is_dir():
-            return names
-        for entry in sorted(workflows_dir.iterdir()):
-            try:
-                if not entry.is_dir():
-                    continue
-                if entry.name.startswith("."):
-                    continue
-                yaml_path = entry / "workflow.yaml"
-                if yaml_path.is_file():
-                    names.append(entry.name)
-            except (OSError, ValueError):
-                continue
-        return names
+        return list_workflows()
     except Exception as exc:
         log_error(str(exc), source="backend/routes/config.py:_list_workflow_names")
         return []
@@ -1320,7 +1306,7 @@ async def validate_workflow_endpoint(payload: dict[str, Any]) -> JSONResponse:
 
 @router.post("/workflows/save")
 async def save_workflow_endpoint(payload: dict[str, Any]) -> JSONResponse:
-    """Validate and save a workflow YAML under workflows/<name>/workflow.yaml."""
+    """Validate and save a workflow YAML as workflows/<name>.yaml (flat file)."""
     try:
         import os as _os
         import re as _re
@@ -1359,15 +1345,12 @@ async def save_workflow_endpoint(payload: dict[str, Any]) -> JSONResponse:
             )
         workflows_dir = get_workflows_dir()
         base = _os.path.realpath(workflows_dir)
-        target = _os.path.realpath(workflows_dir / name / "workflow.yaml")
+        target = _os.path.realpath(workflows_dir / f"{name}.yaml")
         if not target.startswith(base + _os.sep):
             return JSONResponse(
                 status_code=400,
                 content={"status": "error", "message": "Ruta no permitida."},
             )
-        target_dir = workflows_dir / name
-        target_dir.mkdir(parents=True, exist_ok=True)
-        (target_dir / "agent").mkdir(parents=True, exist_ok=True)
         with open(target, "w", encoding="utf-8") as fh:
             fh.write(raw if raw.endswith("\n") else raw + "\n")
         return JSONResponse(

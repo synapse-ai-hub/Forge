@@ -228,6 +228,13 @@ def get_workflows_dir() -> Path:
     return workflows_dir
 
 
+def get_workflow_prompts_dir() -> Path:
+    """Return the shared workflow prompts directory path."""
+    prompts_dir = get_workflows_dir() / "prompts"
+    prompts_dir.mkdir(parents=True, exist_ok=True)
+    return prompts_dir
+
+
 def get_knowledge_dir() -> Path:
     """Return the knowledge (vector store) directory path."""
     return get_config_dir() / "knowledge"
