@@ -170,6 +170,19 @@ class WorkflowRunner:
 
         t0 = time.time()
         agent_name = node.get("agent_name", "")
+        try:
+            if not agent_name or ".." in agent_name or "/" in agent_name or "\\" in agent_name:
+                return {"status": "error", "message": f"Nombre de agente inválido en nodo '{node.get('id', '')}'.", "data": ""}
+            from backend.agent.utils.config_dir import get_agents_dir
+
+            agent_file = get_agents_dir() / f"{agent_name}.md"
+            if not agent_file.is_file():
+                return {"status": "error",
+                        "message": f"No se encontró el agente '{agent_name}' (nodo '{node.get('id', '')}'). Revisá que exista en la carpeta de agentes.",
+                        "data": ""}
+        except Exception as exc:
+            log_error(str(exc), source="workflow_runner.py:agent_exists")
+            return {"status": "error", "message": f"No se pudo verificar el agente '{agent_name}'.", "data": ""}
         prompt_template = node.get("prompt", "") or state.get("input", "")
         try:
             context = _json.dumps(state.get("results", {}), ensure_ascii=False)[:4000]
