@@ -55,11 +55,80 @@ class WorkflowRunner:
             SSE strings with the same format as ``AgentLoop.run``.
         """
         from backend.agent.utils.error_logger import log_error
-        from backend.agent.utils.loop_helpers import execute_tool
+        from backend.agent.utils.loop_helpers import _tool_call_ctx, execute_tool
 
         nodes = list(workflow.get("nodes", []))
         on_failure = workflow.get("on_failure", "continue")
         name = workflow.get("name", "workflow")
+        # Least-privilege permissions for this run: only the tools the
+        # validated YAML references. The user consented by activating the
+        # workflow. Scoped via ContextVar snapshot (same pattern as the
+        # parallel blocks in AgentLoop): reset when the run finishes so the
+        # ambient permissions are never mutated.
+        allowed: dict[str, str] = {}
+        try:
+            for _n in nodes:
+                if not isinstance(_n, dict):
+                    continue
+                _t = _n.get("type")
+                if _t == "tool" and _n.get("tool"):
+                    # "task" delegates to sub-agents with its own nested
+                    # permission model: never allow it flat here. Use
+                    # "agent" nodes for delegation inside workflows.
+                    _tool_name = str(_n["tool"])
+                    if _tool_name != "task":
+                        allowed[_tool_name] = "allow"
+                elif _t == "run":
+                    allowed["shell"] = "allow"
+                elif _t == "rag":
+                    allowed["rag"] = "allow"
+        except Exception as exc:
+            log_error(str(exc), source="workflow_runner.py:allowset")
+        _ctx_token = _tool_call_ctx.set({"tool_permissions": allowed})
+        try:
+            async for _sse in self._run_steps(
+                session_id, user_message, workflow, nodes, on_failure, name,
+                turn_number, stream_cancel_event, execute_tool,
+            ):
+                yield _sse
+        finally:
+            try:
+                _tool_call_ctx.reset(_ctx_token)
+            except Exception:
+                pass
+
+    async def _run_steps(
+        self,
+        session_id: str,
+        user_message: str,
+        workflow: dict[str, Any],
+        nodes: list[dict[str, Any]],
+        on_failure: str,
+        name: str,
+        turn_number: int = 1,
+        stream_cancel_event: Optional[asyncio.Event] = None,
+        execute_tool=None,
+    ) -> AsyncIterator[str]:
+        """Execute the DAG steps (sequential steps, parallel groups).
+
+        Runs under the permission snapshot set by :meth:`run`.
+
+        Args:
+            session_id: Parent session identifier.
+            user_message: Original user message.
+            workflow: Validated workflow data from the loader.
+            nodes: Normalized node list.
+            on_failure: ``continue`` or ``abort``.
+            name: Workflow name for messages.
+            turn_number: Turn number for persistence.
+            stream_cancel_event: Optional cancellation event.
+            execute_tool: Tool executor from ``loop_helpers``.
+
+        Yields:
+            SSE strings with the same format as ``AgentLoop.run``.
+        """
+        from backend.agent.utils.error_logger import log_error
+
         state: dict[str, Any] = {
             "input": user_message,
             "results": {},
@@ -275,14 +344,28 @@ class WorkflowRunner:
         t0 = time.time()
         args = dict(node.get("args", {}))
         query = node.get("query", "") or state.get("input", "")
+        injected_query = False
         if query and "query" not in args and "text" not in args and "content" not in args:
-            args.setdefault("query", query)
+            args["query"] = query
+            injected_query = True
         tc = {"name": node.get("tool", ""), "args": args}
         try:
             result = await execute_tool(self._agent, tc)
         except Exception as exc:
             log_error(str(exc), source="workflow_runner.py:tool_node")
             return {"status": "error", "message": f"Tool '{tc['name']}' falló.", "data": ""}
+        if (
+            isinstance(result, dict) and result.get("status") == "error"
+            and injected_query and "unexpected keyword argument" in str(result.get("message", ""))
+        ):
+            # Strict handlers (e.g. read(file_path)) reject the injected
+            # context key: retry once with only the declared args.
+            try:
+                args.pop("query", None)
+                result = await execute_tool(self._agent, {"name": node.get("tool", ""), "args": args})
+            except Exception as exc:
+                log_error(str(exc), source="workflow_runner.py:tool_node(retry)")
+                return {"status": "error", "message": f"Tool '{tc['name']}' falló.", "data": ""}
         if isinstance(result, dict) and result.get("status") == "error":
             return result
         data = result.get("data", "") if isinstance(result, dict) else result
