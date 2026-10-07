@@ -1,4 +1,4 @@
-import { Wrench, Puzzle, Brain, Database } from "lucide-react";
+import { Wrench, Puzzle, Brain, Database, Workflow } from "lucide-react";
 import { useCallback } from "react";
 import { Button } from "./ui/button";
 
@@ -11,7 +11,7 @@ export function CreateTab() {
   return (
     <div className="flex-1 overflow-y-auto p-4 space-y-4">
       <div className="text-xs font-medium text-app-text-secondary">
-        Crear herramientas, skills, agentes y RAG
+        Crear herramientas, skills, agentes, workflows y RAG
       </div>
       <p className="text-[11px] text-app-text-secondary">
         Esta funcionalidad está disponible en modo dev. Selecciona qué tipo de elemento crear y sigue las instrucciones.
@@ -28,6 +28,10 @@ export function CreateTab() {
         <Button className="w-full justify-start gap-2" variant="outline" onClick={() => openPage("agent.html")}>
           <Brain size={14} />
           Crear Agente
+        </Button>
+        <Button className="w-full justify-start gap-2" variant="outline" onClick={() => openPage("workflow.html")}>
+          <Workflow size={14} />
+          Crear Workflow
         </Button>
         <Button className="w-full justify-start gap-2" variant="outline" onClick={() => openPage("rag.html")}>
           <Database size={14} />
