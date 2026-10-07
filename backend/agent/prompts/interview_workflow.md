@@ -12,13 +12,12 @@ Un **workflow** es un DAG determinista en YAML que synapseForge ejecuta sin Lang
 
 ```
 ~/.config/synapseForge/workflows/
-├── mi-workflow/
-│   ├── workflow.yaml          # definición (un workflow por carpeta)
-│   └── agent/                 # overrides opcionales por workflow
+├── prompts/                 # prompts sueltos (md, toml, lo que sea)
+├── mi-workflow.yaml         # definición (un archivo plano por workflow)
 └── ...
 ```
 
-Cada carpeta directamente en `workflows/` con un `workflow.yaml` válido es un workflow independiente.
+Cada archivo `*.yaml` directamente en `workflows/` es un workflow independiente. Sin subcarpetas (estilo GitHub Actions).
 
 ### Estructura obligatoria del YAML
 

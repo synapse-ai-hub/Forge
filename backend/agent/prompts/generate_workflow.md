@@ -24,7 +24,7 @@ nodes:
 
 ## Reglas (todas obligatorias)
 
-- `name`: minúsculas, números y guiones (`^[a-z0-9][a-z0-9_-]*$`). Debe coincidir con la carpeta del workflow.
+- `name`: minúsculas, números y guiones (`^[a-z0-9][a-z0-9_-]*$`). Debe coincidir con el nombre del archivo `<nombre>.yaml`.
 - `nodes`: lista no vacía. Cada nodo lleva `id` único, `type` en `agent|tool|rag|run` y `step` entero desde 1.
 - `step`: contiguos desde 1 sin huecos. Mismo step = paralelo, distinto step = secuencial.
 - `agent` requiere `agent_name` (un agente que exista). `tool` requiere `tool` (una tool que exista, `args` opcional como objeto). `rag` requiere `collection` (una colección que exista, `query` opcional). `run` ejecuta un comando shell estilo github actions (`run` con el comando, `timeout` en ms entre 1000-300000, `workdir` opcional relativo sin `..`).

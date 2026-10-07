@@ -10,7 +10,7 @@ Si necesitás aclaraciones sobre algo ambiguo, pedilas. Pero si el pedido es cla
 
 ### Qué podés cambiar
 
-1. **Nombre** — Renombrá el workflow (la carpeta y el campo `name` del YAML deben coincidir).
+1. **Nombre** — Renombrá el workflow (renombrá el archivo `<nombre>.yaml` y el campo `name` del YAML deben coincidir).
 2. **Descripción** — Actualizá el campo `description`.
 3. **Nodos** — Agregá, quitá o modificá nodos (`id`, `type`, `step`, `agent_name`/`tool`/`collection`/`run`, `prompt`, `timeout`, `workdir`).
 4. **Steps** — Reordená steps manteniendo contigüidad desde 1.
@@ -49,7 +49,7 @@ nodes:
 ### Archivo actual del workflow
 
 Nombre: {nombre}
-Carpeta: {carpeta}
+Archivo: {archivo}
 
 ### Conversación con el usuario
 

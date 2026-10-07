@@ -34,6 +34,9 @@ logger = logging.getLogger(__name__)
 
 _WORKFLOWS_DIR = get_workflows_dir()
 
+# Same rule as ``workflow_loader._NAME_RE``: listings must agree with the loader.
+_WORKFLOW_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # Workflows locales
@@ -60,9 +63,13 @@ def _listar_workflows_locales() -> list[dict[str, Any]]:
         return []
     for entry in entries:
         try:
-            if not entry.is_dir() or entry.name.startswith("."):
+            if not entry.is_file() or entry.name.startswith("."):
                 continue
-            yaml_path = entry / "workflow.yaml"
+            if entry.suffix != ".yaml":
+                continue
+            if not _WORKFLOW_NAME_RE.match(entry.stem):
+                continue
+            yaml_path = entry
             if not yaml_path.is_file():
                 continue
             description = ""
@@ -76,7 +83,7 @@ def _listar_workflows_locales() -> list[dict[str, Any]]:
                 logger.warning("No se pudo leer %s: %s", yaml_path, exc)
                 continue
             resultados.append({
-                "name": entry.name,
+                "name": entry.stem,
                 "description": description[:200],
                 "path": str(entry),
             })
@@ -192,24 +199,27 @@ async def _evaluar_si_existe(
         return None
 
 
-def _workflow_dir_path(name: str) -> Path:
-    """Return the absolute path of the workflow directory.
+def _workflow_file_path(name: str) -> Path:
+    """Return the absolute path of the flat workflow file.
 
     Args:
-        name: The workflow name (directory name).
+        name: The workflow name (file stem, ``<name>.yaml``).
 
     Returns:
-        The absolute ``Path`` to the workflow directory.
+        The absolute ``Path`` to the workflow YAML file.
 
     Raises:
-        ValueError: If the name is empty or contains path traversal.
+        ValueError: If the name is empty, fails the workflow name regex,
+            or contains path traversal.
     """
     if not isinstance(name, str) or not name.strip():
         raise ValueError("Nombre de workflow inválido.")
     clean = name.strip()
+    if not _WORKFLOW_NAME_RE.match(clean):
+        raise ValueError("Nombre de workflow inválido.")
     if ".." in clean or "/" in clean or "\\" in clean:
         raise ValueError("Nombre de workflow inválido.")
-    return _WORKFLOWS_DIR / clean
+    return _WORKFLOWS_DIR / f"{clean}.yaml"
 
 
 # ═══════════════════════════════════════════════════════════════════════

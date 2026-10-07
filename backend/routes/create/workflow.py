@@ -23,7 +23,7 @@ from backend.agent.utils.config_dir import get_workflows_dir
 from backend.agent.utils.workflows_helpers import (
     _listar_workflows_locales,
     _evaluar_si_existe as _evaluar_si_existe_workflow,
-    _workflow_dir_path,
+    _workflow_file_path,
 )
 from backend.agent.utils.create_helpers import (
     stream_tool_calling_loop,
@@ -165,10 +165,10 @@ async def post_create_workflow_stream(req: CreateWorkflowRequest):
                 yield _sse({"type": "error", "content": "Nombre inválido. Minúsculas, números, guiones."})
                 return
             try:
-                workflow_carpeta = str(_workflow_dir_path(valid_iter_name or "workflow"))
+                workflow_archivo = str(_workflow_file_path(valid_iter_name or "workflow"))
                 iter_prompt = iter_template.format(
                     nombre=valid_iter_name or "(inferir)",
-                    carpeta=workflow_carpeta,
+                    archivo=workflow_archivo,
                     conversacion=_formatear_mensajes(mensajes),
                 )
             except Exception as exc:
@@ -199,7 +199,7 @@ async def post_create_workflow_stream(req: CreateWorkflowRequest):
                 iter_error = "El workflow modificado no valida."
                 if valid_iter_name:
                     try:
-                        cand = _workflow_dir_path(valid_iter_name) / "workflow.yaml"
+                        cand = _workflow_file_path(valid_iter_name)
                         if cand.is_file():
                             data = _yaml_iter.safe_load(cand.read_text(encoding="utf-8"))
                             res = _validate_iter(data if isinstance(data, dict) else {})
@@ -208,7 +208,7 @@ async def post_create_workflow_stream(req: CreateWorkflowRequest):
                             else:
                                 iter_error = str(res.get("message", iter_error))
                         else:
-                            iter_error = f"Workflow '{valid_iter_name}' no tiene workflow.yaml."
+                            iter_error = f"Workflow '{valid_iter_name}' no tiene archivo {cand.name}."
                     except Exception as exc:
                         log_error(str(exc), source="create.py:workflow(iterate_validate)")
                         iter_error = str(exc)
@@ -222,7 +222,7 @@ async def post_create_workflow_stream(req: CreateWorkflowRequest):
             yield _sse({"type": "workflow_result_final", "content": {
                 "status": "success",
                 "message": f"Workflow '{valid_iter_name}' modificado exitosamente.",
-                "data": {"exist": "Sí", "workflow": valid_iter_name, "workflow_path": workflow_carpeta},
+                "data": {"exist": "Sí", "workflow": valid_iter_name, "workflow_path": workflow_archivo},
             }})
             return
 
@@ -319,19 +319,19 @@ async def post_create_workflow_stream(req: CreateWorkflowRequest):
 
         try:
             conversacion = _formatear_mensajes(mensajes) if mensajes else f"**Usuario**: {task}"
-            carpeta = str(_workflow_dir_path(name or "workflow"))
+            archivo = str(_workflow_file_path(name or "workflow"))
             sys_prompt = sys_prompt_template.format(
                 nombre=name or "(inferir del contexto)",
                 descripcion=task,
                 conversacion=conversacion,
-                carpeta=carpeta,
+                archivo=archivo,
             )
         except Exception as exc:
             log_error(str(exc), source="create.py:workflow(create_format)")
             yield _sse({"type": "error", "content": _FRIENDLY_ERROR_WORKFLOW})
             return
 
-        user_msg = "Creá el workflow. Pasos OBLIGATORIOS en orden: 1) Creá la carpeta. 2) Escribí workflow.yaml con write. 3) Validá el YAML. 4) Cuando valide, pedime aprobación."
+        user_msg = "Creá el workflow. Pasos OBLIGATORIOS en orden: 1) Escribí el archivo <nombre>.yaml con write en la carpeta de workflows. 2) Validá el YAML. 3) Cuando valide, pedime aprobación. Si el workflow necesita prompts propios, guardalos sueltos en workflows/prompts/."
 
         try:
             tools = list(agent.tools.tools_registry(_AGENT_TOOLS_PERMS))
@@ -357,19 +357,19 @@ async def post_create_workflow_stream(req: CreateWorkflowRequest):
             import time as _time
             import yaml as _yaml
 
-            def _try_validate_dir(dir_name: str) -> tuple[str | None, str | None, str | None]:
-                """Validate one workflow dir, returning (name, path, error)."""
+            def _try_validate_file(file_name: str) -> tuple[str | None, str | None, str | None]:
+                """Validate one flat workflow file, returning (name, path, error)."""
                 try:
-                    candidate = _workflow_dir_path(dir_name) / "workflow.yaml"
+                    candidate = _workflow_file_path(file_name)
                 except ValueError as exc:
                     return None, None, str(exc)
                 try:
                     if not candidate.is_file():
-                        return None, None, f"Workflow '{dir_name}' no tiene workflow.yaml."
+                        return None, None, f"Workflow '{file_name}' no tiene archivo {candidate.name}."
                     data = _yaml.safe_load(candidate.read_text(encoding="utf-8"))
                     result = validate_workflow(data if isinstance(data, dict) else {})
                     if result.get("status") == "success":
-                        return dir_name, str(candidate), None
+                        return file_name, str(candidate), None
                     return None, None, str(result.get("message", "Workflow inválido."))
                 except Exception as exc:
                     log_error(str(exc), source="create.py:workflow(validate)")
@@ -379,7 +379,7 @@ async def post_create_workflow_stream(req: CreateWorkflowRequest):
             found_path = None
             last_error = "El agente no generó un workflow válido."
             if name:
-                ok_name, ok_path, err = _try_validate_dir(name)
+                ok_name, ok_path, err = _try_validate_file(name)
                 if ok_name:
                     found_name, found_path = ok_name, ok_path
                 elif err:
@@ -389,16 +389,18 @@ async def post_create_workflow_stream(req: CreateWorkflowRequest):
                     cutoff = _time.time() - 300
                     for entry in _WORKFLOWS_DIR.iterdir():
                         try:
-                            if not entry.is_dir() or entry.name.startswith("."):
+                            if not entry.is_file() or entry.suffix != ".yaml":
                                 continue
-                            if name and entry.name == name:
+                            if entry.name.startswith("."):
+                                continue
+                            if name and entry.stem == name:
                                 continue
                             try:
                                 if entry.stat().st_mtime < cutoff:
                                     continue
                             except Exception:
                                 continue
-                            ok_name, ok_path, err = _try_validate_dir(entry.name)
+                            ok_name, ok_path, err = _try_validate_file(entry.stem)
                             if ok_name:
                                 found_name, found_path = ok_name, ok_path
                                 break
