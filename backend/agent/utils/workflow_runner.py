@@ -137,6 +137,7 @@ class WorkflowRunner:
         }
         steps = sorted({n["step"] for n in nodes})
         final_text = ""
+        has_final = any(n.get("final") for n in nodes if isinstance(n, dict))
 
         yield f"data: {json.dumps({'type': 'chunk', 'content': f'_Ejecutando workflow {name}._'}, ensure_ascii=False)}\n\n"
 
@@ -208,7 +209,7 @@ class WorkflowRunner:
                         yield f"data: {json.dumps({'type': 'chunk', 'content': 'Workflow abortado por fallo de rama.'}, ensure_ascii=False)}\n\n"
                         yield "data: [DONE]\n\n"
                         return
-                if node.get("final") or (step == steps[-1] and node == group[-1]):
+                if node.get("final") or (not has_final and step == steps[-1] and node == group[-1]):
                     final_text = str(outcome["data"] or final_text)
 
         answer = final_text.strip() or "Workflow completado sin respuesta final."
