@@ -10,6 +10,7 @@ import { flushSync } from "react-dom";
 import { Send, Square, Download } from "lucide-react";
 import { MessageRow } from "../components/chatBlocks";
 import { CreateModelSelector } from "../components/CreateModelSelector";
+import configService from "../services/configService";
 import type { Message, ContentBlock } from "../App";
 import { saveFileWithPicker, fetchConversationMarkdown } from "../utils/conversationExport";
 
@@ -451,17 +452,9 @@ export function WorkflowInterface() {
     setYamlBusy(true);
     setYamlMsg("Generando con el agente...");
     try {
-      const resp = await fetch(`${API}/config/workflows/generate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ description: desc }),
-      });
-      const data = await resp.json().catch(() => null);
-      if (!resp.ok || !data || data.status === "error") {
-        throw new Error((data && data.message) || `HTTP ${resp.status}`);
-      }
-      setYaml(data.data?.yaml || "");
-      if (data.data?.name && !nombre.trim()) setNombre(data.data.name);
+      const res = await configService.generateWorkflow(desc);
+      setYaml(res.yaml);
+      if (res.name && !nombre.trim()) setNombre(res.name);
       setYamlMsg("YAML generado. Revisalo y guardalo.");
     } catch (err) {
       setYamlMsg(err instanceof Error ? err.message : "No se pudo generar.");
@@ -474,13 +467,8 @@ export function WorkflowInterface() {
     if (!yaml.trim()) { setYamlMsg("No hay YAML para validar."); return; }
     setYamlBusy(true);
     try {
-      const resp = await fetch(`${API}/config/workflows/validate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ yaml }),
-      });
-      const data = await resp.json().catch(() => null);
-      setYamlMsg((data && data.message) || (resp.ok ? "Workflow válido." : "YAML inválido."));
+      const res = await configService.validateWorkflow(yaml);
+      setYamlMsg(res.message);
     } catch (err) {
       setYamlMsg(err instanceof Error ? err.message : "Error validando.");
     } finally {
@@ -493,15 +481,7 @@ export function WorkflowInterface() {
     if (!nameVal || !yaml.trim()) { setYamlMsg("Nombre y YAML requeridos."); return; }
     setYamlBusy(true);
     try {
-      const resp = await fetch(`${API}/config/workflows/save`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: nameVal, yaml }),
-      });
-      const data = await resp.json().catch(() => null);
-      if (!resp.ok || !data || data.status === "error") {
-        throw new Error((data && data.message) || `HTTP ${resp.status}`);
-      }
+      await configService.saveWorkflow(nameVal, yaml);
       setYamlMsg(`Workflow «${nameVal}» guardado.`);
     } catch (err) {
       setYamlMsg(err instanceof Error ? err.message : "No se pudo guardar.");
