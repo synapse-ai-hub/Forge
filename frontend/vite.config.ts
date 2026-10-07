@@ -23,6 +23,7 @@ export default defineConfig({
         rag: path.resolve(__dirname, "rag.html"),
         tool: path.resolve(__dirname, "tool.html"),
         agent: path.resolve(__dirname, "agent.html"),
+        workflow: path.resolve(__dirname, "workflow.html"),
       },
     },
   },
