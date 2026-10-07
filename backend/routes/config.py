@@ -1407,15 +1407,14 @@ async def generate_workflow_endpoint(payload: dict[str, Any]) -> JSONResponse:
             )
         from backend.agent.loop import AgentLoop
 
-        system_prompt = (
-            "Generás workflows deterministas en YAML. Reglas: latencia mínima, "
-            "costo mínimo, eficiencia máxima. Mismo step corre en paralelo con "
-            "barrera, distinto step es secuencial. Tipos de nodo: agent "
-            "(requiere agent_name), tool (requiere tool), rag (requiere "
-            "collection). Cada nodo lleva id, type y step entero desde 1. "
-            "El último nodo lleva final: true. Respondé SOLO con el YAML "
-            "dentro de un bloque ```yaml, sin explicaciones."
-        )
+        try:
+            system_prompt = agent.prompt("generate_workflow")
+        except FileNotFoundError:
+            logger.exception("Prompt generate_workflow.md no encontrado.")
+            return JSONResponse(
+                status_code=500,
+                content={"status": "error", "message": "No se pudo iniciar la generación."},
+            )
         transient_id = f"workflow-generate:{_uuid.uuid4().hex[:8]}"
         try:
             create_res = session_manager.create_session(transient_id)
