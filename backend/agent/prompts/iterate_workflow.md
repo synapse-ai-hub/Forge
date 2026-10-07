@@ -12,7 +12,7 @@ Si necesitás aclaraciones sobre algo ambiguo, pedilas. Pero si el pedido es cla
 
 1. **Nombre** — Renombrá el workflow (la carpeta y el campo `name` del YAML deben coincidir).
 2. **Descripción** — Actualizá el campo `description`.
-3. **Nodos** — Agregá, quitá o modificá nodos (`id`, `type`, `step`, `agent_name`/`tool`/`collection`, `prompt`).
+3. **Nodos** — Agregá, quitá o modificá nodos (`id`, `type`, `step`, `agent_name`/`tool`/`collection`/`run`, `prompt`, `timeout`, `workdir`).
 4. **Steps** — Reordená steps manteniendo contigüidad desde 1.
 5. **Retries / on_failure** — Ajustá valores dentro de los rangos válidos.
 6. **Nodo final** — Mové el `final: true` al nodo que corresponda (siempre exactamente uno).
