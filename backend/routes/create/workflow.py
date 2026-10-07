@@ -417,6 +417,20 @@ async def post_create_workflow_stream(req: CreateWorkflowRequest):
         if not found_name or not found_path:
             yield _sse({"type": "error", "content": last_error})
             return
+        try:
+            import yaml as _yaml_refs
+
+            from backend.agent.utils.workflows_helpers import verificar_refs as _verificar_refs_wf
+
+            with open(found_path, encoding="utf-8") as _fh:
+                _wf_data = _yaml_refs.safe_load(_fh.read())
+            _refs = _verificar_refs_wf(_wf_data if isinstance(_wf_data, dict) else {})
+            _falt = _refs.get("faltantes", []) or []
+            if _falt:
+                _det = "; ".join(str(f.get("detalle", "")) for f in _falt if isinstance(f, dict))
+                yield _sse({"type": "chunk", "content": f"Advertencia: {_det} Crealos para que el workflow pueda ejecutarse."})
+        except Exception as exc:
+            log_error(str(exc), source="create.py:workflow(verificar_refs)")
         yield _sse({"type": "workflow_result_final", "content": {
             "status": "success",
             "message": f"Workflow '{found_name}' creado exitosamente.",

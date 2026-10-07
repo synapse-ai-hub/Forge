@@ -209,16 +209,50 @@ async def chat_endpoint(
             # determinista, si no el flujo smart. Ambos pasan por el mismo
             # consumo y el mismo envío a Telegram.
             if workflow_data is not None:
-                from backend.agent.utils.workflow_runner import WorkflowRunner
+                try:
+                    from backend.agent.utils.workflows_helpers import verificar_refs
 
-                runner = WorkflowRunner(agent=agent, session_manager=session_manager)
-                event_source = runner.run(
-                    session_id=session_id,
-                    user_message=message,
-                    workflow=workflow_data,
-                    turn_number=turn_number,
-                    stream_cancel_event=stream_cancel_event,
-                )
+                    refs = verificar_refs(workflow_data)
+                except Exception as exc:
+                    log_error(str(exc), source="backend/routes/chat.py:verificar_refs")
+                    refs = {"ok": False, "faltantes": [{
+                        "nodo": "", "tipo": "", "ref": "",
+                        "detalle": "No se pudieron verificar los recursos del workflow.",
+                    }]}
+                if not refs.get("ok"):
+                    faltantes = refs.get("faltantes", []) or []
+                    detalle = "; ".join(
+                        str(f.get("detalle", "")) for f in faltantes if isinstance(f, dict)
+                    ) or "Faltan recursos del workflow."
+                    aviso = (
+                        f"_No se puede ejecutar el workflow {selected_workflow}: {detalle} "
+                        f"Crealos o elegí otro workflow._"
+                    )
+                    try:
+                        session_manager.save_message(
+                            session_id, "assistant", content=aviso,
+                            turn_number=turn_number, step=1,
+                            status="error", message=detalle,
+                        )
+                    except Exception as exc:
+                        log_error(str(exc), source="backend/routes/chat.py:save_refs_error")
+
+                    async def _aviso_source():
+                        yield f"data: {json.dumps({'type': 'chunk', 'content': aviso}, ensure_ascii=False)}\n\n"
+                        yield "data: [DONE]\n\n"
+
+                    event_source = _aviso_source()
+                else:
+                    from backend.agent.utils.workflow_runner import WorkflowRunner
+
+                    runner = WorkflowRunner(agent=agent, session_manager=session_manager)
+                    event_source = runner.run(
+                        session_id=session_id,
+                        user_message=message,
+                        workflow=workflow_data,
+                        turn_number=turn_number,
+                        stream_cancel_event=stream_cancel_event,
+                    )
             else:
                 agent_loop = AgentLoop(
                     agent=agent,
