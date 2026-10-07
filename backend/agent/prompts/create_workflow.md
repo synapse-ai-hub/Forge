@@ -31,8 +31,8 @@ nodes:
 ### Reglas obligatorias
 
 - `name` con `^[a-z0-9][a-z0-9_-]*$`. Debe coincidir con la carpeta.
-- `nodes` con al menos un nodo, `id` único, `type` en `agent|tool|rag`, `step` entero desde 1, contiguos sin huecos.
-- `agent` requiere `agent_name`. `tool` requiere `tool`. `rag` requiere `collection`.
+- `nodes` con al menos un nodo, `id` único, `type` en `agent|tool|rag|run`, `step` entero desde 1, contiguos sin huecos.
+- `agent` requiere `agent_name`. `tool` requiere `tool`. `rag` requiere `collection`. `run` requiere `run` con el comando (`timeout` 1000-300000 ms, `workdir` relativo sin `..`).
 - `retries` entero 0-10. `on_failure` en `continue|abort`.
 - Exactamente un nodo con `final: true`.
 - **No uses backticks** en el contenido del archivo.

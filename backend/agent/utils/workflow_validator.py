@@ -6,13 +6,46 @@ different ``step`` means sequential. No LangGraph dependency.
 
 from __future__ import annotations
 
+import os
 import re
 from typing import Any
 
 _NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 _REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
-_NODE_TYPES = ("agent", "tool", "rag")
+_NODE_TYPES = ("agent", "tool", "rag", "run")
 _ON_FAILURE = ("continue", "abort")
+_RUN_TIMEOUT_MIN_MS = 1000
+_RUN_TIMEOUT_MAX_MS = 300000
+_RUN_TIMEOUT_DEFAULT_MS = 30000
+
+
+def _valid_run_workdir(workdir: str) -> bool:
+    """Check a run node workdir stays inside the process working directory.
+
+    Rejects absolute paths (posix, Windows drive letters, ``~``) and
+    traversal, then verifies with ``realpath`` containment.
+
+    Args:
+        workdir: Relative working directory from the YAML.
+
+    Returns:
+        ``True`` when it resolves inside the working directory.
+    """
+    try:
+        if not isinstance(workdir, str) or not workdir.strip():
+            return False
+        clean = workdir.strip().replace("\\", "/")
+        if not clean or clean.startswith("/") or clean.startswith("~"):
+            return False
+        if re.match(r"^[a-zA-Z]:", clean):
+            return False
+        if ".." in clean.split("/"):
+            return False
+        base = os.path.realpath(os.getcwd())
+        full = os.path.realpath(os.path.join(base, clean))
+        return os.path.commonpath([base, full]) == base
+    except Exception:
+        return False
 
 
 def validate_workflow(data: dict[str, Any]) -> dict[str, Any]:
@@ -53,7 +86,7 @@ def validate_workflow(data: dict[str, Any]) -> dict[str, Any]:
         seen_ids.add(nid)
         ntype = str(node.get("type", "")).strip()
         if ntype not in _NODE_TYPES:
-            return {"status": "error", "message": f"Nodo '{nid}' con 'type' inválido. Usá agent, tool o rag.", "data": None, "usage": usage}
+            return {"status": "error", "message": f"Nodo '{nid}' con 'type' inválido. Usá agent, tool, rag o run.", "data": None, "usage": usage}
         step = node.get("step")
         if not isinstance(step, int) or step < 1:
             return {"status": "error", "message": f"Nodo '{nid}' con 'step' inválido. Debe ser entero desde 1.", "data": None, "usage": usage}
@@ -66,6 +99,24 @@ def validate_workflow(data: dict[str, Any]) -> dict[str, Any]:
             return {"status": "error", "message": f"Nodo '{nid}' tipo tool requiere 'tool' válido.", "data": None, "usage": usage}
         if ntype == "rag" and not _REF_RE.match(str(node.get("collection", "")).strip()):
             return {"status": "error", "message": f"Nodo '{nid}' tipo rag requiere 'collection' válida.", "data": None, "usage": usage}
+        run_raw = node.get("run", "")
+        run_cmd = run_raw.strip() if isinstance(run_raw, str) else ""
+        if ntype == "run" and not run_cmd:
+            return {"status": "error", "message": f"Nodo '{nid}' tipo run requiere 'run' con el comando.", "data": None, "usage": usage}
+        run_timeout = node.get("timeout", _RUN_TIMEOUT_DEFAULT_MS)
+        if ntype == "run":
+            if isinstance(run_timeout, bool) or not isinstance(run_timeout, int):
+                return {"status": "error", "message": f"Nodo '{nid}' con 'timeout' inválido. Entero en ms.", "data": None, "usage": usage}
+            if run_timeout < _RUN_TIMEOUT_MIN_MS or run_timeout > _RUN_TIMEOUT_MAX_MS:
+                return {"status": "error", "message": f"Nodo '{nid}' con 'timeout' fuera de rango (1000-300000 ms).", "data": None, "usage": usage}
+        else:
+            run_timeout = _RUN_TIMEOUT_DEFAULT_MS
+        run_workdir = str(node.get("workdir", "") or "").strip()
+        if ntype == "run" and run_workdir and not _valid_run_workdir(run_workdir):
+            return {"status": "error", "message": f"Nodo '{nid}' con 'workdir' inválido. Relativo sin '..'.", "data": None, "usage": usage}
+        if ntype != "run":
+            run_workdir = ""
+            run_cmd = ""
         normalized.append({
             "id": nid,
             "type": ntype,
@@ -77,6 +128,9 @@ def validate_workflow(data: dict[str, Any]) -> dict[str, Any]:
             "args": node.get("args") if isinstance(node.get("args"), dict) else {},
             "collection": str(node.get("collection", "")).strip(),
             "query": str(node.get("query", "")),
+            "run": run_cmd,
+            "timeout": run_timeout,
+            "workdir": run_workdir,
             "final": bool(node.get("final", False)),
         })
 

@@ -90,6 +90,8 @@ class WorkflowRunner:
                             )
                         elif node["type"] == "tool":
                             result = await self._run_tool_node(node, state, execute_tool)
+                        elif node["type"] == "run":
+                            result = await self._run_run_node(node, execute_tool)
                         else:
                             result = await self._run_rag_node(node, state, execute_tool)
                         if isinstance(result, dict) and result.get("status") == "error" and attempt < attempts:
@@ -290,6 +292,63 @@ class WorkflowRunner:
             text = str(data)
         _ = round(time.time() - t0, 2)
         return {"status": "success", "message": "Nodo tool ok.", "data": text}
+
+    async def _run_run_node(self, node: dict[str, Any], execute_tool) -> dict[str, Any]:
+        """Run a run node (shell command, github-actions style).
+
+        Executes ``node["run"]`` through the ``shell`` tool so it inherits
+        its sandbox (worker thread, timeout, 50 KB truncation, cancel).
+        ``workdir`` is confined to the project root when set.
+
+        Args:
+            node: Normalized run node (``run``, ``timeout``, ``workdir``).
+            execute_tool: Tool executor from ``loop_helpers``.
+
+        Returns:
+            Contract dict ``{status, message, data}`` with the command output.
+        """
+        import json as _json
+        import os as _os
+
+        from backend.agent.utils.error_logger import log_error
+        from backend.agent.utils.workflow_validator import _valid_run_workdir
+
+        command = str(node.get("run", "") or "")
+        if not command.strip():
+            return {"status": "error", "message": f"Nodo '{node.get('id', '')}' sin comando 'run'.", "data": ""}
+        try:
+            timeout = int(node.get("timeout", 30000))
+        except (TypeError, ValueError):
+            timeout = 30000
+        timeout = min(max(timeout, 1000), 300000)
+        args: dict[str, Any] = {"command": command, "timeout": timeout}
+        workdir = str(node.get("workdir", "") or "").strip()
+        if workdir:
+            if not _valid_run_workdir(workdir):
+                return {"status": "error", "message": f"Nodo '{node.get('id', '')}' con 'workdir' inválido.", "data": ""}
+            try:
+                base = _os.path.realpath(_os.getcwd())
+                full = _os.path.realpath(_os.path.join(base, workdir.strip().replace("\\", "/")))
+                if _os.path.commonpath([base, full]) != base:
+                    return {"status": "error", "message": f"Nodo '{node.get('id', '')}' con 'workdir' inválido.", "data": ""}
+                args["workdir"] = full
+            except Exception as exc:
+                log_error(str(exc), source="workflow_runner.py:run_workdir")
+                return {"status": "error", "message": f"Nodo '{node.get('id', '')}' con 'workdir' inválido.", "data": ""}
+        tc = {"name": "shell", "args": args}
+        try:
+            result = await execute_tool(self._agent, tc)
+        except Exception as exc:
+            log_error(str(exc), source="workflow_runner.py:run_node")
+            return {"status": "error", "message": f"Comando del nodo '{node.get('id', '')}' falló.", "data": ""}
+        if isinstance(result, dict) and result.get("status") == "error":
+            return result
+        data = result.get("data", "") if isinstance(result, dict) else result
+        try:
+            text = _json.dumps(data, ensure_ascii=False) if isinstance(data, (dict, list)) else str(data)
+        except Exception:
+            text = str(data)
+        return {"status": "success", "message": "Nodo run ok.", "data": text}
 
     async def _run_rag_node(self, node: dict[str, Any], state: dict[str, Any], execute_tool) -> dict[str, Any]:
         """Run a rag node against a collection."""
