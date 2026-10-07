@@ -210,3 +210,133 @@ def _workflow_dir_path(name: str) -> Path:
     if ".." in clean or "/" in clean or "\\" in clean:
         raise ValueError("Nombre de workflow inválido.")
     return _WORKFLOWS_DIR / clean
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Verificación de referencias (agentes, tools, colecciones)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def _ref_es_segura(ref: str) -> bool:
+    """Check a node reference for path traversal.
+
+    Args:
+        ref: Reference string from a workflow node.
+
+    Returns:
+        ``True`` when the ref is a plain name without traversal.
+    """
+    try:
+        if not isinstance(ref, str) or not ref.strip():
+            return False
+        clean = ref.strip()
+        return ".." not in clean and "/" not in clean and "\\" not in clean
+    except Exception:
+        return False
+
+
+def verificar_refs(workflow: dict[str, Any]) -> dict[str, Any]:
+    """Check that every node reference exists before running.
+
+    Verifies ``agent`` nodes against ``get_agents_list``, ``tool`` nodes
+    against the tools registry (native + external + MCP) and ``rag`` nodes
+    against the vector collections. Anything missing is reported so the
+    caller can show a friendly message instead of failing mid-run.
+
+    Args:
+        workflow: Validated workflow data (see ``workflow_validator``).
+
+    Returns:
+        ``{"ok": bool, "faltantes": [{"nodo", "tipo", "ref", "detalle"}]}``.
+        Never raises: unexpected errors yield ``ok=False`` with a generic entry.
+    """
+    faltantes: list[dict[str, Any]] = []
+    try:
+        if not isinstance(workflow, dict):
+            return {"ok": False, "faltantes": [{
+                "nodo": "", "tipo": "", "ref": "",
+                "detalle": "No se pudo leer el workflow.",
+            }]}
+        nodes = workflow.get("nodes", [])
+        if not isinstance(nodes, list):
+            return {"ok": False, "faltantes": [{
+                "nodo": "", "tipo": "", "ref": "",
+                "detalle": "El workflow no tiene nodos válidos.",
+            }]}
+    except Exception as exc:
+        logger.warning("No se pudo leer nodos del workflow: %s", exc)
+        return {"ok": False, "faltantes": [{
+            "nodo": "", "tipo": "", "ref": "",
+            "detalle": "No se pudo leer el workflow.",
+        }]}
+
+    try:
+        from backend.agent.utils.agent_helpers import get_agents_list, get_tools_list
+
+        agentes = {a.get("name", "") for a in (get_agents_list() or []) if isinstance(a, dict)}
+        herramientas = {t.get("name", "") for t in (get_tools_list() or []) if isinstance(t, dict)}
+        try:
+            registry = getattr(getattr(agent, "tools", None), "_tools_registry", []) or []
+            for entry in registry:
+                if isinstance(entry, dict):
+                    fname = (entry.get("function", {}) or {}).get("name", "")
+                    if fname:
+                        herramientas.add(fname)
+        except Exception as exc:
+            logger.warning("No se pudo leer registry de tools: %s", exc)
+    except Exception as exc:
+        logger.warning("No se pudieron listar agentes/tools: %s", exc)
+        agentes, herramientas = set(), set()
+
+    try:
+        from backend.agent.utils.vector_db import get_vector_db
+
+        colecciones_raw = get_vector_db().list_collections() or []
+        colecciones = set()
+        for c in colecciones_raw:
+            try:
+                if isinstance(c, dict) and c.get("name"):
+                    colecciones.add(str(c["name"]))
+                elif isinstance(c, str) and c.strip():
+                    colecciones.add(c.strip())
+            except Exception:
+                continue
+    except Exception as exc:
+        logger.warning("No se pudieron listar colecciones RAG: %s", exc)
+        colecciones = set()
+
+    for node in nodes:
+        try:
+            if not isinstance(node, dict):
+                continue
+            nid = str(node.get("id", "") or "")
+            ntype = str(node.get("type", "") or "")
+            if ntype == "agent":
+                ref = str(node.get("agent_name", "") or "")
+                if not _ref_es_segura(ref):
+                    faltantes.append({"nodo": nid, "tipo": "agent", "ref": ref,
+                                      "detalle": f"Nombre de agente inválido en nodo '{nid}'."})
+                elif ref not in agentes:
+                    faltantes.append({"nodo": nid, "tipo": "agent", "ref": ref,
+                                      "detalle": f"No se encontró el agente '{ref}' (nodo '{nid}'). Revisá que exista en la carpeta de agentes."})
+            elif ntype == "tool":
+                ref = str(node.get("tool", "") or "")
+                if not _ref_es_segura(ref):
+                    faltantes.append({"nodo": nid, "tipo": "tool", "ref": ref,
+                                      "detalle": f"Nombre de tool inválido en nodo '{nid}'."})
+                elif ref not in herramientas:
+                    faltantes.append({"nodo": nid, "tipo": "tool", "ref": ref,
+                                      "detalle": f"No se encontró la tool '{ref}' (nodo '{nid}'). Revisá que exista entre las tools."})
+            elif ntype == "rag":
+                ref = str(node.get("collection", "") or "")
+                if not _ref_es_segura(ref):
+                    faltantes.append({"nodo": nid, "tipo": "rag", "ref": ref,
+                                      "detalle": f"Nombre de colección inválido en nodo '{nid}'."})
+                elif ref not in colecciones:
+                    faltantes.append({"nodo": nid, "tipo": "rag", "ref": ref,
+                                      "detalle": f"No existe la colección RAG '{ref}' (nodo '{nid}'). Revisá que esté indexada."})
+        except Exception as exc:
+            logger.warning("No se pudo verificar nodo: %s", exc)
+            continue
+
+    return {"ok": not faltantes, "faltantes": faltantes}
