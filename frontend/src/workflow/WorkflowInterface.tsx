@@ -51,6 +51,10 @@ export function WorkflowInterface() {
   const [resultType, setResultType] = useState<"success" | "error" | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const [isIterating, setIsIterating] = useState(false);
+  /* ---- editor YAML (validar/guardar, mismos endpoints que el panel) ---- */
+  const [yaml, setYaml] = useState("");
+  const [yamlMsg, setYamlMsg] = useState<string | null>(null);
+  const [yamlBusy, setYamlBusy] = useState(false);
 
   /* ---- refs ---- */
   const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -440,6 +444,72 @@ export function WorkflowInterface() {
     abortRef.current = null;
   }, []);
 
+  /* ---- YAML: generar con agente / validar / guardar ---- */
+  const handleGenerateYaml = useCallback(async () => {
+    const desc = descripcion.trim();
+    if (!desc) { setYamlMsg("Completá la descripción primero."); return; }
+    setYamlBusy(true);
+    setYamlMsg("Generando con el agente...");
+    try {
+      const resp = await fetch(`${API}/config/workflows/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ description: desc }),
+      });
+      const data = await resp.json().catch(() => null);
+      if (!resp.ok || !data || data.status === "error") {
+        throw new Error((data && data.message) || `HTTP ${resp.status}`);
+      }
+      setYaml(data.data?.yaml || "");
+      if (data.data?.name && !nombre.trim()) setNombre(data.data.name);
+      setYamlMsg("YAML generado. Revisalo y guardalo.");
+    } catch (err) {
+      setYamlMsg(err instanceof Error ? err.message : "No se pudo generar.");
+    } finally {
+      setYamlBusy(false);
+    }
+  }, [descripcion, nombre]);
+
+  const handleValidateYaml = useCallback(async () => {
+    if (!yaml.trim()) { setYamlMsg("No hay YAML para validar."); return; }
+    setYamlBusy(true);
+    try {
+      const resp = await fetch(`${API}/config/workflows/validate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ yaml }),
+      });
+      const data = await resp.json().catch(() => null);
+      setYamlMsg((data && data.message) || (resp.ok ? "Workflow válido." : "YAML inválido."));
+    } catch (err) {
+      setYamlMsg(err instanceof Error ? err.message : "Error validando.");
+    } finally {
+      setYamlBusy(false);
+    }
+  }, [yaml]);
+
+  const handleSaveYaml = useCallback(async () => {
+    const nameVal = nombre.trim();
+    if (!nameVal || !yaml.trim()) { setYamlMsg("Nombre y YAML requeridos."); return; }
+    setYamlBusy(true);
+    try {
+      const resp = await fetch(`${API}/config/workflows/save`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: nameVal, yaml }),
+      });
+      const data = await resp.json().catch(() => null);
+      if (!resp.ok || !data || data.status === "error") {
+        throw new Error((data && data.message) || `HTTP ${resp.status}`);
+      }
+      setYamlMsg(`Workflow «${nameVal}» guardado.`);
+    } catch (err) {
+      setYamlMsg(err instanceof Error ? err.message : "No se pudo guardar.");
+    } finally {
+      setYamlBusy(false);
+    }
+  }, [nombre, yaml]);
+
   /* ---- keyboard ---- */
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -631,6 +701,47 @@ export function WorkflowInterface() {
                        px-3 sm:px-4 py-3 sm:py-4"
           >
             <div className="max-w-full sm:max-w-3xl lg:max-w-4xl mx-auto">
+              {/* ========== YAML DEL WORKFLOW ========== */}
+              <div className="mb-3 rounded-2xl border border-app-border bg-white p-4 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium text-app-text">YAML del workflow</span>
+                  <button
+                    type="button"
+                    disabled={yamlBusy}
+                    onClick={handleGenerateYaml}
+                    className="text-xs bg-app-primary hover:opacity-90 text-white px-3 py-1.5 rounded disabled:opacity-50"
+                  >
+                    {yamlBusy ? "Generando..." : "Generar con agente"}
+                  </button>
+                </div>
+                <textarea
+                  value={yaml}
+                  onChange={(e) => setYaml(e.target.value)}
+                  placeholder="YAML del workflow..."
+                  rows={8}
+                  spellCheck={false}
+                  className="w-full text-[11px] font-mono px-2 py-1.5 rounded border border-app-border bg-white text-app-text"
+                />
+                {yamlMsg && <p className="text-xs text-app-text-secondary">{yamlMsg}</p>}
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    disabled={yamlBusy}
+                    onClick={handleValidateYaml}
+                    className="text-xs px-3 py-1.5 rounded border border-app-border hover:bg-app-bg-tertiary disabled:opacity-50"
+                  >
+                    Validar
+                  </button>
+                  <button
+                    type="button"
+                    disabled={yamlBusy}
+                    onClick={handleSaveYaml}
+                    className="text-xs bg-app-primary hover:opacity-90 text-white px-3 py-1.5 rounded disabled:opacity-50"
+                  >
+                    Guardar
+                  </button>
+                </div>
+              </div>
               {resultMsg ? (
                 <div className="relative rounded-2xl border border-app-border bg-white p-4 sm:p-5 flex flex-col items-center gap-3 text-center">
                   <div
