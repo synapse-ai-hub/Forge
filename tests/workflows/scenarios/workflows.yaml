@@ -1,0 +1,194 @@
+scenario: workflow-validate-ok
+description: >
+  Validar un workflow correcto (tool + agent + final) sin LLM.
+  Espera 200 con status success.
+cleanup: true
+steps:
+  - action: request
+    method: POST
+    path: /api/config/workflows/validate
+    body:
+      yaml: |
+        name: "e2e-probe"
+        description: "Sonda de validación"
+        version: "1"
+        retries: 2
+        on_failure: continue
+        nodes:
+          - id: "leer"
+            type: "tool"
+            step: 1
+            tool: "read"
+          - id: "cerrar"
+            type: "agent"
+            step: 2
+            agent_name: "router"
+            final: true
+    expect:
+      http_status: 200
+      json_status: success
+---
+scenario: workflow-validate-sin-final
+description: >
+  Validar un workflow sin nodo final. Espera 400 con mensaje de final.
+  No requiere LLM.
+cleanup: true
+steps:
+  - action: request
+    method: POST
+    path: /api/config/workflows/validate
+    body:
+      yaml: |
+        name: "e2e-sin-final"
+        description: "Sin final"
+        nodes:
+          - id: "leer"
+            type: "tool"
+            step: 1
+            tool: "read"
+    expect:
+      http_status: 400
+      json_status: error
+---
+scenario: workflow-validate-run-ok
+description: >
+  Validar un nodo run estilo github actions con workdir relativo.
+  Espera 200. No requiere LLM.
+cleanup: true
+steps:
+  - action: request
+    method: POST
+    path: /api/config/workflows/validate
+    body:
+      yaml: |
+        name: "e2e-run-ok"
+        description: "Run válido"
+        nodes:
+          - id: "eco"
+            type: "run"
+            step: 1
+            run: "echo hola"
+            timeout: 5000
+            final: true
+    expect:
+      http_status: 200
+      json_status: success
+---
+scenario: workflow-validate-run-workdir-traversal
+description: >
+  Validar un nodo run con workdir con traversal. Espera 400.
+  No requiere LLM.
+cleanup: true
+steps:
+  - action: request
+    method: POST
+    path: /api/config/workflows/validate
+    body:
+      yaml: |
+        name: "e2e-run-mal"
+        description: "Run con traversal"
+        nodes:
+          - id: "eco"
+            type: "run"
+            step: 1
+            run: "echo hola"
+            workdir: "../afuera"
+            final: true
+    expect:
+      http_status: 400
+      json_status: error
+---
+scenario: workflow-save-y-seleccion
+description: >
+  Guardar un workflow de prueba, verificar que aparece en selection,
+  seleccionarlo y verificar que queda activo. Sin LLM.
+  La limpieza vuelve a smart (no hay DELETE de workflows: el archivo
+  e2e-test-workflow queda en disco y se sobrescribe en cada corrida).
+cleanup: true
+verify:
+  workflow: e2e-test-workflow
+  selected: e2e-test-workflow
+steps:
+  - action: request
+    method: POST
+    path: /api/config/workflows/save
+    body:
+      name: e2e-test-workflow
+      yaml: |
+        name: "e2e-test-workflow"
+        description: "Workflow de prueba e2e"
+        version: "1"
+        retries: 1
+        on_failure: continue
+        nodes:
+          - id: "leer"
+            type: "tool"
+            step: 1
+            tool: "read"
+          - id: "cerrar"
+            type: "run"
+            step: 2
+            run: "echo listo"
+            final: true
+    expect:
+      http_status: 200
+      json_status: success
+  - action: request
+    method: POST
+    path: /api/config/workflows/select
+    body:
+      workflow: e2e-test-workflow
+    expect:
+      http_status: 200
+      json_status: success
+---
+scenario: workflow-save-nombre-invalido
+description: >
+  Guardar con nombre en mayúsculas. Espera 400. No requiere LLM.
+cleanup: true
+steps:
+  - action: request
+    method: POST
+    path: /api/config/workflows/save
+    body:
+      name: Mayusculas
+      yaml: |
+        name: "Mayusculas"
+        description: "Nombre inválido"
+        nodes:
+          - id: "leer"
+            type: "tool"
+            step: 1
+            tool: "read"
+            final: true
+    expect:
+      http_status: 400
+      json_status: error
+---
+scenario: workflow-select-inexistente
+description: >
+  Seleccionar un workflow que no existe. Espera 400. No requiere LLM.
+cleanup: true
+steps:
+  - action: request
+    method: POST
+    path: /api/config/workflows/select
+    body:
+      workflow: no-existe-este-workflow
+    expect:
+      http_status: 400
+      json_status: error
+---
+scenario: workflow-generate-sin-descripcion
+description: >
+  Generar sin description. Espera 400 sin llamar al LLM.
+cleanup: true
+steps:
+  - action: request
+    method: POST
+    path: /api/config/workflows/generate
+    body:
+      description: ""
+    expect:
+      http_status: 400
+      json_status: error

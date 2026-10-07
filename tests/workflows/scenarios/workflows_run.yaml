@@ -1,0 +1,84 @@
+scenario: workflow-run-echo-e2e
+description: >
+  Ejecución real de un workflow con nodo run (echo) + final.
+  Guarda, selecciona y chatea: el runner determinista debe correr,
+  terminar con [DONE] y responder no vacío. Requiere backend vivo;
+  el nodo run no necesita LLM pero el chat sí pasa por el backend.
+cleanup: true
+steps:
+  - action: request
+    method: POST
+    path: /api/config/workflows/save
+    body:
+      name: e2e-run-echo
+      yaml: |
+        name: "e2e-run-echo"
+        description: "Eco de prueba"
+        version: "1"
+        retries: 0
+        on_failure: abort
+        nodes:
+          - id: "eco"
+            type: "run"
+            step: 1
+            run: "echo hola-e2e"
+            timeout: 10000
+            final: true
+    expect:
+      http_status: 200
+      json_status: success
+  - action: request
+    method: POST
+    path: /api/config/workflows/select
+    body:
+      workflow: e2e-run-echo
+    expect:
+      http_status: 200
+      json_status: success
+  - action: chat
+    message: "ejecutá el workflow"
+    expect:
+      done: true
+      nonempty: true
+      events_include:
+        - chunk
+---
+scenario: workflow-faltantes-amigable
+description: >
+  Workflow que referencia una tool inexistente: el chat debe frenar
+  con el mensaje amigable (contiene "No se puede ejecutar") en vez de
+  correr el runner. Requiere backend vivo. No requiere LLM.
+cleanup: true
+steps:
+  - action: request
+    method: POST
+    path: /api/config/workflows/save
+    body:
+      name: e2e-faltante
+      yaml: |
+        name: "e2e-faltante"
+        description: "Ref rota"
+        nodes:
+          - id: "rota"
+            type: "tool"
+            step: 1
+            tool: "no-existe-esta-tool"
+            final: true
+    expect:
+      http_status: 200
+      json_status: success
+  - action: request
+    method: POST
+    path: /api/config/workflows/select
+    body:
+      workflow: e2e-faltante
+    expect:
+      http_status: 200
+      json_status: success
+  - action: chat
+    message: "ejecutá el workflow"
+    expect:
+      done: true
+      nonempty: true
+      response_contains:
+        - "No se puede ejecutar"
