@@ -522,6 +522,25 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
           <p>Además, al final del system prompt de todos los agentes se inyecta la sección <code>## MANDATORY:</code> con las reglas obligatorias de fidelidad: ejecutar el objetivo del usuario sin agregar ni inventar nada, formular preguntas si hay dudas, e iterar con tools o sub-agentes hasta cumplirlo.</p>
         </section>
 
+        <section id="workflows">
+          <h2>Workflows</h2>
+          <h3>¿Qué es un workflow?</h3>
+          <p>Un <strong>workflow</strong> es un flujo determinista de nodos definido en YAML: un archivo plano por workflow en <code>~/.config/synapseForge/workflows/&lt;nombre&gt;.yaml</code>, sin subcarpetas. Cada nodo lleva un <code>id</code>, un <code>type</code> (<code>agent</code>, <code>tool</code>, <code>rag</code> o <code>run</code>), un <code>step</code> (entero desde 1) y hay exactamente un nodo con <code>final: true</code>, que produce la respuesta final.</p>
+          <h3>¿Cómo se ejecuta?</h3>
+          <p>Los nodos del mismo <code>step</code> se ejecutan <strong>en paralelo</strong> con barrera; los distintos <code>step</code>, <strong>en secuencia</strong>. Los nodos <code>agent</code> corren en una sesión hija con los permisos propios de ese agente; los nodos <code>run</code> ejecutan comandos shell estilo GitHub Actions.</p>
+          <h3>Modo smart o workflow</h3>
+          <p>El chat funciona en modo <strong>smart</strong> (el agente decide qué hacer) o con un <strong>workflow determinista</strong> activo. Se elige uno solo desde el panel de info del agente (pestaña <strong>Workflows</strong>) o desde el selector del chat. Con un workflow activo, cada mensaje enviado se ejecuta con ese flujo, usando el mensaje como entrada.</p>
+          <h3>Verificación previa y permisos</h3>
+          <p>Antes de ejecutar, el sistema verifica que cada agente, tool y colección RAG referenciada exista. Si falta algo, no ejecuta nada y responde qué falta. Cada ejecución usa solo los permisos que sus nodos necesitan (mínimo privilegio).</p>
+          <h3>Cómo crear un workflow</h3>
+          <ol>
+            <li>Abrí la pestaña <strong>Crear</strong> y elegí el creador de workflows: una entrevista asistida diseña el flujo con vos.</li>
+            <li>El agente escribe el archivo <code>&lt;nombre&gt;.yaml</code> en la carpeta de workflows y lo valida.</li>
+            <li>Cuando el YAML valida, te pide aprobación antes de darlo por listo.</li>
+            <li>Si el workflow necesita prompts propios, se guardan como archivos sueltos en <code>~/.config/synapseForge/workflows/prompts/</code>.</li>
+          </ol>
+        </section>
+
         <section id="interfaz-usuario">
           <h2>Interfaz de usuario</h2>
           <h3>¿Qué incluye?</h3>

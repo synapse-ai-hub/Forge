@@ -62,7 +62,7 @@ Definí tus agentes, equipalos con skills y tools, conectalos a tus fuentes de d
 
 ### Una fábrica que se extiende a sí misma
 
-Creá agentes, skills y tools a través de un flujo asistido por LLM. synapseForge no solo ejecuta agentes — puede crear las capacidades que necesitan.
+Creá agentes, skills, tools y workflows a través de una entrevista asistida por LLM. synapseForge no solo ejecuta agentes — puede crear las capacidades que necesitan.
 
 ---
 
@@ -74,6 +74,7 @@ Creá agentes, skills y tools a través de un flujo asistido por LLM. synapseFor
 - **Skills** — paquetes de conocimiento estructurado con referencias y frontmatter
 - **Tools** — nativos (filesystem, web, shell, email) o archivos `.py` externos
 - **Colecciones RAG** — subí archivos y páginas web, indexados con embeddings vectoriales
+- **Workflows** — DAGs deterministas de nodos agente, tool, RAG y shell definidos en YAML
 
 ### La fábrica
 
@@ -81,6 +82,7 @@ La fábrica transforma esas definiciones en sistemas autónomos.
 
 - **Motor de permisos** — deny-by-default, por agente, con wildcards y grupos
 - **Agent loop** — razonamiento iterativo → tool calling → ejecución → continuación, con streaming SSE
+- **Workflows** — ejecución determinista de DAGs: steps secuenciales, nodos del mismo step en paralelo, con streaming SSE
 - **Memoria** — indexación persistente de conversaciones y recuperación cross-sesión
 - **LLM multi-proveedor** — Ollama (local), providers cloud curados (OpenAI-compatibles + Google)
 - **Integración MCP** — conectá servidores de herramientas externos vía Model Context Protocol
@@ -150,6 +152,12 @@ flowchart LR
 Aplicación FastAPI con routers REST/SSE. El framework de agentes vive en `backend/agent/`: AgentLoop con tool calling nativo, registro de tools (nativos + externos + MCP), sesiones SQLite, permisos por agente, skills, RAG (ChromaDB) y memoria de largo plazo.
 
 **Tools nativos**: `read`, `write`, `edit`, `glob`, `grep`, `list_dir`, `webfetch`, `websearch`, `shell`, `task` (delegación a sub-agentes), `skill`, `reference`, `rag`, `search_memory`, `check_email`, `send_email`, `help`.
+
+### Workflows
+
+Flujos deterministas definidos como archivos YAML planos (`~/.config/synapseForge/workflows/<nombre>.yaml`, un archivo por workflow). Cada workflow es una lista de nodos con `id`, `type` (`agent`, `tool`, `rag` o `run`), `step` (entero desde 1) y exactamente un nodo con `final: true`. Los nodos del mismo step corren en paralelo con barrera; los distintos steps corren en secuencia. Los nodos agente corren en una sesión hija con los permisos propios de ese agente; los nodos `run` ejecutan comandos shell estilo GitHub Actions.
+
+El chat corre en modo **smart** (el agente decide) o con un workflow determinista seleccionado desde el panel de info del agente. Antes de ejecutar, el backend verifica que cada agente, tool y colección referenciada exista — si falta algo, responde con un mensaje amigable en vez de ejecutar. Los workflows corren con permisos de mínimo privilegio derivados de sus propios nodos. Un creador dedicado (entrevista + validación + aprobación del usuario) genera el YAML; los prompts propios pueden vivir como archivos sueltos en `workflows/prompts/`.
 
 ### Frontend
 
