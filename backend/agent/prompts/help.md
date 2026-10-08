@@ -147,9 +147,9 @@ Las API keys de los providers cloud (cualquier provider curado) se configuran en
 
 ---
 
-## Creación de skills, tools y agentes
+## Creación de skills, tools, agentes y workflows
 
-Las interfaces de creación (skills, tools y agentes) permiten elegir, en su pantalla inicial, con qué modelo cloud se genera el elemento:
+Las interfaces de creación (skills, tools, agentes y workflows) permiten elegir, en su pantalla inicial, con qué modelo cloud se genera el elemento:
 
 1. Seleccionar proveedor (solo providers cloud con key configurada).
 2. Seleccionar modelo.
@@ -158,6 +158,28 @@ Las interfaces de creación (skills, tools y agentes) permiten elegir, en su pan
 La selección es efímera: vive mientras la pestaña está abierta y se usa para esa tarea de creación. Si no se aplica ninguna selección, el sistema usa automáticamente uno de los providers cloud disponibles.
 
 Las páginas de creación incluyen un botón **Descargar conversación** para guardar la entrevista en Markdown.
+
+---
+
+## Workflows
+
+Un workflow es un flujo determinista de nodos definido en YAML: un archivo plano por workflow en `~/.config/synapseForge/workflows/<nombre>.yaml` (sin subcarpetas). Cada nodo lleva `id`, `type` (`agent`, `tool`, `rag` o `run`), `step` (entero desde 1) y hay exactamente un nodo con `final: true`, que produce la respuesta final. Los nodos del mismo `step` se ejecutan en paralelo; los distintos `step`, en secuencia.
+
+### Elegir y ejecutar
+
+El chat funciona en modo **smart** (el agente decide qué hacer) o con un workflow determinista activo. Se elige uno solo desde el panel de info del agente (pestaña **Workflows**) o desde el selector del chat. Con un workflow activo, cada mensaje que se envía se ejecuta con ese flujo, usando el mensaje como entrada.
+
+### Antes de ejecutar
+
+El sistema verifica que cada agente, tool y colección RAG referenciada por el workflow exista. Si falta algo, no ejecuta nada y responde qué falta y que hay que crearlo o elegir otro workflow.
+
+### Permisos
+
+Cada ejecución usa solo los permisos que sus nodos necesitan (mínimo privilegio): los nodos `tool` habilitan esa tool, los `run` habilitan `shell`, los `rag` habilitan `rag`. Los nodos `agent` corren en una sesión hija con los permisos propios de ese agente.
+
+### Crear un workflow
+
+Desde la pestaña **Crear** (botón de workflows) una entrevista asistida diseña el flujo: el agente escribe el archivo `<nombre>.yaml`, lo valida y pide aprobación antes de darlo por listo. Si el workflow necesita prompts propios, se guardan como archivos sueltos en `~/.config/synapseForge/workflows/prompts/`.
 
 ---
 
