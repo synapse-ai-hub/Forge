@@ -97,7 +97,7 @@ Además de las tools externas, el sistema incluye **tools nativas** incorporadas
 | `skill` | Carga el contenido de una skill por nombre. |
 | `reference` | Carga un archivo de referencia específico de una skill. |
 | `help` | Muestra esta documentación de ayuda. |
-| `check_email` | Verifica correos no leídos en un buzón IMAP, con filtro de antigüedad (`1h`-`23h`, días, meses, años, `all`; por defecto `1h`). |
+| `check_email` | Verifica correos no leídos en un buzón IMAP, con filtro de antigüedad (`1h`-`23h`, días, meses, años, `all`; por defecto `1h`). Con `mark_read: false` solo los muestra sin marcarlos como leídos. |
 | `send_email` | Envía un email vía SMTP. |
 | `list_dir` | Lista el contenido de un directorio. |
 | `rag` | Consulta una colección RAG (solo las permitidas en `permission.rag`). |

@@ -1707,7 +1707,7 @@ class Tools:
                 usage=zero_usage(),
             )
 
-    async def check_email(self, folder: str = "INBOX", sender: str | None = None, date: str = "1h") -> dict:
+    async def check_email(self, folder: str = "INBOX", sender: str | None = None, date: str = "1h", mark_read: bool = True) -> dict:
         """Check the IMAP mailbox for unseen emails and return them parsed.
 
         Connects via IMAP (SSL), searches for UNSEEN messages in the given
@@ -1722,6 +1722,9 @@ class Tools:
             date: Relative age filter: ``1h``-``23h`` (hours), ``<n>d``
                 (days), ``<n>m`` (months), ``<n>y`` (years) or ``all``
                 (no date filter). Default ``"1h"``.
+            mark_read: When ``True`` (default) fetched messages are marked
+                as read. When ``False`` they are peeked (``BODY.PEEK[]``)
+                and stay unseen.
 
         Returns:
             dict with ``{status, message, data, usage}``.
@@ -1777,9 +1780,10 @@ class Tools:
 
                 msg_ids = data[0].split()
                 results: list[dict] = []
+                fetch_part = "(BODY[])" if mark_read else "(BODY.PEEK[])"
                 for msg_id in msg_ids:
                     try:
-                        typ_fetch, fetch_data = mail.fetch(msg_id, "(BODY[])")
+                        typ_fetch, fetch_data = mail.fetch(msg_id, fetch_part)
                         if typ_fetch != "OK" or not fetch_data:
                             continue
                         raw_email = None
