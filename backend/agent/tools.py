@@ -44,6 +44,8 @@ from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.utils import formatdate, make_msgid
+from datetime import datetime, timedelta, timezone
+import calendar
 
 _current_dir = os.path.dirname(os.path.abspath(__file__))
 _project_root = os.path.dirname(os.path.dirname(_current_dir))
@@ -88,6 +90,65 @@ from backend.agent.utils.error_logger import log_error
 
 
 logger = logging.getLogger(__name__)
+
+
+def _shift_months(moment: datetime, months: int) -> datetime:
+    """Shift a datetime by a number of months, clamping the day.
+
+    Args:
+        moment: Reference datetime.
+        months: Months to shift (negative = past).
+
+    Returns:
+        Shifted datetime with the day clamped to the target month length.
+    """
+    total = moment.year * 12 + (moment.month - 1) + months
+    year, month = divmod(total, 12)
+    month += 1
+    last_day = calendar.monthrange(year, month)[1]
+    return moment.replace(year=year, month=month, day=min(moment.day, last_day))
+
+
+def _parse_relative_date(value: str | None) -> tuple[datetime | None, str | None]:
+    """Parse a relative date filter into a UTC cutoff.
+
+    Accepted values: ``1h``-``23h`` (hours), ``<n>d`` (days),
+    ``<n>m`` (months), ``<n>y`` (years) or ``all`` (no date filter).
+
+    Args:
+        value: Raw filter value (defaults to ``1h`` when empty).
+
+    Returns:
+        Tuple ``(cutoff, error)``: ``cutoff`` is a timezone-aware UTC
+        datetime (``None`` means no date filter); ``error`` is a friendly
+        message when the value is invalid (``None`` when valid).
+    """
+    raw = (value or "1h").strip().lower()
+    if raw == "all":
+        return None, None
+    match = re.match(r"^(\d+)([hdmy])$", raw)
+    if not match:
+        return None, (
+            "Filtro de fecha inválido. Usá '1h'-'23h', '<n>d', '<n>m', '<n>y' o 'all'."
+        )
+    amount = int(match.group(1))
+    unit = match.group(2)
+    if amount < 1:
+        return None, (
+            "Filtro de fecha inválido. Usá '1h'-'23h', '<n>d', '<n>m', '<n>y' o 'all'."
+        )
+    if unit == "h" and amount > 23:
+        return None, (
+            "El rango en horas es de 1h a 23h. Para más, usá días ('1d', ...)."
+        )
+    now = datetime.now(timezone.utc)
+    if unit == "h":
+        return now - timedelta(hours=amount), None
+    if unit == "d":
+        return now - timedelta(days=amount), None
+    if unit == "m":
+        return _shift_months(now, -amount), None
+    return _shift_months(now, -amount * 12), None
 
 
 class Tools:
@@ -1646,17 +1707,21 @@ class Tools:
                 usage=zero_usage(),
             )
 
-    async def check_email(self, folder: str = "INBOX", sender: str | None = None) -> dict:
+    async def check_email(self, folder: str = "INBOX", sender: str | None = None, date: str = "1h") -> dict:
         """Check the IMAP mailbox for unseen emails and return them parsed.
 
         Connects via IMAP (SSL), searches for UNSEEN messages in the given
-        folder (optionally filtered by sender), parses each one, and returns
-        the structured results. This is a one-shot check — no polling loop.
-        The agent calls this tool on demand; it does not run in the background.
+        folder (optionally filtered by sender and age), parses each one, and
+        returns the structured results. This is a one-shot check — no polling
+        loop. The agent calls this tool on demand; it does not run in the
+        background.
 
         Args:
             folder: IMAP folder to check (default ``"INBOX"``).
             sender: Optional sender address to filter UNSEEN messages.
+            date: Relative age filter: ``1h``-``23h`` (hours), ``<n>d``
+                (days), ``<n>m`` (months), ``<n>y`` (years) or ``all``
+                (no date filter). Default ``"1h"``.
 
         Returns:
             dict with ``{status, message, data, usage}``.
@@ -1665,7 +1730,12 @@ class Tools:
             and ``attachments`` (list of filenames).
         """
         try:
-            
+            cutoff, date_error = _parse_relative_date(date)
+            if date_error:
+                return make_error_response(
+                    message=date_error,
+                    usage=zero_usage(),
+                )
 
             server = os.getenv("EMAIL_IMAP_SERVER", "")
             port = int(os.getenv("EMAIL_IMAP_PORT", "993"))
@@ -1691,10 +1761,11 @@ class Tools:
                         usage=zero_usage(),
                     )
 
+                since = f' SINCE {cutoff.strftime("%d-%b-%Y")}' if cutoff else ""
                 if sender:
-                    search_criteria = f'(UNSEEN FROM "{sender}")'
+                    search_criteria = f'(UNSEEN{since} FROM "{sender}")'
                 else:
-                    search_criteria = "(UNSEEN)"
+                    search_criteria = f"(UNSEEN{since})"
 
                 typ, data = mail.search(None, search_criteria)
                 if typ != "OK" or not data or not data[0]:
@@ -1719,6 +1790,15 @@ class Tools:
                         if not raw_email:
                             continue
                         parsed = parse_email(raw_email)
+                        if cutoff:
+                            date_parsed = parsed.get("date_parsed")
+                            if date_parsed is not None:
+                                if date_parsed.tzinfo is not None:
+                                    seen = date_parsed.astimezone(timezone.utc).replace(tzinfo=None)
+                                else:
+                                    seen = date_parsed
+                                if seen < cutoff.replace(tzinfo=None):
+                                    continue
                         results.append({
                             "message_id": parsed.get("message_id", ""),
                             "sender": parsed.get("sender", ""),
