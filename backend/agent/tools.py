@@ -1668,7 +1668,8 @@ class Tools:
         Returns:
             dict with ``{status, message, data, usage}``.
             ``data`` contains a list of parsed emails, each with
-            ``message_id``, ``sender``, ``subject``, ``date``, ``body``
+            ``message_id``, ``sender``, ``subject``, ``date`` (raw header),
+            ``date_local`` (server local time), ``body``
             and ``attachments`` (list of filenames).
         """
         try:
@@ -1740,6 +1741,7 @@ class Tools:
                             "sender": parsed.get("sender", ""),
                             "subject": parsed.get("subject", ""),
                             "date": parsed.get("date", ""),
+                            "date_local": parsed.get("date_local", ""),
                             "body": parsed.get("body", ""),
                             "attachments": [
                                 a.get("filename", "")

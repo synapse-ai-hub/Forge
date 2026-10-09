@@ -30,7 +30,7 @@ def show(label: str, result: dict) -> bool:
     data = result.get("data") or []
     print(f"[{label}] emails: {len(data)}")
     for email in data:
-        print(f"[{label}] - {email.get('date')} | {email.get('sender')} | {email.get('subject')}")
+        print(f"[{label}] - {email.get('date_local') or email.get('date')} | {email.get('sender')} | {email.get('subject')}")
     return result.get("status") == "success"
 
 

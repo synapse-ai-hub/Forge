@@ -48,6 +48,15 @@ def decode_mime_header(value: str | None) -> str:
     return " ".join(decoded).strip()
 
 
+def _local_tz():
+    """Return the server's local timezone (tzinfo).
+
+    Returns:
+        The tzinfo of the current local time.
+    """
+    return datetime.now().astimezone().tzinfo
+
+
 def parse_email(raw_bytes: bytes) -> dict:
     """Parse raw email bytes into a structured dictionary.
 
@@ -62,7 +71,8 @@ def parse_email(raw_bytes: bytes) -> dict:
             - message_id (str)
             - sender (str)
             - subject (str)
-            - date (str)
+            - date (str): raw Date header as sent
+            - date_local (str): date converted to the server's local timezone
             - date_parsed (datetime or None)
             - body (str): plain text body
             - attachments (list[dict]): each with filename, size_bytes, content_type, data
@@ -81,6 +91,13 @@ def parse_email(raw_bytes: bytes) -> dict:
         log_error(str(e), source="email_parser.py:parse_email(date)")
         date_parsed = None
 
+    if date_parsed is not None:
+        if date_parsed.tzinfo is None:
+            date_parsed = date_parsed.replace(tzinfo=_local_tz())
+        date_local = date_parsed.astimezone(_local_tz()).strftime("%a, %d %b %Y %H:%M:%S %z")
+    else:
+        date_local = date_str
+
     # ── Body (plain text) ──
     body = _extract_plain_text(msg)
 
@@ -92,6 +109,7 @@ def parse_email(raw_bytes: bytes) -> dict:
         "sender": sender,
         "subject": subject,
         "date": date_str,
+        "date_local": date_local,
         "date_parsed": date_parsed,
         "body": body,
         "attachments": attachments,
