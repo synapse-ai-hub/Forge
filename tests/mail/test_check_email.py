@@ -36,6 +36,7 @@ def show(label: str, result: dict) -> bool:
 
 def main() -> int:
     """Instantiate Tools and call check_email (suite or single case)."""
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(
         description="Call the real check_email tool.",
         epilog=(
