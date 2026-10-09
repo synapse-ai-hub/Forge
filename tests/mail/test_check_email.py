@@ -36,7 +36,16 @@ def show(label: str, result: dict) -> bool:
 
 def main() -> int:
     """Instantiate Tools and call check_email (suite or single case)."""
-    parser = argparse.ArgumentParser(description="Call the real check_email tool.")
+    parser = argparse.ArgumentParser(
+        description="Call the real check_email tool.",
+        epilog=(
+            "examples:\n"
+            "  python -m tests.mail.test_check_email\n"
+            "  python -m tests.mail.test_check_email --date 7d --peek\n"
+            "  python -m tests.mail.test_check_email --date all --sender someone@example.com\n"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument("--date", default=None, help="Age filter: 1h-23h, <n>d, <n>m, <n>y, all")
     parser.add_argument("--folder", default=None, help="IMAP folder (default INBOX)")
     parser.add_argument("--sender", default=None, help="Filter by sender address")
