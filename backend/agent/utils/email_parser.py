@@ -8,8 +8,11 @@ import email
 import email.message
 from email.header import decode_header
 from email.utils import parsedate_to_datetime
+import calendar
 import os
+import re
 import sys
+from datetime import datetime, timedelta, timezone
 
 _current_dir = os.path.dirname(os.path.abspath(__file__))
 _project_root = os.path.dirname(os.path.dirname(_current_dir))
@@ -93,6 +96,84 @@ def parse_email(raw_bytes: bytes) -> dict:
         "body": body,
         "attachments": attachments,
     }
+
+
+def _shift_months(moment: datetime, months: int) -> datetime:
+    """Shift a datetime by a number of months, clamping the day.
+
+    Args:
+        moment: Reference datetime.
+        months: Months to shift (negative = past).
+
+    Returns:
+        Shifted datetime with the day clamped to the target month length.
+    """
+    total = moment.year * 12 + (moment.month - 1) + months
+    year, month = divmod(total, 12)
+    month += 1
+    last_day = calendar.monthrange(year, month)[1]
+    return moment.replace(year=year, month=month, day=min(moment.day, last_day))
+
+
+def parse_relative_date(value: str | None) -> tuple[datetime | None, str | None]:
+    """Parse a relative date filter into a UTC cutoff.
+
+    Accepted values: ``1h``-``23h`` (hours), ``<n>d`` (days),
+    ``<n>m`` (months), ``<n>y`` (years) or ``all`` (no date filter).
+
+    Args:
+        value: Raw filter value (defaults to ``1h`` when empty).
+
+    Returns:
+        Tuple ``(cutoff, error)``: ``cutoff`` is a timezone-aware UTC
+        datetime (``None`` means no date filter); ``error`` is a friendly
+        message when the value is invalid (``None`` when valid).
+    """
+    raw = (value or "1h").strip().lower()
+    if raw == "all":
+        return None, None
+    match = re.match(r"^(\d+)([hdmy])$", raw)
+    if not match:
+        return None, (
+            "Filtro de fecha inválido. Usá '1h'-'23h', '<n>d', '<n>m', '<n>y' o 'all'."
+        )
+    amount = int(match.group(1))
+    unit = match.group(2)
+    if amount < 1:
+        return None, (
+            "Filtro de fecha inválido. Usá '1h'-'23h', '<n>d', '<n>m', '<n>y' o 'all'."
+        )
+    if unit == "h" and amount > 23:
+        return None, (
+            "El rango en horas es de 1h a 23h. Para más, usá días ('1d', ...)."
+        )
+    now = datetime.now(timezone.utc)
+    if unit == "h":
+        return now - timedelta(hours=amount), None
+    if unit == "d":
+        return now - timedelta(days=amount), None
+    if unit == "m":
+        return _shift_months(now, -amount), None
+    return _shift_months(now, -amount * 12), None
+
+
+def is_older_than(value: datetime | None, cutoff: datetime) -> bool:
+    """Check whether an email date is older than the cutoff.
+
+    Naive datetimes are assumed to be UTC.
+
+    Args:
+        value: Email date (``None`` means unknown, never older).
+        cutoff: Cutoff datetime.
+
+    Returns:
+        True when ``value`` is older than ``cutoff``.
+    """
+    if value is None:
+        return False
+    seen = value.astimezone(timezone.utc).replace(tzinfo=None) if value.tzinfo else value
+    limit = cutoff.astimezone(timezone.utc).replace(tzinfo=None) if cutoff.tzinfo else cutoff
+    return seen < limit
 
 
 def _extract_plain_text(msg: email.message.Message) -> str:
