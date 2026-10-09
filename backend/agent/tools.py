@@ -66,7 +66,7 @@ from backend.agent.utils.mcp_helper import (
     mcp_tools_discovered,
 )
 from backend.agent.utils.skill_loader import format_skills_section, find_skill_folder, parse_skill_md
-from backend.agent.utils.email_parser import parse_email
+from backend.agent.utils.email_parser import parse_email, parse_relative_date, is_older_than
 
 from dotenv import load_dotenv
 
@@ -1646,26 +1646,39 @@ class Tools:
                 usage=zero_usage(),
             )
 
-    async def check_email(self, folder: str = "INBOX", sender: str | None = None) -> dict:
+    async def check_email(self, folder: str = "INBOX", sender: str | None = None, date: str = "1h", mark_read: bool = True) -> dict:
         """Check the IMAP mailbox for unseen emails and return them parsed.
 
         Connects via IMAP (SSL), searches for UNSEEN messages in the given
-        folder (optionally filtered by sender), parses each one, and returns
-        the structured results. This is a one-shot check — no polling loop.
-        The agent calls this tool on demand; it does not run in the background.
+        folder (optionally filtered by sender and age), parses each one, and
+        returns the structured results. This is a one-shot check — no polling
+        loop. The agent calls this tool on demand; it does not run in the
+        background.
 
         Args:
             folder: IMAP folder to check (default ``"INBOX"``).
             sender: Optional sender address to filter UNSEEN messages.
+            date: Relative age filter: ``1h``-``23h`` (hours), ``<n>d``
+                (days), ``<n>m`` (months), ``<n>y`` (years) or ``all``
+                (no date filter). Default ``"1h"``.
+            mark_read: When ``True`` (default) fetched messages are marked
+                as read. When ``False`` they are peeked (``BODY.PEEK[]``)
+                and stay unseen.
 
         Returns:
             dict with ``{status, message, data, usage}``.
             ``data`` contains a list of parsed emails, each with
-            ``message_id``, ``sender``, ``subject``, ``date``, ``body``
+            ``message_id``, ``sender``, ``subject``, ``date`` (raw header),
+            ``date_local`` (server local time), ``body``
             and ``attachments`` (list of filenames).
         """
         try:
-            
+            cutoff, date_error = parse_relative_date(date)
+            if date_error:
+                return make_error_response(
+                    message=date_error,
+                    usage=zero_usage(),
+                )
 
             server = os.getenv("EMAIL_IMAP_SERVER", "")
             port = int(os.getenv("EMAIL_IMAP_PORT", "993"))
@@ -1691,10 +1704,11 @@ class Tools:
                         usage=zero_usage(),
                     )
 
+                since = f' SINCE {cutoff.strftime("%d-%b-%Y")}' if cutoff else ""
                 if sender:
-                    search_criteria = f'(UNSEEN FROM "{sender}")'
+                    search_criteria = f'(UNSEEN{since} FROM "{sender}")'
                 else:
-                    search_criteria = "(UNSEEN)"
+                    search_criteria = f"(UNSEEN{since})"
 
                 typ, data = mail.search(None, search_criteria)
                 if typ != "OK" or not data or not data[0]:
@@ -1706,9 +1720,10 @@ class Tools:
 
                 msg_ids = data[0].split()
                 results: list[dict] = []
+                fetch_part = "(BODY[])" if mark_read else "(BODY.PEEK[])"
                 for msg_id in msg_ids:
                     try:
-                        typ_fetch, fetch_data = mail.fetch(msg_id, "(BODY[])")
+                        typ_fetch, fetch_data = mail.fetch(msg_id, fetch_part)
                         if typ_fetch != "OK" or not fetch_data:
                             continue
                         raw_email = None
@@ -1719,11 +1734,14 @@ class Tools:
                         if not raw_email:
                             continue
                         parsed = parse_email(raw_email)
+                        if cutoff and is_older_than(parsed.get("date_parsed"), cutoff):
+                            continue
                         results.append({
                             "message_id": parsed.get("message_id", ""),
                             "sender": parsed.get("sender", ""),
                             "subject": parsed.get("subject", ""),
                             "date": parsed.get("date", ""),
+                            "date_local": parsed.get("date_local", ""),
                             "body": parsed.get("body", ""),
                             "attachments": [
                                 a.get("filename", "")
