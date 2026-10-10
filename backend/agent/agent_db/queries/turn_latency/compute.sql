@@ -1,7 +1,9 @@
 -- Compute the latency of one turn (seconds):
 --   latency = SUM over steps of MAX(non-null total_time) for every row
---             EXCEPT the final assistant row
+--             EXCEPT the final assistant row and title rows
 --             + time_to_first_token of the final assistant message.
+-- Title rows are excluded: the title is generated in a background task
+-- in parallel to the loop, so its time must not inflate turn latency.
 -- Parallel calls share turn_number + step (they differ by substep): only
 -- the maximum of the group counts, values are never summed.
 -- NULL times are never taken as 0: a group whose values are all NULL
@@ -14,6 +16,7 @@ SELECT
         SELECT MAX(m.total_time) AS mx
         FROM messages m
         WHERE m.session_id = ? AND m.turn_number = ?
+          AND m.role <> 'title'
           AND NOT (m.role = 'assistant'
                    AND m.step = (SELECT MAX(a.step) FROM messages a
                                  WHERE a.role = 'assistant'
