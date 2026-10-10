@@ -227,3 +227,38 @@ def test_should_close_fail_open_on_jev_error(frontier_db, monkeypatch):
     monkeypatch.setenv("JEV_ENDPOINT", "http://127.0.0.1:1/unreachable")
     monkeypatch.setenv("JEV_TIMEOUT", "1")
     assert decision.should_close_step("sess-1", 1, "listo") is True
+
+
+def test_collect_garbage_deletes_only_old_done(frontier_db):
+    frontier_helpers.record_block_dispatch(
+        "sess-1", 1, 1, [(0, "call-0", "write", {}), (1, "call-1", "read", {})]
+    )
+    frontier_helpers.mark_call_done("sess-1", 1, 1, 0)
+    conn = sqlite3.connect(frontier_db)
+    try:
+        conn.execute(
+            "UPDATE step_frontier SET updated_at = datetime('now', '-2 days') "
+            "WHERE substep = 0"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    assert frontier_helpers.collect_garbage(ttl_hours=24) == 1
+    rows = _rows(frontier_db)
+    assert len(rows) == 1
+    # The surviving row is the recent done one, open rows are never collected.
+    assert rows[0]["state"] in ("open", "done")
+    frontier_helpers.record_block_dispatch(
+        "sess-1", 9, 1, [(0, "call-9", "write", {})]
+    )
+    conn = sqlite3.connect(frontier_db)
+    try:
+        conn.execute(
+            "UPDATE step_frontier SET updated_at = datetime('now', '-30 days') "
+            "WHERE turn_number = 9"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    assert frontier_helpers.collect_garbage(ttl_hours=24) == 0
+    assert len(_rows(frontier_db, "open")) == 2

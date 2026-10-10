@@ -18,6 +18,14 @@ import time
 import uuid
 from typing import Any, AsyncIterator, Optional
 
+from backend.agent.utils.decision import should_close_step
+from backend.agent.utils.frontier_helpers import (
+    clear_turn,
+    mark_call_done,
+    record_block_dispatch,
+    set_task_child,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -97,7 +105,8 @@ class WorkflowRunner:
                             await asyncio.sleep(1 * attempt)
                             continue
                         return {"node_id": node["id"], "status": result.get("status", "success"),
-                                "message": result.get("message", ""), "data": result.get("data", "")}
+                                "message": result.get("message", ""), "data": result.get("data", ""),
+                                "child_id": result.get("child_id")}
                     except asyncio.CancelledError:
                         return {"node_id": node["id"], "status": "error", "message": "Cancelado.", "data": ""}
                     except Exception as exc:
@@ -106,6 +115,26 @@ class WorkflowRunner:
                         if attempt < attempts:
                             await asyncio.sleep(1 * attempt)
                 return {"node_id": node["id"], "status": "error", "message": last_error or "Nodo fallido.", "data": ""}
+
+            # Frontier: the step group is a dispatch block. A cut workflow
+            # (cancel/abort) leaves open rows behind for the next turn.
+            try:
+                record_block_dispatch(
+                    session_id,
+                    turn_number,
+                    step,
+                    [
+                        (
+                            pos,
+                            node.get("id", f"node-{pos}"),
+                            node.get("tool") or node.get("agent_name") or node.get("id", "?"),
+                            dict(node.get("args", {}) or {}),
+                        )
+                        for pos, node in enumerate(group)
+                    ],
+                )
+            except Exception as exc:
+                log_error(str(exc), source="workflow_runner.py:run(dispatch)")
 
             if len(group) == 1:
                 node = group[0]
@@ -118,6 +147,15 @@ class WorkflowRunner:
 
             for outcome in results:
                 node = next(n for n in group if n["id"] == outcome["node_id"])
+                # Frontier commit: the node result was recorded (success or
+                # error both land in the workflow state).
+                try:
+                    pos = next(i for i, n in enumerate(group) if n["id"] == outcome["node_id"])
+                    mark_call_done(session_id, turn_number, step, pos)
+                    if outcome.get("child_id"):
+                        set_task_child(session_id, turn_number, step, pos, outcome["child_id"])
+                except Exception as exc:
+                    log_error(str(exc), source="workflow_runner.py:run(commit)")
                 if outcome["status"] == "success":
                     state["results"][node["id"]] = outcome["data"]
                     yield f"data: {json.dumps({'type': 'tool_result', 'content': {'name': node['id'], 'result': {'status': 'success', 'data': outcome['data']}}}, ensure_ascii=False)}\n\n"
@@ -150,6 +188,13 @@ class WorkflowRunner:
         except Exception as exc:
             from backend.agent.utils.error_logger import log_error as _log
             _log(str(exc), source="workflow_runner.py:save_final")
+        # Validated close: only a validated done signal deletes the
+        # frontier, otherwise the next turn resumes the pending nodes.
+        try:
+            if should_close_step(session_id, turn_number, answer):
+                clear_turn(session_id, turn_number)
+        except Exception as exc:
+            log_error(str(exc), source="workflow_runner.py:run(close)")
         yield f"data: {json.dumps({'type': 'chunk', 'content': answer}, ensure_ascii=False)}\n\n"
         yield "data: [DONE]\n\n"
 
@@ -234,7 +279,8 @@ class WorkflowRunner:
                         final_text += payload.get("content", "")
         except Exception as exc:
             log_error(str(exc), source="workflow_runner.py:agent_node")
-            return {"status": "error", "message": "Error en nodo agente.", "data": ""}
+            return {"status": "error", "message": "Error en nodo agente.", "data": "",
+                    "child_id": child_id}
         total_time = round(time.time() - t0, 2)
         usage_total["total_time"] = total_time
         try:
@@ -248,8 +294,10 @@ class WorkflowRunner:
         except Exception as exc:
             log_error(str(exc), source="workflow_runner.py:save_node")
         if not final_text.strip():
-            return {"status": "error", "message": "El nodo agente no produjo respuesta.", "data": ""}
-        return {"status": "success", "message": "Nodo agente ok.", "data": final_text}
+            return {"status": "error", "message": "El nodo agente no produjo respuesta.", "data": "",
+                    "child_id": child_id}
+        return {"status": "success", "message": "Nodo agente ok.", "data": final_text,
+                "child_id": child_id}
 
     async def _run_tool_node(self, node: dict[str, Any], state: dict[str, Any], execute_tool) -> dict[str, Any]:
         """Run a tool node with permissions from its agent when set."""

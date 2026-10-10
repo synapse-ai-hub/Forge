@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Iterable
 
 from backend.agent.utils.db import db_transaction
@@ -245,16 +245,17 @@ def build_resume_message(session_id: str) -> str | None:
             for position, row in enumerate(turns[turn], start=1):
                 result = _tool_result_text(row)
                 detail = f"Último resultado registrado: {result}" if result else "Sin resultado registrado."
+                child = row.get("child_id")
                 if row["tool_name"] == "task":
-                    child = row.get("child_id") or "no creada"
                     lines.append(
                         f"{position}. task({row['tool_args']}) — "
-                        f"sub-sesión: {child}. {detail}"
+                        f"sub-sesión: {child or 'no creada'}. {detail}"
                     )
                 else:
+                    suffix = f" sub-sesión: {child}." if child else ""
                     lines.append(
                         f"{position}. {row['tool_name']}({row['tool_args']}) — "
-                        f"despachado, resultado no confirmado. {detail}"
+                        f"despachado, resultado no confirmado.{suffix} {detail}"
                     )
             parts.append(
                 "[TRABAJO SIN CERRAR — turno "
@@ -272,6 +273,33 @@ def build_resume_message(session_id: str) -> str | None:
     except Exception as exc:
         log_error(str(exc), source="frontier_helpers.py:build_resume_message")
         return None
+
+
+def collect_garbage(ttl_hours: float = 24.0) -> int:
+    """Delete confirmed frontier rows older than the TTL.
+
+    Only ``done`` rows are collected (a validated close deletes the whole
+    turn, so survivors are crash leftovers). ``open`` rows are never
+    collected: they are unsettled work a future turn must resume, no
+    matter their age.
+
+    Args:
+        ttl_hours: Age in hours after which a done row is garbage.
+
+    Returns:
+        Number of deleted rows. Never raises.
+    """
+    try:
+        cutoff = (datetime.now() - timedelta(hours=ttl_hours)).isoformat()
+        with db_transaction() as conn:
+            cur = conn.execute(
+                load_query("step_frontier/delete_done_older_than.sql"), (cutoff,)
+            )
+            deleted = cur.rowcount or 0
+            return deleted if deleted > 0 else 0
+    except Exception as exc:
+        log_error(str(exc), source="frontier_helpers.py:collect_garbage")
+        return 0
 
 
 def clear_turn(session_id: str, turn_number: int) -> None:

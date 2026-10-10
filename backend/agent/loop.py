@@ -88,6 +88,7 @@ from backend.agent.utils.decision import should_close_step
 from backend.agent.utils.frontier_helpers import (
     build_resume_message,
     clear_turn,
+    collect_garbage,
     extract_task_child_id,
     mark_call_done,
     record_block_dispatch,
@@ -664,7 +665,13 @@ class AgentLoop:
             # validated close). They are read FIRST, before the LLM runs,
             # and injected as an ephemeral system message: facts only,
             # nothing truncated. In-memory only, never persisted — the
-            # same pattern as the empty-response hint.
+            # same pattern as the empty-response hint. Confirmed rows
+            # older than the TTL are garbage-collected first (open rows
+            # are never collected: any future turn may resume them).
+            try:
+                collect_garbage(float(os.getenv("FRONTIER_TTL_HOURS", "24") or 24))
+            except Exception as exc:
+                log_error(str(exc), source="loop.py:run(frontier_gc)")
             try:
                 resume_text = build_resume_message(session_id)
             except Exception as exc:
