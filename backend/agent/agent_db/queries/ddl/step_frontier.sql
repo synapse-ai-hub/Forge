@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS step_frontier (
     turn_number INTEGER NOT NULL,
     step INTEGER NOT NULL DEFAULT 0,
     substep INTEGER NOT NULL DEFAULT 0,
+    tool_call_id TEXT,
     tool_name TEXT NOT NULL,
     tool_args TEXT,
     state TEXT NOT NULL DEFAULT 'open',

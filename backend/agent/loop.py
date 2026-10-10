@@ -85,9 +85,12 @@ from backend.agent.utils.model_resolver import (
     ollama_default_context,
 )
 from backend.agent.utils.frontier_helpers import (
+    build_resume_message,
     clear_turn,
+    extract_task_child_id,
     mark_call_done,
     record_block_dispatch,
+    set_task_child,
 )
 from backend.agent.utils.spend_handler import check_spend_limit
 from backend.agent.utils.rate_limit_handler import (
@@ -654,6 +657,20 @@ class AgentLoop:
             session_manager.save_message(
                 session_id, "user", content=user_message, turn_number=turn_number,
             )
+
+            # --- 5a. Resume unsettled frontier (read-first) ---
+            # A cut flow leaves open rows behind (they are only deleted on
+            # validated close). They are read FIRST, before the LLM runs,
+            # and injected as an ephemeral system message: facts only,
+            # nothing truncated. In-memory only, never persisted — the
+            # same pattern as the empty-response hint.
+            try:
+                resume_text = build_resume_message(session_id)
+            except Exception as exc:
+                log_error(str(exc), source="loop.py:run(resume)")
+                resume_text = None
+            if resume_text:
+                messages.append({"role": "system", "content": resume_text})
 
             # --- 5b. Generate title on first turn (root sessions only, non-blocking) ---
             # Sub-agents (depth > 0) skip title generation entirely: each one
@@ -1252,7 +1269,12 @@ class AgentLoop:
                         turn_number,
                         step,
                         [
-                            (idx, btc.get("name", "?"), btc.get("args") or {})
+                            (
+                                idx,
+                                btc.get("id", ""),
+                                btc.get("name", "?"),
+                                btc.get("args") or {},
+                            )
                             for idx, btc, _cfg, _queue in pending
                         ],
                     )
@@ -1442,6 +1464,15 @@ class AgentLoop:
 
                         # The result committed: flip its frontier row to done.
                         mark_call_done(session_id, turn_number, step, idx)
+                        # A task call exposes its child session id in the
+                        # result XML: attach it to the frontier row so the
+                        # child stays visible to the parent.
+                        if tc.get("name") == "task":
+                            child_id = extract_task_child_id(result_data)
+                            if child_id:
+                                set_task_child(
+                                    session_id, turn_number, step, idx, child_id
+                                )
 
                         # Collect result for assistant message's tool_results field
                         tool_results.append({

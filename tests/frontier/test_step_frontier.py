@@ -80,13 +80,14 @@ def test_dispatch_writes_open_rows_with_full_args(frontier_db):
         1,
         1,
         [
-            (0, "write", {"file_path": "a.txt", "content": "hola"}),
-            (1, "write", {"file_path": "b.txt", "content": long_content}),
+            (0, "call-0", "write", {"file_path": "a.txt", "content": "hola"}),
+            (1, "call-1", "write", {"file_path": "b.txt", "content": long_content}),
         ],
     )
     rows = _rows(frontier_db, "open")
     assert len(rows) == 2
     assert rows[0]["tool_name"] == "write"
+    assert rows[0]["tool_call_id"] == "call-0"
     assert json.loads(rows[0]["tool_args"]) == {"file_path": "a.txt", "content": "hola"}
     # Args are stored complete, never truncated.
     assert json.loads(rows[1]["tool_args"])["content"] == long_content
@@ -94,7 +95,7 @@ def test_dispatch_writes_open_rows_with_full_args(frontier_db):
 
 def test_mark_done_flips_only_matching_row(frontier_db):
     frontier_helpers.record_block_dispatch(
-        "sess-1", 1, 1, [(0, "write", {}), (1, "read", {})]
+        "sess-1", 1, 1, [(0, "call-0", "write", {}), (1, "call-1", "read", {})]
     )
     frontier_helpers.mark_call_done("sess-1", 1, 1, 0)
     assert len(_rows(frontier_db, "open")) == 1
@@ -105,8 +106,8 @@ def test_mark_done_flips_only_matching_row(frontier_db):
 
 
 def test_clear_turn_deletes_only_that_turn(frontier_db):
-    frontier_helpers.record_block_dispatch("sess-1", 1, 1, [(0, "write", {})])
-    frontier_helpers.record_block_dispatch("sess-1", 2, 1, [(0, "write", {})])
+    frontier_helpers.record_block_dispatch("sess-1", 1, 1, [(0, "call-0", "write", {})])
+    frontier_helpers.record_block_dispatch("sess-1", 2, 1, [(0, "call-1", "write", {})])
     frontier_helpers.clear_turn("sess-1", 1)
     rows = _rows(frontier_db)
     assert len(rows) == 1
@@ -116,7 +117,7 @@ def test_clear_turn_deletes_only_that_turn(frontier_db):
 def test_cut_flow_leaves_open_rows_until_close(frontier_db):
     # Turn 1: block of 2 dispatched, first commits, flow cuts before close.
     frontier_helpers.record_block_dispatch(
-        "sess-1", 1, 1, [(0, "write", {"file_path": "a.txt"}), (1, "write", {"file_path": "b.txt"})]
+        "sess-1", 1, 1, [(0, "call-0", "write", {"file_path": "a.txt"}), (1, "call-1", "write", {"file_path": "b.txt"})]
     )
     frontier_helpers.mark_call_done("sess-1", 1, 1, 0)
     # No clear_turn ran: the cut leaves one open row behind.
@@ -126,3 +127,74 @@ def test_cut_flow_leaves_open_rows_until_close(frontier_db):
     # Validated close deletes everything.
     frontier_helpers.clear_turn("sess-1", 1)
     assert _rows(frontier_db) == []
+
+
+def _insert_message(db_path, role, content, turn_number, **extra):
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            "INSERT INTO messages (session_id, role, content, turn_number, created_at) "
+            "VALUES (?, ?, ?, ?, datetime('now'))",
+            ("sess-1", role, content, turn_number),
+        )
+        conn.commit()
+        row_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        for key, value in extra.items():
+            conn.execute(
+                f"UPDATE messages SET {key} = ? WHERE id = ?", (value, row_id)
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_extract_task_child_id_from_result_xml():
+    xml = '<task id="sess-1:researcher:abc123" state="completed"><task_result>done</task_result></task>'
+    assert (
+        frontier_helpers.extract_task_child_id(
+            {"status": "success", "message": "m", "data": xml}
+        )
+        == "sess-1:researcher:abc123"
+    )
+    assert frontier_helpers.extract_task_child_id({"status": "error"}) is None
+    assert frontier_helpers.extract_task_child_id("plain text") is None
+
+
+def test_set_task_child_attaches_child_id(frontier_db):
+    frontier_helpers.record_block_dispatch(
+        "sess-1", 1, 1, [(0, "call-9", "task", {"agent_name": "researcher"})]
+    )
+    frontier_helpers.set_task_child("sess-1", 1, 1, 0, "sess-1:researcher:abc123")
+    rows = _rows(frontier_db, "open")
+    assert rows[0]["child_id"] == "sess-1:researcher:abc123"
+
+
+def test_build_resume_message_reads_first(frontier_db):
+    _insert_message(frontier_db, "user", "Investigá el módulo X", 1)
+    long_result = "R" * 3000
+    _insert_message(
+        frontier_db, "tool", long_result, 1, tool_call_id="call-0",
+        tool_name="write", step=1,
+    )
+    frontier_helpers.record_block_dispatch(
+        "sess-1",
+        1,
+        1,
+        [
+            (0, "call-0", "write", {"file_path": "a.txt"}),
+            (1, "call-1", "task", {"agent_name": "researcher", "prompt": "P" * 2000}),
+        ],
+    )
+    frontier_helpers.set_task_child("sess-1", 1, 1, 1, "sess-1:researcher:abc123")
+    text = frontier_helpers.build_resume_message("sess-1")
+    assert text is not None
+    # Original user request, full args, full recorded result: nothing truncated.
+    assert "Investigá el módulo X" in text
+    assert '"file_path": "a.txt"' in text
+    assert "P" * 2000 in text
+    assert long_result in text
+    assert "sub-sesión: sess-1:researcher:abc123" in text
+
+
+def test_build_resume_message_none_when_clean(frontier_db):
+    assert frontier_helpers.build_resume_message("sess-1") is None
