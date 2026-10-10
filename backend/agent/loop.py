@@ -84,6 +84,7 @@ from backend.agent.utils.model_resolver import (
     get_vram_gb,
     ollama_default_context,
 )
+from backend.agent.utils.decision import should_close_step
 from backend.agent.utils.frontier_helpers import (
     build_resume_message,
     clear_turn,
@@ -1577,8 +1578,11 @@ class AgentLoop:
                 )
 
                 # Validated done signal (final content, no tool_calls):
-                # the step closed, delete its frontier.
-                clear_turn(session_id, turn_number)
+                # the step closes only when the decision accepts it
+                # (LLM signal alone, or JEV verdict when configured).
+                # Otherwise the frontier stays for the next turn.
+                if should_close_step(session_id, turn_number, cleaned):
+                    clear_turn(session_id, turn_number)
 
                 # Emit the session title before [DONE] so the sidebar refreshes
                 # with the generated title even if it finished after the loop.
