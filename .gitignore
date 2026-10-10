@@ -63,5 +63,9 @@ backend/agent/agent_db/*
 tests/whisper/data/
 tests/whisper/result/
 
+# Reportes de tests (e2e y workflows, generados por los runners)
+tests/e2e/reports/
+tests/workflows/reports/
+
 # Pruebas embeddings
 pruebas_chroma.ipynb
