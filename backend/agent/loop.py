@@ -84,6 +84,11 @@ from backend.agent.utils.model_resolver import (
     get_vram_gb,
     ollama_default_context,
 )
+from backend.agent.utils.frontier_helpers import (
+    clear_turn,
+    mark_call_done,
+    record_block_dispatch,
+)
 from backend.agent.utils.spend_handler import check_spend_limit
 from backend.agent.utils.rate_limit_handler import (
     classify_error_category,
@@ -1236,6 +1241,22 @@ class AgentLoop:
                             tc_index += len(batch)
                             continue
 
+                    # ---- Record the dispatched block in the step frontier ----
+                    # One open row per call, written BEFORE execution so a
+                    # cut flow leaves them behind for the next turn. Rows
+                    # flip to done on ordered commit and are only deleted
+                    # when the step closes with a validated done signal.
+                    # Never breaks the loop (the helper never raises).
+                    record_block_dispatch(
+                        session_id,
+                        turn_number,
+                        step,
+                        [
+                            (idx, btc.get("name", "?"), btc.get("args") or {})
+                            for idx, btc, _cfg, _queue in pending
+                        ],
+                    )
+
                     # ---- Execute the whole block concurrently ----
                     # Every queued call runs under its own ContextVar
                     # snapshot. Sub-agent event queues are multiplexed to
@@ -1419,6 +1440,9 @@ class AgentLoop:
                             usage={"total_time": block_durations.get(idx, 0.0)},
                         )
 
+                        # The result committed: flip its frontier row to done.
+                        mark_call_done(session_id, turn_number, step, idx)
+
                         # Collect result for assistant message's tool_results field
                         tool_results.append({
                             "tool_call_id": tc.get("id", ""),
@@ -1520,6 +1544,10 @@ class AgentLoop:
                             "time_to_first_token": (usage_data or {}).get("time_to_first_token"),
                         },
                 )
+
+                # Validated done signal (final content, no tool_calls):
+                # the step closed, delete its frontier.
+                clear_turn(session_id, turn_number)
 
                 # Emit the session title before [DONE] so the sidebar refreshes
                 # with the generated title even if it finished after the loop.
