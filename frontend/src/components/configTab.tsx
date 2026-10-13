@@ -4,7 +4,7 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Collapsible } from "./ui/collapsible";
 import configService from "../services/configService";
-import type { ProviderKeyStatus, AdvancedParams } from "../services/configService";
+import type { ProviderKeyStatus, AdvancedParams, DecisionProvider } from "../services/configService";
 import contextFilesService, { type ContextFile } from "../services/contextFilesService";
 
 interface ConfigTabProps {
@@ -68,6 +68,16 @@ export function ConfigTab({ verboseMode, onVerboseModeChange }: ConfigTabProps) 
   const [uploadingContext, setUploadingContext] = useState(false);
   const contextFileInputRef = useRef<HTMLInputElement>(null);
   const isFirstLoadRef = useRef(true);
+
+  /* ---- decision model (System One, independent from chat models) ---- */
+  const [decisionProviders, setDecisionProviders] = useState<DecisionProvider[]>([]);
+  const [decisionEnabled, setDecisionEnabled] = useState(false);
+  const [currentDecisionProvider, setCurrentDecisionProvider] = useState<string | null>(null);
+  const [currentDecisionModel, setCurrentDecisionModel] = useState<string | null>(null);
+  const [pendingDecisionProvider, setPendingDecisionProvider] = useState("");
+  const [pendingDecisionModel, setPendingDecisionModel] = useState<string | null>(null);
+  const [savingDecision, setSavingDecision] = useState(false);
+  const [decisionMessage, setDecisionMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   /* ---- provider API keys ---- */
   /* Curated providers (mirrors backend PROVIDER_REGISTRY). */
@@ -158,11 +168,12 @@ export function ConfigTab({ verboseMode, onVerboseModeChange }: ConfigTabProps) 
   const load = useCallback(async (prov?: string) => {
     try {
       setLoading(true);
-      const [provResp, m, cw, prm] = await Promise.all([
+      const [provResp, m, cw, prm, dec] = await Promise.all([
         configService.getProviders(),
         configService.getModels(prov),
         configService.getContextWindow(),
         configService.getParameters().catch(() => null),
+        configService.getDecisionModels().catch(() => null),
       ]);
       setProviders(provResp.providers || []);
       setModels(m.models || []);
@@ -203,6 +214,15 @@ export function ConfigTab({ verboseMode, onVerboseModeChange }: ConfigTabProps) 
         setSavedParams(p);
         setReasoningSupported(prm.reasoning_supported);
         setResponseFormatSupported(prm.response_format_supported);
+      }
+      // Decision section: providers come from the decision_catalog table.
+      if (dec && dec.status === "success") {
+        setDecisionProviders(dec.providers || []);
+        setDecisionEnabled(dec.enabled === true);
+        setCurrentDecisionProvider(dec.provider || null);
+        setCurrentDecisionModel(dec.model || null);
+        setPendingDecisionProvider(dec.provider || "");
+        setPendingDecisionModel(dec.model || null);
       }
     } catch (err) {
       console.error("Error cargando configuración:", err);
@@ -396,6 +416,50 @@ export function ConfigTab({ verboseMode, onVerboseModeChange }: ConfigTabProps) 
       console.error("Error guardando contexto:", err);
     } finally {
       setSavingContext(false);
+    }
+  };
+
+  /* ---- decision model handlers (independent from chat models) ---- */
+
+  const decisionModelsFor = (provider: string): string[] =>
+    decisionProviders.find((p) => p.provider === provider)?.models || [];
+
+  const handleToggleDecision = async (enabled: boolean) => {
+    try {
+      setDecisionMessage(null);
+      await configService.setDecisionEnabled(enabled);
+      setDecisionEnabled(enabled);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Error al guardar el estado de decisión.";
+      console.error("Error guardando estado de decisión:", err);
+      setDecisionMessage({ type: "error", text: msg });
+    }
+  };
+
+  const handleDecisionProviderChange = (value: string) => {
+    setPendingDecisionProvider(value);
+    const models = decisionModelsFor(value);
+    setPendingDecisionModel(models.length > 0 ? models[0] : null);
+  };
+
+  const handleApplyDecision = async () => {
+    const isSame =
+      pendingDecisionModel === currentDecisionModel &&
+      pendingDecisionProvider === (currentDecisionProvider || "");
+    if (!decisionEnabled || !pendingDecisionModel || !pendingDecisionProvider || isSame || savingDecision) return;
+    try {
+      setSavingDecision(true);
+      setDecisionMessage(null);
+      await configService.selectDecisionModel(pendingDecisionModel, pendingDecisionProvider);
+      setCurrentDecisionModel(pendingDecisionModel);
+      setCurrentDecisionProvider(pendingDecisionProvider);
+      setDecisionMessage({ type: "success", text: "Modelo de decisión aplicado correctamente." });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Error al aplicar el modelo de decisión.";
+      console.error("Error aplicando modelo de decisión:", err);
+      setDecisionMessage({ type: "error", text: msg });
+    } finally {
+      setSavingDecision(false);
     }
   };
 
@@ -729,6 +793,106 @@ export function ConfigTab({ verboseMode, onVerboseModeChange }: ConfigTabProps) 
           {applyMessage.text}
         </div>
       )}
+
+      {/* Modelo de decisión (System One, independiente del modelo de chat) */}
+      <div className="pt-2 border-t border-app-border">
+        <div className="flex items-center justify-between py-2">
+          <div>
+            <div className="text-xs font-medium text-app-text-secondary">
+              Modelo de decisión
+            </div>
+            <p className="text-[11px] text-app-text-secondary mt-1">
+              Valida cierres y decisiones con un modelo System One. Si está apagado, el flujo actual no cambia.
+            </p>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={decisionEnabled}
+            onClick={() => handleToggleDecision(!decisionEnabled)}
+            className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none focus:ring-2 focus:ring-app-primary-light ${
+              decisionEnabled ? "bg-app-primary" : "bg-app-bg-tertiary"
+            }`}
+          >
+            <span
+              className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${
+                decisionEnabled ? "translate-x-4" : "translate-x-0"
+              }`}
+            />
+          </button>
+        </div>
+
+        <div className={decisionEnabled ? "" : "opacity-50 pointer-events-none"}>
+          <div className="text-xs font-medium text-app-text-secondary">
+            Proveedor de decisión
+          </div>
+          <select
+            value={pendingDecisionProvider}
+            onChange={(e) => handleDecisionProviderChange(e.target.value)}
+            disabled={!decisionEnabled || savingDecision}
+            className="mt-1 w-full rounded-lg border border-app-border bg-white px-3 py-2 text-sm text-app-text focus:outline-none focus:ring-2 focus:ring-app-primary-light"
+          >
+            {pendingDecisionProvider === "" && (
+              <option value="">Seleccion&aacute; un proveedor</option>
+            )}
+            {decisionProviders.length === 0 ? (
+              <option value="">No hay proveedores disponibles</option>
+            ) : (
+              decisionProviders.map((p) => (
+                <option key={p.provider} value={p.provider}>
+                  {p.label}
+                </option>
+              ))
+            )}
+          </select>
+
+          <div className="text-xs font-medium text-app-text-secondary mt-3">
+            Modelo de decisión
+          </div>
+          <select
+            value={pendingDecisionModel || ""}
+            onChange={(e) => setPendingDecisionModel(e.target.value || null)}
+            disabled={!decisionEnabled || savingDecision || decisionModelsFor(pendingDecisionProvider).length === 0}
+            className="mt-1 w-full rounded-lg border border-app-border bg-white px-3 py-2 text-sm text-app-text focus:outline-none focus:ring-2 focus:ring-app-primary-light"
+          >
+            {decisionModelsFor(pendingDecisionProvider).length === 0 ? (
+              <option value="">No hay modelos disponibles</option>
+            ) : (
+              decisionModelsFor(pendingDecisionProvider).map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))
+            )}
+          </select>
+
+          <Button
+            onClick={handleApplyDecision}
+            disabled={
+              savingDecision ||
+              !pendingDecisionModel ||
+              !pendingDecisionProvider ||
+              (pendingDecisionModel === currentDecisionModel &&
+                pendingDecisionProvider === (currentDecisionProvider || ""))
+            }
+            variant="gradient"
+            className="w-full mt-3"
+          >
+            {savingDecision ? "Aplicando..." : "Aplicar decisión"}
+          </Button>
+          {decisionMessage && (
+            <div
+              className={`text-xs rounded-lg px-3 py-2 border mt-2 ${
+                decisionMessage.type === "success"
+                  ? "text-green-700 bg-green-50 border-green-200"
+                  : "text-red-600 bg-red-50 border-red-200"
+              }`}
+            >
+              {decisionMessage.text}
+            </div>
+          )}
+        </div>
+      </div>
 
       {/* API keys de providers */}
       <Collapsible title="API keys de proveedores">
