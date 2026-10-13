@@ -1,6 +1,7 @@
 CREATE TABLE IF NOT EXISTS model_catalog (
     provider TEXT NOT NULL,
     model_id TEXT NOT NULL,
+    type TEXT,
     name TEXT,
     description TEXT,
     family TEXT,

@@ -249,6 +249,8 @@ def calculate_cost(
     Queries the model_catalog table to retrieve cost per token rates and computes
     the input cost, output cost, and total cost for the given token counts.
     Catalog rates come from models.dev and are USD per million tokens.
+    Falls back to the decision_catalog table (curated decision models, which
+    models.dev does not catalog) when the model is not found in model_catalog.
 
     Cost components:
         - cost_input: prompt_tokens * cost_input_rate / 1_000_000
@@ -276,6 +278,12 @@ def calculate_cost(
                 load_query("model_catalog/get_rates.sql"),
                 (provider_value, model),
             ).fetchone()
+
+            if row is None:
+                row = conn.execute(
+                    load_query("decision_catalog/get_rates.sql"),
+                    (provider_value, model),
+                ).fetchone()
 
             if row is None:
                 logger.warning(

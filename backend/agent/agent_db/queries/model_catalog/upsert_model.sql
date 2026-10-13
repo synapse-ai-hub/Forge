@@ -1,6 +1,6 @@
 -- Upsert one model row of the catalog (models.dev sync).
 INSERT INTO model_catalog
-(provider, model_id, name, description, family,
+(provider, model_id, type, name, description, family,
  context_window, input_limit, output_limit,
  reasoning, reasoning_options,
  tool_call, attachment, temperature, structured_output,
@@ -8,7 +8,7 @@ INSERT INTO model_catalog
  cost_input, cost_output, cost_cache_read, cost_cache_write,
  open_weights, status, api, npm, updated_at)
 VALUES
-(:provider, :model_id, :name, :description, :family,
+(:provider, :model_id, :type, :name, :description, :family,
  :context_window, :input_limit, :output_limit,
  :reasoning, :reasoning_options,
  :tool_call, :attachment, :temperature, :structured_output,
@@ -16,6 +16,7 @@ VALUES
  :cost_input, :cost_output, :cost_cache_read, :cost_cache_write,
  :open_weights, :status, :api, :npm, :updated_at)
 ON CONFLICT(provider, model_id) DO UPDATE SET
+    type = excluded.type,
     name = excluded.name,
     description = excluded.description,
     family = excluded.family,
