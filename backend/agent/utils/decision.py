@@ -1,16 +1,12 @@
-"""Validated step-close decision with optional JEV.
+"""Validated step-close decision with optional decision model.
 
 When the agent loop emits a final answer with no tool calls (the LLM done
 signal), this module decides whether the step frontier is deleted. Without
-JEV configured the LLM signal is accepted as-is (current behavior, zero
-extra cost). With ``JEV_API_KEY`` and ``JEV_ENDPOINT`` set, a small external
-judge validates the close: only a ``done`` verdict deletes the frontier,
-anything else (or any failure) leaves the rows behind for the next turn.
-
-Expected JEV contract (POST JSON, Bearer auth)::
-
-    request:  {"user_request": str, "pending": [...], "proposed_final": str}
-    response: {"done": true | false}
+a decision model enabled the LLM signal is accepted as-is (current
+behavior, zero extra cost). With the decision section enabled and a
+provider + model selected, ``Agent.decision`` validates the close: only a
+``done`` verdict with enough confidence deletes the frontier, anything
+else (or any failure) leaves the rows behind for the next turn.
 
 Every function manages its own failures and never raises: frontier tracking
 must never break the agent loop. On any doubt the step closes (fail-open).
@@ -19,8 +15,6 @@ must never break the agent loop. On any doubt the step closes (fail-open).
 from __future__ import annotations
 
 import json
-import os
-import urllib.request
 from typing import Any
 
 from backend.agent.utils import frontier_helpers
@@ -28,99 +22,39 @@ from backend.agent.utils.db import db_transaction
 from backend.agent.utils.error_logger import log_error
 from backend.agent.utils.queries import load_query
 
+DECISION_CLOSE_THRESHOLD = 0.8
+"""Minimum ``noul`` confidence to accept a ``done`` verdict.
 
-def jev_configured() -> bool:
-    """Return True only when a JEV key and endpoint are both set."""
-    try:
-        return bool(os.getenv("JEV_API_KEY", "").strip()) and bool(
-            os.getenv("JEV_ENDPOINT", "").strip()
-        )
-    except Exception as exc:
-        log_error(str(exc), source="decision.py:jev_configured")
-        return False
+Conservative initial value: below it the frontier is kept for the next
+turn. Tune manually after testing decision models.
+"""
 
 
-def parse_jev_verdict(payload: Any) -> bool | None:
-    """Parse a JEV response payload into a done verdict.
-
-    Args:
-        payload: Decoded JSON body from the JEV endpoint.
-
-    Returns:
-        True/False for a ``{"done": bool}`` verdict, None when the
-        payload does not carry one.
-    """
-    try:
-        if isinstance(payload, dict):
-            verdict = payload.get("done")
-            if isinstance(verdict, bool):
-                return verdict
-        return None
-    except Exception as exc:
-        log_error(str(exc), source="decision.py:parse_jev_verdict")
-        return None
-
-
-def validate_with_jev(
-    user_request: str, pending: list[dict[str, Any]], proposed_final: str
-) -> bool | None:
-    """Ask the configured JEV endpoint whether the step may close.
-
-    Args:
-        user_request: Original user message of the closing turn.
-        pending: Unsettled frontier rows (facts only, complete).
-        proposed_final: The final answer the agent wants to emit.
-
-    Returns:
-        True/False verdict, or None when JEV is not configured or any
-        failure happens (fail-open: the caller accepts the LLM signal).
-    """
-    try:
-        if not jev_configured():
-            return None
-        body = json.dumps(
-            {
-                "user_request": user_request,
-                "pending": pending,
-                "proposed_final": proposed_final,
-            },
-            ensure_ascii=False,
-        ).encode("utf-8")
-        request = urllib.request.Request(
-            os.getenv("JEV_ENDPOINT", "").strip(),
-            data=body,
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {os.getenv('JEV_API_KEY', '').strip()}",
-            },
-            method="POST",
-        )
-        timeout = float(os.getenv("JEV_TIMEOUT", "10") or 10)
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-        return parse_jev_verdict(payload)
-    except Exception as exc:
-        log_error(str(exc), source="decision.py:validate_with_jev")
-        return None
-
-
-def should_close_step(session_id: str, turn_number: int, final_text: str) -> bool:
+async def should_close_step(session_id: str, turn_number: int,
+                            final_text: str,
+                            step: int | None = None) -> bool:
     """Decide whether a validated done signal deletes the step frontier.
 
-    Without JEV the LLM done signal is accepted (zero extra cost). With
-    JEV configured the judge validates the close against the original
-    request, the unsettled rows and the proposed final answer.
+    Without a decision model enabled/selected the LLM done signal is
+    accepted (zero extra cost). Otherwise the original request, the
+    unsettled rows and the proposed final answer are sent as the decision
+    state with a single ``noul`` question. The verdict is persisted as a
+    ``"decisor"`` message (same session, turn and step) so it stays in
+    order in the table but is never sent to the LLM.
 
     Args:
         session_id: Session closing the step.
         turn_number: Turn closing the step.
         final_text: Final answer the agent wants to emit.
+        step: Step within the turn (for the ``decisor`` row).
 
     Returns:
         True when the frontier may be deleted. Never raises.
     """
     try:
-        if not jev_configured():
+        from backend.instances import agent
+
+        if agent is None or not agent.decision_enabled:
             return True
         with db_transaction() as conn:
             cur = conn.execute(
@@ -139,8 +73,78 @@ def should_close_step(session_id: str, turn_number: int, final_text: str) -> boo
             for item in frontier_helpers.load_open_frontier(session_id)
             if item["turn_number"] == turn_number
         ]
-        verdict = validate_with_jev(user_request, pending, final_text)
-        return True if verdict is None else verdict
+        state: dict[str, Any] = {
+            "user_request": user_request,
+            "pending": pending,
+            "proposed_final": final_text,
+        }
+        questions: dict[str, Any] = {
+            "close": {
+                "type": "noul",
+                "instructions": (
+                    "The step may close only if the proposed final answer "
+                    "fully resolves the user request and no pending item "
+                    "remains unsettled."
+                ),
+            }
+        }
+        response = await agent.decision(state, questions)
+        data = (response or {}).get("data") or {}
+        if not data.get("available"):
+            return True
+        answers = data.get("answers") or {}
+        verdict = (answers.get("close") or {}).get("noul")
+        if not isinstance(verdict, (int, float)) or isinstance(verdict, bool):
+            return True
+        closed = bool(verdict) and float(verdict) >= DECISION_CLOSE_THRESHOLD
+        _save_decisor_row(session_id, turn_number, step, data,
+                          (response or {}).get("usage"),
+                          float(verdict), closed)
+        return closed
     except Exception as exc:
         log_error(str(exc), source="decision.py:should_close_step")
         return True
+
+
+def _save_decisor_row(session_id: str, turn_number: int,
+                      step: int | None, data: dict[str, Any],
+                      usage: dict[str, Any] | None,
+                      verdict: float, closed: bool) -> None:
+    """Persist the decision verdict as a ``"decisor"`` message.
+
+    Same session, turn and step as the surrounding flow, so the row stays
+    in order in the table. Never raises.
+
+    Args:
+        session_id: Session identifier.
+        turn_number: Current turn number.
+        step: Current step within the turn.
+        data: ``Agent.decision`` response data (model, provider).
+        usage: Token / time report from the decision call.
+        verdict: ``noul`` probability returned by the model.
+        closed: Whether the step was closed.
+    """
+    try:
+        from backend.instances import session_manager
+
+        if session_manager is None:
+            return
+        session_manager.save_message(
+            session_id=session_id,
+            role="decisor",
+            content=json.dumps({
+                "question": "close",
+                "type": "noul",
+                "verdict": verdict,
+                "threshold": DECISION_CLOSE_THRESHOLD,
+                "closed": closed,
+            }),
+            status="success",
+            usage=usage if isinstance(usage, dict) else None,
+            model=data.get("model"),
+            provider=data.get("provider"),
+            turn_number=turn_number,
+            step=step,
+        )
+    except Exception as exc:
+        log_error(str(exc), source="decision.py:_save_decisor_row")

@@ -191,7 +191,8 @@ class WorkflowRunner:
         # Validated close: only a validated done signal deletes the
         # frontier, otherwise the next turn resumes the pending nodes.
         try:
-            if should_close_step(session_id, turn_number, answer):
+            if await should_close_step(session_id, turn_number, answer,
+                                            step=steps[-1] if steps else 1):
                 clear_turn(session_id, turn_number)
         except Exception as exc:
             log_error(str(exc), source="workflow_runner.py:run(close)")

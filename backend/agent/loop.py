@@ -1588,7 +1588,7 @@ class AgentLoop:
                 # the step closes only when the decision accepts it
                 # (LLM signal alone, or JEV verdict when configured).
                 # Otherwise the frontier stays for the next turn.
-                if should_close_step(session_id, turn_number, cleaned):
+                if await should_close_step(session_id, turn_number, cleaned, step=step):
                     clear_turn(session_id, turn_number)
 
                 # Emit the session title before [DONE] so the sidebar refreshes
