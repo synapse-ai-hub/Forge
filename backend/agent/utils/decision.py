@@ -78,14 +78,15 @@ async def should_close_step(session_id: str, turn_number: int,
             "pending": pending,
             "proposed_final": final_text,
         }
+        try:
+            instructions = agent.prompt("decision_close")
+        except Exception as exc:
+            log_error(str(exc), source="decision.py:should_close_step(prompt)")
+            return True
         questions: dict[str, Any] = {
             "close": {
                 "type": "noul",
-                "instructions": (
-                    "The step may close only if the proposed final answer "
-                    "fully resolves the user request and no pending item "
-                    "remains unsettled."
-                ),
+                "instructions": instructions,
             }
         }
         response = await agent.decision(state, questions)
