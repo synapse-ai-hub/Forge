@@ -1,0 +1,42 @@
+[
+  {
+    "proveedor": "openrouter",
+    "modelo": "inception/mercury-decide:free",
+    "tokens_entrada": 3372,
+    "tokens_salida": 1,
+    "tiempo": 1.14,
+    "decision": "search_memory",
+    "confianza": 0.9746326605977097,
+    "gasto_usd": 0.0
+  },
+  {
+    "proveedor": "google",
+    "modelo": "gemini-3.5-flash-lite",
+    "tokens_entrada": 3155,
+    "tokens_salida": 3,
+    "tiempo": 1.59,
+    "decision": "search_memory",
+    "confianza": null,
+    "gasto_usd": 0.000954
+  },
+  {
+    "proveedor": "groq",
+    "modelo": "openai/gpt-oss-20b",
+    "tokens_entrada": 3075,
+    "tokens_salida": 409,
+    "tiempo": 1.18,
+    "decision": "search_memory",
+    "confianza": null,
+    "gasto_usd": 0.00035332500000000004
+  },
+  {
+    "proveedor": "openrouter",
+    "modelo": "inclusionai/ling-3.1-flash",
+    "tokens_entrada": 0,
+    "tokens_salida": 0,
+    "tiempo": 2.13,
+    "decision": "Error code: 429 - {'error': {'message': 'Provider returned error', 'code': 429, 'metadata': {'raw': 'inclusionai/ling-3.1-flash is temporarily rate-limited upstream. Please retry shortly, or add your own key to accumulate your rate limits: https://openrouter.ai/settings/integrations', 'provider_name': 'Novita', 'is_byok': False, 'limit_source': 'upstream_provider_shared_pool', 'remedy_hint': 'Retry shortly, add your own provider key (https://openrouter.ai/settings/integrations), or route to another provider with provider routing: https://openrouter.ai/docs/features/provider-routing'}}, 'user_id': 'user_3IHIEaL9108If8k2gSzCi1zx2e3'}",
+    "confianza": null,
+    "gasto_usd": 0.0
+  }
+]

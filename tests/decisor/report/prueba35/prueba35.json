@@ -1,0 +1,52 @@
+[
+  {
+    "proveedor": "openrouter",
+    "modelo": "inception/mercury-decide:free",
+    "tokens_entrada": 1982,
+    "tokens_salida": 1,
+    "tiempo": 1.53,
+    "decision": "flags",
+    "confianza": 0.9949064957269546,
+    "gasto_usd": 0.0
+  },
+  {
+    "proveedor": "google",
+    "modelo": "gemini-3.5-flash-lite",
+    "tokens_entrada": 1922,
+    "tokens_salida": 1,
+    "tiempo": 1.59,
+    "decision": "flags",
+    "confianza": null,
+    "gasto_usd": 0.0005791
+  },
+  {
+    "proveedor": "groq",
+    "modelo": "openai/gpt-oss-20b",
+    "tokens_entrada": 1922,
+    "tokens_salida": 157,
+    "tiempo": 1.12,
+    "decision": "flags",
+    "confianza": null,
+    "gasto_usd": 0.00019125000000000001
+  },
+  {
+    "proveedor": "openrouter",
+    "modelo": "inclusionai/ling-3.1-flash",
+    "tokens_entrada": 2277,
+    "tokens_salida": 624,
+    "tiempo": 9.7,
+    "decision": "flags",
+    "confianza": null,
+    "gasto_usd": 0.0
+  },
+  {
+    "proveedor": "groq",
+    "modelo": "qwen/qwen3.8-27b",
+    "tokens_entrada": 0,
+    "tokens_salida": 0,
+    "tiempo": 0.12,
+    "decision": "\"Error code: 429 - {'error': {'message': \\\"Request too large for model `qwen/qwen3.8-27b` in organization `org_01knygg3ate5a9mqy8my4acsb5` service tier `on_demand` on output tokens per minute (OTPM): Limit 1000, Requested 1176. The request's expected output tokens exceed the enforced limit; reduce max_tokens (or the request's expected output) and try again. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\\\", 'type': 'tokens', 'code': 'rate_limit_exceeded'}}\"",
+    "confianza": null,
+    "gasto_usd": 0.0
+  }
+]

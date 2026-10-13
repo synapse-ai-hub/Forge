@@ -1,0 +1,52 @@
+[
+  {
+    "proveedor": "openrouter",
+    "modelo": "inception/mercury-decide:free",
+    "tokens_entrada": 1688,
+    "tokens_salida": 1,
+    "tiempo": 0.73,
+    "decision": 1.75,
+    "confianza": 0.7452561398568558,
+    "gasto_usd": 0.0
+  },
+  {
+    "proveedor": "google",
+    "modelo": "gemini-3.5-flash-lite",
+    "tokens_entrada": 1656,
+    "tokens_salida": 3,
+    "tiempo": 7.22,
+    "decision": 1.6,
+    "confianza": null,
+    "gasto_usd": 0.0005043
+  },
+  {
+    "proveedor": "groq",
+    "modelo": "openai/gpt-oss-20b",
+    "tokens_entrada": 1665,
+    "tokens_salida": 182,
+    "tiempo": 0.72,
+    "decision": 2.0,
+    "confianza": null,
+    "gasto_usd": 0.000179475
+  },
+  {
+    "proveedor": "openrouter",
+    "modelo": "inclusionai/ling-3.1-flash",
+    "tokens_entrada": 1979,
+    "tokens_salida": 1191,
+    "tiempo": 18.02,
+    "decision": 2.4,
+    "confianza": null,
+    "gasto_usd": 0.0
+  },
+  {
+    "proveedor": "groq",
+    "modelo": "qwen/qwen3.8-27b",
+    "tokens_entrada": 1709,
+    "tokens_salida": 2,
+    "tiempo": 0.43,
+    "decision": 2.0,
+    "confianza": null,
+    "gasto_usd": 0.0013752
+  }
+]

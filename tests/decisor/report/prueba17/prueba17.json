@@ -1,0 +1,52 @@
+[
+  {
+    "proveedor": "openrouter",
+    "modelo": "inception/mercury-decide:free",
+    "tokens_entrada": 1600,
+    "tokens_salida": 1,
+    "tiempo": 1.43,
+    "decision": 0.99,
+    "confianza": null,
+    "gasto_usd": 0.0
+  },
+  {
+    "proveedor": "google",
+    "modelo": "gemini-3.5-flash-lite",
+    "tokens_entrada": 1586,
+    "tokens_salida": 4,
+    "tiempo": 0.82,
+    "decision": "Rechazado",
+    "confianza": null,
+    "gasto_usd": 0.0004858
+  },
+  {
+    "proveedor": "groq",
+    "modelo": "openai/gpt-oss-20b",
+    "tokens_entrada": 1571,
+    "tokens_salida": 413,
+    "tiempo": 1.11,
+    "decision": "No.",
+    "confianza": null,
+    "gasto_usd": 0.00024172499999999998
+  },
+  {
+    "proveedor": "openrouter",
+    "modelo": "inclusionai/ling-3.1-flash",
+    "tokens_entrada": 1887,
+    "tokens_salida": 1404,
+    "tiempo": 20.29,
+    "decision": "No, se rechaza. Falla el punto 1: el fallback de stale de 5 minutos sirve datos vencidos por más de 60 segundos (riesgo reconocido en el documento si la base está caída), y el punto 2 queda sin garantía porque el fallo del coordinador de singleflight no está contemplado, lo que reeditaría el thundering herd de 9000 conexiones.",
+    "confianza": null,
+    "gasto_usd": 0.0
+  },
+  {
+    "proveedor": "groq",
+    "modelo": "qwen/qwen3.8-27b",
+    "tokens_entrada": 1623,
+    "tokens_salida": 5,
+    "tiempo": 0.46,
+    "decision": "No se aprueba",
+    "confianza": null,
+    "gasto_usd": 0.0013184000000000002
+  }
+]

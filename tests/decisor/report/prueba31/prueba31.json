@@ -1,0 +1,52 @@
+[
+  {
+    "proveedor": "openrouter",
+    "modelo": "inception/mercury-decide:free",
+    "tokens_entrada": 1648,
+    "tokens_salida": 1,
+    "tiempo": 0.91,
+    "decision": "hot",
+    "confianza": 0.7026469123730529,
+    "gasto_usd": 0.0
+  },
+  {
+    "proveedor": "google",
+    "modelo": "gemini-3.5-flash-lite",
+    "tokens_entrada": 1624,
+    "tokens_salida": 1,
+    "tiempo": 3.28,
+    "decision": "hot",
+    "confianza": null,
+    "gasto_usd": 0.0004896999999999999
+  },
+  {
+    "proveedor": "groq",
+    "modelo": "openai/gpt-oss-20b",
+    "tokens_entrada": 1634,
+    "tokens_salida": 284,
+    "tiempo": 0.93,
+    "decision": "warm",
+    "confianza": null,
+    "gasto_usd": 0.00020774999999999998
+  },
+  {
+    "proveedor": "openrouter",
+    "modelo": "inclusionai/ling-3.1-flash",
+    "tokens_entrada": 0,
+    "tokens_salida": 0,
+    "tiempo": 2.49,
+    "decision": "\"Error code: 429 - {'error': {'message': 'Provider returned error', 'code': 429, 'metadata': {'raw': 'inclusionai/ling-3.1-flash is temporarily rate-limited upstream. Please retry shortly, or add your own key to accumulate your rate limits: https://openrouter.ai/settings/integrations', 'provider_name': 'Novita', 'is_byok': False, 'limit_source': 'upstream_provider_shared_pool', 'remedy_hint': 'Retry shortly, add your own provider key (https://openrouter.ai/settings/integrations), or route to another provider with provider routing: https://openrouter.ai/docs/features/provider-routing'}}, 'user_id': 'user_3IHIEaL9108If8k2gSzCi1zx2e3'}\"",
+    "confianza": null,
+    "gasto_usd": 0.0
+  },
+  {
+    "proveedor": "groq",
+    "modelo": "qwen/qwen3.8-27b",
+    "tokens_entrada": 0,
+    "tokens_salida": 0,
+    "tiempo": 0.13,
+    "decision": "\"Error code: 429 - {'error': {'message': \\\"Request too large for model `qwen/qwen3.8-27b` in organization `org_01knygg3ate5a9mqy8my4acsb5` service tier `on_demand` on output tokens per minute (OTPM): Limit 1000, Requested 1167. The request's expected output tokens exceed the enforced limit; reduce max_tokens (or the request's expected output) and try again. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\\\", 'type': 'tokens', 'code': 'rate_limit_exceeded'}}\"",
+    "confianza": null,
+    "gasto_usd": 0.0
+  }
+]
