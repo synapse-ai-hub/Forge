@@ -38,7 +38,7 @@ python -m tests.checkpoints.runner --only cut-flow
 python -m tests.checkpoints.runner --only clean-close
 
 # Apuntar a otro backend (la DB se lee de --db-path)
-python -m tests.checkpoints.runner --base-url http://192.168.1.100:8000 --db-path D:\otro\agent.db
+python -m tests.checkpoints.runner --base-url http://192.168.1.100:8000 --db-path ./otro/agent.db
 ```
 
 ---
