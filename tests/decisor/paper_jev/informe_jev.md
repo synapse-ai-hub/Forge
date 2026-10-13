@@ -1,4 +1,4 @@
-# ¿JEV o no JEV? Esa es la cuestión
+# JEV o no JEV: Esa es la cuestión
 
 **Benchmark del modelo de decisión frente a LLM de propósito general en tres modalidades: `noul`, `choice` y `score`.**
 
