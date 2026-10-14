@@ -107,10 +107,92 @@ async def should_close_step(session_id: str, turn_number: int,
         return True
 
 
+async def should_keep_pending(session_id: str, new_message: str) -> bool:
+    """Decide whether the new user message continues the pending work.
+
+    Continuity gate, called at turn start before the resume block is
+    injected. Without a decision model enabled/selected the pending work
+    is always kept (current behavior, zero extra cost). Otherwise the
+    pending rows and the new message are sent as the decision state with
+    a single ``noul`` question loaded from ``prompts/decision_continue.md``.
+
+    Only a confident ``no`` discards: the verdict is the probability of
+    "continues", so values below ``1 - DECISION_CLOSE_THRESHOLD`` mean a
+    confident topic change. Anything else (including any failure) keeps
+    the pending rows.
+
+    Args:
+        session_id: Session starting a new turn.
+        new_message: New user message text.
+
+    Returns:
+        True when the pending frontier must be kept. Never raises.
+    """
+    try:
+        from backend.instances import agent
+
+        if agent is None or not agent.decision_enabled:
+            return True
+        pending = [
+            {
+                "tool_name": item["tool_name"],
+                "tool_args": item["tool_args"],
+                "state": item["state"],
+                "child_id": item.get("child_id"),
+                "turn_number": item["turn_number"],
+            }
+            for item in frontier_helpers.load_open_frontier(session_id)
+        ]
+        if not pending:
+            return True
+        try:
+            instructions = agent.prompt("decision_continue")
+        except Exception as exc:
+            log_error(str(exc), source="decision.py:should_keep_pending(prompt)")
+            return True
+        state: dict[str, Any] = {
+            "pending": pending,
+            "new_request": new_message,
+        }
+        questions: dict[str, Any] = {
+            "continue": {
+                "type": "noul",
+                "instructions": instructions,
+            }
+        }
+        response = await agent.decision(state, questions)
+        data = (response or {}).get("data") or {}
+        if not data.get("available"):
+            return True
+        answers = data.get("answers") or {}
+        verdict = (answers.get("continue") or {}).get("noul")
+        if not isinstance(verdict, (int, float)) or isinstance(verdict, bool):
+            return True
+        keep = float(verdict) > (1.0 - DECISION_CLOSE_THRESHOLD)
+        try:
+            with db_transaction() as conn:
+                cur = conn.execute(
+                    load_query("messages/get_max_turn_or_zero.sql"),
+                    (session_id,),
+                )
+                row = cur.fetchone()
+                turn_number = int(row["max_turn"]) if row and row["max_turn"] is not None else 0
+        except Exception:
+            turn_number = 0
+        _save_decisor_row(session_id, turn_number, None, data,
+                          (response or {}).get("usage"),
+                          float(verdict), keep, question="continue")
+        return keep
+    except Exception as exc:
+        log_error(str(exc), source="decision.py:should_keep_pending")
+        return True
+
+
 def _save_decisor_row(session_id: str, turn_number: int,
                       step: int | None, data: dict[str, Any],
                       usage: dict[str, Any] | None,
-                      verdict: float, closed: bool) -> None:
+                      verdict: float, closed: bool,
+                      question: str = "close") -> None:
     """Persist the decision verdict as a ``"decisor"`` message.
 
     Same session, turn and step as the surrounding flow, so the row stays
@@ -124,6 +206,7 @@ def _save_decisor_row(session_id: str, turn_number: int,
         usage: Token / time report from the decision call.
         verdict: ``noul`` probability returned by the model.
         closed: Whether the step was closed.
+        question: Question name (``"close"`` or ``"continue"``).
     """
     try:
         from backend.instances import session_manager
@@ -134,7 +217,7 @@ def _save_decisor_row(session_id: str, turn_number: int,
             session_id=session_id,
             role="decisor",
             content=json.dumps({
-                "question": "close",
+                "question": question,
                 "type": "noul",
                 "verdict": verdict,
                 "threshold": DECISION_CLOSE_THRESHOLD,

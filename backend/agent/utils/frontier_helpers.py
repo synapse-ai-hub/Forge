@@ -317,3 +317,23 @@ def clear_turn(session_id: str, turn_number: int) -> None:
             )
     except Exception as exc:
         log_error(str(exc), source="frontier_helpers.py:clear_turn")
+
+
+def clear_session(session_id: str) -> None:
+    """Delete every frontier row of a session when the user moves on.
+
+    Used by the continuity gate: when the new user message is unrelated
+    to the pending work, the whole session frontier is discarded instead
+    of being re-injected forever.
+
+    Args:
+        session_id: Session owning the rows.
+    """
+    try:
+        with db_transaction() as conn:
+            conn.execute(
+                load_query("step_frontier/delete_session.sql"),
+                (session_id,),
+            )
+    except Exception as exc:
+        log_error(str(exc), source="frontier_helpers.py:clear_session")

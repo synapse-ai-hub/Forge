@@ -84,9 +84,10 @@ from backend.agent.utils.model_resolver import (
     get_vram_gb,
     ollama_default_context,
 )
-from backend.agent.utils.decision import should_close_step
+from backend.agent.utils.decision import should_close_step, should_keep_pending
 from backend.agent.utils.frontier_helpers import (
     build_resume_message,
+    clear_session,
     clear_turn,
     collect_garbage,
     extract_task_child_id,
@@ -672,11 +673,30 @@ class AgentLoop:
                 collect_garbage(float(os.getenv("FRONTIER_TTL_HOURS", "24") or 24))
             except Exception as exc:
                 log_error(str(exc), source="loop.py:run(frontier_gc)")
+            # Continuity gate (Option A): when the new message is unrelated
+            # to the pending frontier, discard it instead of re-injecting
+            # it forever. Only runs with a decision model enabled; without
+            # one should_keep_pending returns True (current behavior).
+            # Emits a "decision" SSE event so the frontend can render it
+            # as a card (ignored by older frontends).
             try:
-                resume_text = build_resume_message(session_id)
+                keep_pending = await should_keep_pending(session_id, effective_message)
             except Exception as exc:
-                log_error(str(exc), source="loop.py:run(resume)")
+                log_error(str(exc), source="loop.py:run(continuity)")
+                keep_pending = True
+            if not keep_pending:
+                try:
+                    clear_session(session_id)
+                except Exception as exc:
+                    log_error(str(exc), source="loop.py:run(continuity_clear)")
+                yield f"data: {json.dumps({'type': 'decision', 'content': {'action': 'discarded', 'reason': 'unrelated'}}, ensure_ascii=False)}\n\n"
                 resume_text = None
+            else:
+                try:
+                    resume_text = build_resume_message(session_id)
+                except Exception as exc:
+                    log_error(str(exc), source="loop.py:run(resume)")
+                    resume_text = None
             if resume_text:
                 messages.append({"role": "system", "content": resume_text})
 

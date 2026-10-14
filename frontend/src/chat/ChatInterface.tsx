@@ -155,6 +155,8 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
   const [input, setInput] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [fileWarning, setFileWarning] = useState<string | null>(null);
+  /* Decision gate notice (continuity discard): amber banner above the textarea. */
+  const [decisionNotice, setDecisionNotice] = useState<string | null>(null);
   const [contextPercent, setContextPercent] = useState(0);
   const [contextWindow, setContextWindow] = useState<number | null>(null);
   const [tokensUsed, setTokensUsed] = useState<number | null>(null);
@@ -523,6 +525,7 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
     setMessages((prev) => [...prev, assistantMessage]);
     // Forzar auto-scroll al enviar mensaje (como ProspectingAgent)
     setAutoScrollEnabled(true);
+    setDecisionNotice(null);
     setIsStreaming(true);
 
     let accumulatedContent = "";
@@ -756,6 +759,19 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
               onSessionTitleUpdate?.(activeSessionId, event.content);
             }
             break;
+
+          case "decision": {
+            const action =
+              typeof event.content === "object" && event.content !== null
+                ? (event.content as any).action
+                : null;
+            if (action === "discarded") {
+              setDecisionNotice(
+                "Trabajo anterior descartado: tu mensaje pedía otra cosa."
+              );
+            }
+            break;
+          }
 
           case "chunk":
             accumulatedContent += event.content;
@@ -1196,6 +1212,21 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
               <span className="text-sm text-amber-800">
                 Configur&aacute; un proveedor y un modelo para empezar.
               </span>
+            </div>
+          )}
+
+          {/* Decision notice: continuity gate discarded pending work */}
+          {decisionNotice && (
+            <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 flex items-center justify-between gap-3">
+              <span className="text-sm text-amber-800">{decisionNotice}</span>
+              <button
+                type="button"
+                onClick={() => setDecisionNotice(null)}
+                aria-label="Descartar aviso"
+                className="shrink-0 text-amber-800 hover:text-amber-900 transition-colors"
+              >
+                ✕
+              </button>
             </div>
           )}
 
