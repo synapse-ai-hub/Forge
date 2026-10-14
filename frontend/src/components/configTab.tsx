@@ -430,6 +430,10 @@ export function ConfigTab({ verboseMode, onVerboseModeChange }: ConfigTabProps) 
   };
 
   /* ---- decision model handlers (independent from chat models) ---- */
+  /* Like chat models: only providers with a stored key are selectable. */
+  const configuredDecisionProviders = decisionProviders.filter((p) =>
+    providerKeys.some((k) => k.provider === p.provider && k.configured),
+  );
 
   const decisionModelsFor = (provider: string): string[] =>
     decisionProviders.find((p) => p.provider === provider)?.models || [];
@@ -845,10 +849,10 @@ export function ConfigTab({ verboseMode, onVerboseModeChange }: ConfigTabProps) 
             {pendingDecisionProvider === "" && (
               <option value="">Seleccion&aacute; un proveedor</option>
             )}
-            {decisionProviders.length === 0 ? (
+            {configuredDecisionProviders.length === 0 ? (
               <option value="">No hay proveedores disponibles</option>
             ) : (
-              decisionProviders.map((p) => (
+              configuredDecisionProviders.map((p) => (
                 <option key={p.provider} value={p.provider}>
                   {p.label}
                 </option>

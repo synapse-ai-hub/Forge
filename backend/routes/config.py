@@ -1074,6 +1074,15 @@ async def select_decision_model(data: dict[str, Any]) -> JSONResponse:
             },
         )
 
+    if provider_keys.get_decision_key(provider) is None:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "status": "error",
+                "message": f"Guardá primero la API key de '{provider}' abajo.",
+            },
+        )
+
     if agent is None:
         return JSONResponse(
             status_code=503,
