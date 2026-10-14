@@ -227,11 +227,13 @@ def list_decision_providers() -> list[dict[str, Any]]:
     try:
         from backend.agent.utils import decision_catalog
 
+        # Seed first (fallback rows), then sync (authority). The seed
+        # never overwrites existing rows, so synced data always wins.
+        decision_catalog.ensure_seeded()
         try:
             decision_catalog.sync_catalog()
         except Exception:
             pass
-        decision_catalog.ensure_seeded()
         providers = decision_catalog.list_providers()
         out: list[dict[str, Any]] = []
         for pid in providers:
