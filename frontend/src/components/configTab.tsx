@@ -104,6 +104,14 @@ export function ConfigTab({ verboseMode, onVerboseModeChange }: ConfigTabProps) 
   const [savingKeyProvider, setSavingKeyProvider] = useState<string | null>(null);
   const [keysError, setKeysError] = useState<string | null>(null);
 
+  /* All key providers in one dropdown: chat + decision-only (same table). */
+  const keyOptions: Array<{ provider: string; label: string }> = [
+    ...KEY_PROVIDER_OPTIONS,
+    ...decisionProviders
+      .filter((p) => !KEY_PROVIDER_OPTIONS.some((o) => o.provider === p.provider))
+      .map((p) => ({ provider: p.provider, label: `${p.label} (decisión)` })),
+  ];
+
   const loadProviderKeys = useCallback(async () => {
     try {
       const resp = await configService.getProviderKeys();
@@ -113,15 +121,17 @@ export function ConfigTab({ verboseMode, onVerboseModeChange }: ConfigTabProps) 
       setKeyProvider((prev) => {
         if (prev) return prev;
         const configured = new Set(keys.filter((k) => k.configured).map((k) => k.provider));
+        const options =
+          keyOptions.length > 0 ? keyOptions : KEY_PROVIDER_OPTIONS;
         return (
-          KEY_PROVIDER_OPTIONS.find((o) => !configured.has(o.provider))?.provider ||
-          KEY_PROVIDER_OPTIONS[0].provider
+          options.find((o) => !configured.has(o.provider))?.provider ||
+          options[0].provider
         );
       });
     } catch (err) {
       console.error("Error cargando API keys:", err);
     }
-  }, []);
+  }, [decisionProviders]);
 
   useEffect(() => {
     loadProviderKeys();
@@ -914,7 +924,7 @@ export function ConfigTab({ verboseMode, onVerboseModeChange }: ConfigTabProps) 
               }}
               className="flex-1 rounded-lg border border-app-border bg-white px-2 py-1.5 text-xs text-app-text focus:outline-none focus:ring-2 focus:ring-app-primary-light"
             >
-              {KEY_PROVIDER_OPTIONS.map((o) => (
+              {keyOptions.map((o) => (
                 <option key={o.provider} value={o.provider}>
                   {o.label}{isKeyConfigured(o.provider) ? " ✓" : ""}
                 </option>

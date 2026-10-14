@@ -377,6 +377,25 @@ async def list_provider_keys() -> JSONResponse:
 
     try:
         keys = provider_keys.list_configured()
+        # Include decision-only providers (same dropdown, same table).
+        try:
+            from backend.agent.utils import decision_catalog
+
+            try:
+                decision_catalog.sync_catalog()
+            except Exception:
+                pass
+            decision_catalog.ensure_seeded()
+            seen = {k.get("provider") for k in keys}
+            for pid in decision_catalog.list_providers():
+                if pid in seen:
+                    continue
+                keys.append({
+                    "provider": pid,
+                    "configured": provider_keys.get_decision_key(pid) is not None,
+                })
+        except Exception as exc:
+            log_error(str(exc), source="backend/routes/config.py:list_provider_keys(decision)")
         return JSONResponse(
             status_code=200,
             content={"status": "success", "keys": keys},
@@ -393,22 +412,33 @@ async def list_provider_keys() -> JSONResponse:
 async def save_provider_key(provider: str, data: dict[str, Any]) -> JSONResponse:
     """Validate, store (encrypted) and activate the API key for a provider.
 
-    Body: ``{"api_key": "..."}``. The key is first validated against the
-    provider's live API; if invalid it is rejected (400) and nothing is
-    stored. On success the key is encrypted with Fernet, persisted in the
-    ``provider_api_keys`` table, the provider client is rebuilt and the
-    providers cache is refreshed so the new provider becomes selectable
-    immediately.
+    Body: ``{"api_key": "..."}``. Chat providers are validated against
+    the live API first; decision-only providers (any catalog provider
+    outside the chat registry) are stored directly — their gateways
+    expose only System One, with nothing to validate against. Same
+    table, same endpoint: a decision provider is just another provider.
     """
     from backend.agent.utils import provider_keys
 
     api_key = (data or {}).get("api_key", "")
-    validation = await asyncio.to_thread(provider_keys.validate_key, provider, api_key)
-    if validation.get("status") != "success":
-        return JSONResponse(status_code=400, content=validation)
-    result = await asyncio.to_thread(provider_keys.save_key, provider, api_key)
-    if result.get("status") != "success":
-        return JSONResponse(status_code=400, content=result)
+    pid = (provider or "").strip().lower()
+    if pid in provider_keys.PROVIDER_REGISTRY:
+        validation = await asyncio.to_thread(provider_keys.validate_key, provider, api_key)
+        if validation.get("status") != "success":
+            return JSONResponse(status_code=400, content=validation)
+        result = await asyncio.to_thread(provider_keys.save_key, provider, api_key)
+        if result.get("status") != "success":
+            return JSONResponse(status_code=400, content=result)
+    elif provider_keys.is_decision_supported(pid):
+        result = await asyncio.to_thread(provider_keys.save_decision_key, provider, api_key)
+        if result.get("status") != "success":
+            return JSONResponse(status_code=400, content=result)
+        return JSONResponse(status_code=200, content=result)
+    else:
+        return JSONResponse(
+            status_code=400,
+            content={"status": "error", "message": f"Provider inválido: '{provider}'."},
+        )
     # Refresh the providers cache FIRST so the new provider becomes
     # selectable immediately even if the client rebuild below fails.
     await asyncio.to_thread(refresh_providers_cache)
@@ -431,8 +461,47 @@ async def delete_provider_key(provider: str) -> JSONResponse:
 
     After deletion the client becomes unavailable and the providers cache
     is refreshed so the provider disappears from the selectable list.
+    Decision-only providers are deleted from the same table.
     """
     from backend.agent.utils import provider_keys
+
+    pid = (provider or "").strip().lower()
+    if pid not in provider_keys.PROVIDER_REGISTRY:
+        if provider_keys.is_decision_supported(pid):
+            try:
+                from backend.agent.utils.db import get_connection
+
+                conn = get_connection()
+                if conn is None:
+                    return JSONResponse(
+                        status_code=500,
+                        content={"status": "error", "message": "No se pudo abrir la base de datos."},
+                    )
+                try:
+                    with conn:
+                        cursor = conn.execute(
+                            "DELETE FROM provider_api_keys WHERE provider = ?",
+                            (pid,),
+                        )
+                        deleted = cursor.rowcount > 0
+                finally:
+                    conn.close()
+                message = (
+                    f"API key de {pid} eliminada."
+                    if deleted
+                    else f"No había API key guardada para {pid}."
+                )
+                return JSONResponse(status_code=200, content={"status": "success", "message": message})
+            except Exception as exc:
+                log_error(str(exc), source="backend/routes/config.py:delete_provider_key(decision)")
+                return JSONResponse(
+                    status_code=500,
+                    content={"status": "error", "message": f"Error eliminando la API key: {exc}"},
+                )
+        return JSONResponse(
+            status_code=400,
+            content={"status": "error", "message": f"Provider inválido: '{provider}'."},
+        )
 
     result = await asyncio.to_thread(provider_keys.delete_key, provider)
     if result.get("status") != "success":
