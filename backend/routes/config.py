@@ -1170,6 +1170,70 @@ async def set_decision_enabled(data: dict[str, Any]) -> JSONResponse:
     )
 
 
+@router.get("/models/decision/capabilities")
+async def get_decision_capabilities(model: str, provider: str) -> JSONResponse:
+    """Return catalog info for a specific decision model/provider.
+
+    Same row layout as the chat "Info del modelo" (modalities, context,
+    limits, costs), read from the ``decision_catalog`` table synced from
+    ``models.dev?type=decision``.
+
+    Query params:
+        model: Decision model ID
+        provider: Decision provider id
+    """
+    if not model or not provider:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "status": "error",
+                "message": "model and provider query params are required.",
+            },
+        )
+    try:
+        from backend.agent.utils import decision_catalog
+
+        row = await asyncio.to_thread(
+            decision_catalog.get_model, provider.strip(), model
+        )
+        if row is None:
+            return JSONResponse(
+                status_code=200,
+                content={"status": "success", "found": False},
+            )
+        import json as _json
+
+        def _parse_list(raw: object) -> list[str] | None:
+            if not raw:
+                return None
+            try:
+                val = _json.loads(raw) if isinstance(raw, str) else raw
+                return list(val) if isinstance(val, list) else None
+            except (ValueError, TypeError):
+                return None
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "success",
+                "found": True,
+                "context_window": row.get("context_window"),
+                "input_limit": row.get("input_limit"),
+                "output_limit": row.get("output_limit"),
+                "input_modalities": _parse_list(row.get("modalities_input")),
+                "output_modalities": _parse_list(row.get("modalities_output")),
+                "cost_input": row.get("cost_input"),
+                "cost_output": row.get("cost_output"),
+            },
+        )
+    except Exception as exc:
+        log_error(str(exc), source="backend/routes/config.py:get_decision_capabilities")
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": f"Error obteniendo capacidades: {exc}"},
+        )
+
+
 @router.get("/models/capabilities")
 async def get_model_capabilities(model: str, provider: str) -> JSONResponse:
     """Return reasoning capabilities for a specific model/provider.

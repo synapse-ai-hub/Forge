@@ -295,6 +295,8 @@ export const configService = {
     }
   },
 
+
+
   /** Whether the initial provider-setup screen was already completed/skipped. */
   async getSetupCompleted(): Promise<SetupCompletedResponse> {
     const response = await fetch(`${API_BASE_URL}/api/config/setup-completed`, {
@@ -542,6 +544,28 @@ export const configService = {
     if (result && result.status === "error") {
       throw new Error(result.message || "Error al seleccionar el modelo de decisión");
     }
+  },
+
+  /** Get catalog info for a decision model (same layout as chat model info). */
+  async getDecisionCapabilities(model: string, provider: string): Promise<{
+    status: string;
+    found?: boolean;
+    context_window: number | null;
+    input_limit: number | null;
+    output_limit: number | null;
+    input_modalities: string[] | null;
+    output_modalities: string[] | null;
+    cost_input: number | null;
+    cost_output: number | null;
+  }> {
+    const response = await fetch(
+      `${API_BASE_URL}/api/config/models/decision/capabilities?model=${encodeURIComponent(model)}&provider=${encodeURIComponent(provider)}`,
+      { method: "GET" }
+    );
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    return response.json();
   },
 
   /** Enable or disable the decision section. */
