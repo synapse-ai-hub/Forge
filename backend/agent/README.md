@@ -32,6 +32,9 @@ El módulo **Agent** es el núcleo del asistente conversacional. Implementa un b
 - **Soporte multi-proveedor**: Funciona con proveedores cloud curados (OpenAI-compatibles y Google Gemini) y Ollama (local) sin cambiar la lógica del loop.
 - **Permisos y prompts**: Resolución dinámica de herramientas y skills desde archivos markdown de agente.
 - **Configuración MCP**: `mcp.json` en `~/.config/synapseForge/` para servidores MCP (Model Context Protocol).
+- **Checkpoints de flujo**: Cada tool call despachada se registra en `step_frontier`; si el flujo se corta, el trabajo sin confirmar se retoma en el turno siguiente.
+- **Modelo de decisión opcional**: Un modelo de decisión (System One) valida el cierre de cada paso y la continuidad del trabajo pendiente. Deshabilitado, el flujo no hace ninguna llamada extra.
+- **Workflows deterministas**: Flujos en YAML ejecutados por un runner con pasos secuenciales, nodos paralelos, reintentos y permisos mínimos.
 
 ---
 
@@ -116,6 +119,10 @@ Contiene módulos de soporte genéricos para el funcionamiento del agente:
 - `clean_memory.py` — Liberación de modelos de GPU/CPU.
 - `model_resolver.py` — Resolución y validación del modelo activo.
 - `model_catalog.py` — Catálogo de modelos sincronizado desde models.dev.
+- `decision_catalog.py` — Catálogo de modelos de decisión sincronizado desde models.dev (`type=decision`).
+- `decision.py` — Gates de cierre de paso y de continuidad del trabajo pendiente.
+- `frontier_helpers.py` — Registro, resolución y reanudación de la frontera de tool calls.
+- `workflow_loader.py`, `workflow_validator.py`, `workflow_runner.py`, `workflows_helpers.py` — Carga, validación, ejecución y helpers de workflows.
 - `provider_keys.py` — Gestión de API keys (cifrado Fernet en SQLite).
 - `skill_loader.py` — Carga y formateo de skills para el system prompt.
 - `skills_helpers.py` — Helpers de evaluación y creación de skills.
@@ -142,16 +149,57 @@ Almacena los prompts del agente en formato markdown:
 - `create_skill.md`, `create_tool.md`, `create_agent.md` — Prompts de creación vía LLM.
 - `iterate_skill.md`, `iterate_tool.md`, `iterate_agent.md` — Prompts de iteración.
 - `evaluate_skills.md`, `explain_skill.md` — Prompts auxiliares.
+- `interview_workflow.md`, `create_workflow.md`, `iterate_workflow.md`, `generate_workflow.md` — Prompts de entrevista, creación, iteración y generación de workflows.
+- `decision_close.md`, `decision_continue.md` — Instrucciones de las preguntas del modelo de decisión (cierre de paso y continuidad).
 
 ### 10. `agent_db/` — Base de datos SQLite
 
 Directorio que contiene el archivo `agent.db` con las tablas:
 - `sessions` — Metadatos de cada conversación.
-- `messages` — Historial de mensajes con tool calls y resultados.
-- `config_kv` — Configuración persistente (modelo, proveedor, turnos de contexto).
+- `messages` — Historial de mensajes con tool calls y resultados. El rol `decisor` guarda el veredicto del modelo de decisión y nunca se envía al LLM.
+- `config_kv` — Configuración persistente (modelo, proveedor, turnos de contexto, modelo de decisión, workflow activo).
 - `error_log` — Registro de excepciones del backend (session_id, turn_number, exception, source, created_at).
+- `step_frontier` — Tool calls despachadas del paso en curso (`open` / `done`).
+- `decision_catalog` — Modelos de decisión disponibles por proveedor, con límites, modalidades y tarifas.
 
 El esquema se crea de forma idempotente en `ddl_setup.py` (`CREATE TABLE IF NOT EXISTS`).
+
+### 11. Checkpoints — `utils/frontier_helpers.py`
+
+Cada tool call despachada se registra como fila `open` en `step_frontier` antes de ejecutarse y pasa a `done` cuando su resultado se confirma. Las filas solo se borran cuando el paso cierra con una señal de fin validada; un corte (cancelación, caída) las deja para el turno siguiente.
+
+- `record_block_dispatch` / `mark_call_done` — Registran el bloque antes de ejecutarlo y confirman cada resultado, en orden.
+- `set_task_child` / `extract_task_child_id` — Enlazan la sub-sesión creada por una llamada `task` con su fila.
+- `build_resume_message` — Al iniciar un turno, arma un mensaje de sistema efímero con el pedido original y las tool calls sin confirmar (argumentos y último resultado completos).
+- `clear_turn` — Borra la frontera de un turno al cerrar el paso.
+- `clear_session` — Borra la frontera completa de la sesión cuando el mensaje nuevo no continúa el trabajo pendiente.
+- `collect_garbage` — Al iniciar cada turno borra las filas `done` más viejas que `FRONTIER_TTL_HOURS` (por defecto `24`). Las filas `open` no se recolectan.
+
+Ninguna función de este módulo levanta excepciones: el seguimiento nunca interrumpe el loop.
+
+### 12. Modelo de decisión — `utils/decision.py`
+
+Un modelo de decisión (System One, vía `typesafe-sdk`) devuelve respuestas tipadas con confianza en vez de texto. `Agent.decision(state, questions)` acepta preguntas `noul`, `choice` y `score` y devuelve un `ContractResponse` con `data = {available, answers, model, provider}`. Si la sección está deshabilitada, no hay proveedor, modelo o API key, o falta el SDK, no se hace ninguna llamada y `available` es `False`.
+
+El modelo se habilita y se elige desde la configuración, de forma independiente al modelo de chat (`config_kv`: `decision_enabled`, `decision_provider`, `decision_model`). Los modelos salen de `decision_catalog`, sincronizado desde `models.dev/api.json?type=decision` como máximo una vez cada 24 horas; mientras no haya sincronización el catálogo está vacío.
+
+Con la sección habilitada hay dos gates, ambos de tipo `noul`:
+
+| Gate | Cuándo corre | Qué decide |
+|------|--------------|------------|
+| `should_close_step` | El LLM emite una respuesta final sin tool calls | Si la frontera del turno se borra. Cierra si la confianza es `>= 0.8` (`DECISION_CLOSE_THRESHOLD`) |
+| `should_keep_pending` | Al iniciar un turno con filas `open` | Si el mensaje nuevo continúa el trabajo pendiente. Descarta solo con confianza `<= 0.2` |
+
+Ambos fallan abiertos: ante cualquier error o respuesta inválida el paso cierra y el trabajo pendiente se conserva. Cada veredicto se guarda como mensaje de rol `decisor` (`{question, type, verdict, threshold, closed | kept}`). Al descartar el pendiente, el loop emite el evento SSE `decision` con `{"action": "discarded", "reason": "unrelated"}`. Sin el modelo habilitado, `should_close_step` acepta la señal del LLM y `should_keep_pending` conserva el pendiente, sin llamadas extra. El runner de workflows usa el mismo gate de cierre.
+
+### 13. Workflows — `utils/workflow_*.py`
+
+Flujos deterministas definidos en archivos planos `~/.config/synapseForge/workflows/<nombre>.yaml`.
+
+- `workflow_validator.py` — Valida el esquema: `name`, `retries` (0–10), `on_failure` (`continue` | `abort`) y nodos de tipo `agent`, `tool`, `rag` o `run`. Cada nodo tiene `id` y `step`; el workflow tiene exactamente un nodo `final: true`. Un nodo `run` ejecuta `run` (comando de shell), con `timeout` (1000–300000 ms, 30000 por defecto) y `workdir` opcional confinado al directorio del proyecto.
+- `workflow_loader.py` — `list_workflows` y `load_workflow` con rechazo de nombres con `..` o separadores de ruta.
+- `workflow_runner.py` — `WorkflowRunner.run` ejecuta los pasos en orden; los nodos del mismo `step` corren en paralelo con barrera. Cada nodo tiene reintentos y los de tipo `agent` corren en una sesión hija con los permisos de su agente. Las tools se habilitan con permisos mínimos: solo las que el YAML referencia (`task` nunca se habilita; la delegación se hace con nodos `agent`). Registra la frontera por paso y cierra con el mismo gate de cierre que el loop.
+- `workflows_helpers.py` — Listado y evaluación de workflows para el creador y `verificar_refs`, que comprueba que existan los agentes, tools y colecciones que el workflow referencia antes de ejecutarlo.
 
 ---
 
@@ -279,6 +327,10 @@ Los siguientes parámetros se seleccionan desde el **frontend** y se guardan en 
 | `selected_model` | Modelo activo (ej. `qwen/qwen3.6-27b`, `llama3.2:3b`) | `POST /config/models/select` |
 | `selected_provider` | Proveedor activo: `LOCAL` (Ollama) o `API` (cualquier provider cloud curado) | `POST /config/models/select` |
 | `context_window_turns` | Turnos de historial a mantener (`-1` = todos) | `POST /config/context-window` |
+| `decision_enabled` | Habilita el modelo de decisión (`true` / `false`) | `POST /config/models/decision/enabled` |
+| `decision_provider` | Proveedor del modelo de decisión | `POST /config/models/decision/select` |
+| `decision_model` | Modelo de decisión | `POST /config/models/decision/select` |
+| `selected_workflow` | Workflow activo (`smart` = flujo por defecto) | `POST /config/workflows/select` |
 
 Se cargan automáticamente al inicio vía `load_persisted_config()` en `backend/routes/config.py` y se aplican al agente singleton.
 
@@ -491,6 +543,12 @@ backend/agent/
 │   ├─ iterate_skill.md      # Prompt para iterar skills
 │   ├─ iterate_tool.md       # Prompt para iterar tools
 │   ├─ iterate_agent.md      # Prompt para iterar agentes
+│   ├─ interview_workflow.md # Prompt de entrevista para workflows
+│   ├─ create_workflow.md    # Prompt para crear workflows con LLM
+│   ├─ iterate_workflow.md   # Prompt para iterar workflows
+│   ├─ generate_workflow.md  # Prompt para generar el YAML de un workflow
+│   ├─ decision_close.md     # Pregunta del modelo de decisión: cierre de paso
+│   ├─ decision_continue.md  # Pregunta del modelo de decisión: continuidad del pendiente
 │   ├─ evaluate_skills.md    # Prompt para evaluar skills existentes
 │   └─ explain_skill.md    # Prompt para explicar skills
 ├─ utils/                   # Utilidades auxiliares
@@ -501,8 +559,11 @@ backend/agent/
 │   ├─ config_dir.py        # Gestión del directorio ~/.config/synapseForge/
 │   ├─ contract.py          # Contratos de respuesta
 │   ├─ create_helpers.py    # Helpers de creación vía LLM
+│   ├─ decision.py          # Gates de cierre de paso y continuidad
+│   ├─ decision_catalog.py  # Catálogo de modelos de decisión (models.dev)
 │   ├─ email_parser.py      # Parseo de correos electrónicos
 │   ├─ error_logger.py      # Registro de errores
+│   ├─ frontier_helpers.py  # Frontera de tool calls (checkpoints)
 │   ├─ loop_helpers.py      # Helpers del loop
 │   ├─ mcp_helper.py        # Integración MCP
 │   ├─ model_catalog.py     # Catálogo de modelos (models.dev)
@@ -514,7 +575,11 @@ backend/agent/
 │   ├─ skills_helpers.py    # Helpers de skills
 │   ├─ subagent_logger.py   # Logging de sub-agentes
 │   ├─ tools_helpers.py     # Helpers de tools externas
-│   └─ vector_db.py         # Wrapper ChromaDB
+│   ├─ vector_db.py         # Wrapper ChromaDB
+│   ├─ workflow_loader.py   # Carga de workflows (<nombre>.yaml)
+│   ├─ workflow_runner.py   # Ejecución de workflows
+│   ├─ workflow_validator.py # Validación del esquema de workflows
+│   └─ workflows_helpers.py # Helpers de workflows (listado, evaluación, referencias)
 └─ README.md
 ```
 
@@ -536,7 +601,8 @@ El agente sigue un ciclo iterativo:
    d. Resultados se agregan como `role: "tool"` y continúa el loop.
    e. Si el LLM devuelve contenido sin tool_calls → se emite como `chunk` SSE y se cierra el loop.
 7. **Persistencia**: Cada mensaje se guarda en SQLite.
-8. **Eventos SSE**: `chunk`, `tool_call`, `tool_result`, `subagent_call`, `subagent_result`, `session_title`, `done`.
+8. **Checkpoints**: Antes de ejecutar cada bloque de tool calls se registran en `step_frontier`; al confirmar cada resultado la fila pasa a `done`. Al iniciar un turno, el trabajo sin confirmar de turnos anteriores se inyecta como mensaje de sistema efímero (si hay modelo de decisión habilitado, `should_keep_pending` decide antes si el mensaje nuevo lo continúa). Al cerrar el paso con respuesta final, `should_close_step` valida el cierre y `clear_turn` borra la frontera del turno.
+9. **Eventos SSE**: `chunk`, `tool_call`, `tool_result`, `subagent_call`, `subagent_result`, `session_title`, `decision`, `done`.
 
 ---
 

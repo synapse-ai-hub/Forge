@@ -28,7 +28,7 @@ Documentación de los endpoints HTTP expuestos por `backend/routes`.
 
 - **`chat`**: conversación streaming vía Server-Sent Events (SSE).
 - **`sessions`**: listado, obtención y eliminación de sesiones de chat.
-- **`config`**: gestión de proveedores, modelos, contexto, verbose mode y MCP.
+- **`config`**: gestión de proveedores, modelos de chat y de decisión, workflows, contexto, verbose mode y MCP.
 - **`context_files`**: gestión de archivos de contexto (instrucciones y documentos).
 - **`metrics`**: métricas de uso, tools, errores y modelos.
 - **`rag`**: colecciones RAG, embedding compatibility, reindex, archivos y URLs.
@@ -58,6 +58,10 @@ Streaming de un turno de conversación vía Server-Sent Events. Acepta el mensaj
 - `files` (File, opcional): uno o varios archivos adjuntos.
 
 **Respuesta:** `text/event-stream`. Eventos `data: {json}` y un evento final `data: [DONE]`.
+
+Con un modelo de decisión habilitado, al iniciar el turno el agente puede descartar el trabajo pendiente de un turno anterior cuando el mensaje nuevo no lo continúa. En ese caso emite `{"type": "decision", "content": {"action": "discarded", "reason": "unrelated"}}`.
+
+Si hay un workflow activo distinto de `smart`, antes de ejecutarlo se verifica que existan los agentes, tools y colecciones que referencia. Si falta alguno, el stream responde con un aviso y no ejecuta el workflow.
 
 ---
 
@@ -130,6 +134,44 @@ Selecciona un modelo para la sesión.
 **Body (JSON):** `{"model": "nombre_modelo", "provider": "LOCAL|API"}`.
 
 **Respuesta:** `JSONResponse` `{status, message, model}`.
+
+#### `GET /api/config/models/capabilities`
+
+Devuelve las capacidades de un modelo del catálogo (razonamiento, structured output, temperatura, tool calling).
+
+**Query params:** `model`, `provider` (**requeridos**).
+
+**Respuesta:** `JSONResponse` `{status, found, reasoning_supported?, reasoning_options?, reasoning_type?, response_format_supported?, temperature_supported?, tool_call_supported?}`.
+
+#### `GET /api/config/models/decision`
+
+Lista los proveedores de modelos de decisión (tabla `decision_catalog`, sincronizada desde `models.dev?type=decision`) y la selección actual. El modelo de decisión se elige de forma independiente al modelo de chat.
+
+**Respuesta:** `JSONResponse` `{status, providers[], provider, model, enabled}`. `provider` y `model` son `null` hasta que se selecciona uno.
+
+#### `POST /api/config/models/decision/select`
+
+Selecciona proveedor y modelo de decisión. El modelo debe existir en el catálogo del proveedor y el proveedor debe tener API key guardada. La selección se persiste en `config_kv` (`decision_provider`, `decision_model`) y solo tiene efecto si la sección está habilitada.
+
+**Body (JSON):** `{"model": "inception/mercury-decide:free", "provider": "openrouter"}`.
+
+**Respuesta:** `JSONResponse` `{status, message, model, provider}`.
+
+#### `POST /api/config/models/decision/enabled`
+
+Habilita o deshabilita el modelo de decisión (`config_kv`: `decision_enabled`). Deshabilitado, el flujo del agente no hace ninguna llamada de decisión.
+
+**Body (JSON):** `{"enabled": true}`.
+
+**Respuesta:** `JSONResponse` `{status, message, enabled}`.
+
+#### `GET /api/config/models/decision/capabilities`
+
+Devuelve la información del catálogo para un modelo de decisión.
+
+**Query params:** `model`, `provider` (**requeridos**).
+
+**Respuesta:** `JSONResponse` `{status, found, context_window?, input_limit?, output_limit?, input_modalities?, output_modalities?, cost_input?, cost_output?}`.
 
 #### `GET /api/config/parameters`
 
@@ -208,6 +250,44 @@ Lista los agentes disponibles.
 Lista los servidores MCP configurados.
 
 **Respuesta:** `JSONResponse` `{status, data: McpServer[]}`.
+
+#### `GET /api/config/workflows/selection`
+
+Devuelve el workflow activo y los disponibles. `smart` es el flujo por defecto (router LLM) y siempre está disponible; el resto son archivos `<nombre>.yaml` en `~/.config/synapseForge/workflows/`.
+
+**Respuesta:** `JSONResponse` `{status, message, data: {selected, available[]}, usage}`.
+
+#### `POST /api/config/workflows/select`
+
+Activa un workflow (persistido en `config_kv`: `selected_workflow`). Emite el evento `workflow_changed` en el event bus.
+
+**Body (JSON):** `{"workflow": "nombre"}`.
+
+**Respuesta:** `JSONResponse` `{status, message, data: {selected}, usage}`.
+
+#### `POST /api/config/workflows/validate`
+
+Valida un YAML de workflow sin escribir nada.
+
+**Body (JSON):** `{"yaml": "..."}`.
+
+**Respuesta:** `JSONResponse` con el contrato `{status, message, data, usage}`. `200` si es válido, `400` si no.
+
+#### `POST /api/config/workflows/save`
+
+Valida y guarda un workflow como `<nombre>.yaml`. El `name` del YAML debe coincidir con el nombre indicado.
+
+**Body (JSON):** `{"name": "nombre", "yaml": "..."}`.
+
+**Respuesta:** `JSONResponse` `{status, message, data: {name}, usage}`.
+
+#### `POST /api/config/workflows/generate`
+
+Genera un workflow en YAML a partir de una descripción y lo valida antes de devolverlo. No escribe en disco.
+
+**Body (JSON):** `{"description": "..."}`.
+
+**Respuesta:** `JSONResponse` `{status, message, data: {yaml, name}, usage}`.
 
 ---
 

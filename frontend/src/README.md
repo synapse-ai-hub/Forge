@@ -71,15 +71,18 @@ frontend/
 │  ├─ agent/                   # Creación de agentes
 │  │  ├─ AgentInterface.tsx    # Página de creación de agentes
 │  │  └─ agentMain.tsx         # Entry de la agent page (multi-page)
+│  ├─ workflow/                # Creación de workflows
+│  │  ├─ WorkflowInterface.tsx # Página de creación de workflows (entrevista por chat + editor YAML)
+│  │  └─ workflowMain.tsx      # Entry de la workflow page (multi-page)
 │  ├─ rag/                     # Gestión de RAG
 │  │  ├─ RagInterface.tsx      # Página de gestión de colecciones RAG
 │  │  └─ ragMain.tsx           # Entry de la rag page (multi-page)
 │  ├─ components/              # Componentes React
 │  │  ├─ Sidebar.tsx           # Barra lateral con tabs (sessions, config, agent, create)
 │  │  ├─ sessionsTab.tsx       # Lista de sesiones de chat
-│  │  ├─ configTab.tsx         # Configuración (proveedor, modelo, contexto, verbose, archivos de contexto)
-│  │  ├─ agentInfoTab.tsx      # Panel de agentes (tools, skills, agents, mcp, rag)
-│  │  ├─ createTab.tsx         # Creación de skills/tools/agentes/RAG
+│  │  ├─ configTab.tsx         # Configuración (proveedor, modelo, modelo de decisión, contexto, verbose, archivos de contexto)
+│  │  ├─ agentInfoTab.tsx      # Panel de agentes (tools, skills, agents, mcp, rag, workflows)
+│  │  ├─ createTab.tsx         # Creación de skills/tools/agentes/workflows/RAG
 │  │  ├─ chatBlocks.tsx        # Componentes compartidos (MessageRow, MarkdownRenderer, ToolCallBlock, ReasoningBlock, FileChip, etc.)
 │  │  ├─ ContextGauge.tsx      # Gauge de ventana de contexto
 │  │  ├─ CreateModelSelector.tsx # Selector de modelo para creación
@@ -92,7 +95,7 @@ frontend/
 │  │  └─ ui/                   # shadcn/ui: avatar, button, dialog, input, separator, textarea, collapsible, utils
 │  ├─ services/                # Capa de comunicación con API
 │  │  ├─ chatService.ts        # Streaming SSE a /api/chat
-│  │  ├─ configService.ts      # Providers, models, MCP, verbose, contexto
+│  │  ├─ configService.ts      # Providers, models, modelo de decisión, workflows, MCP, verbose, contexto
 │  │  ├─ sessionService.ts     # Sesiones CRUD
 │  │  ├─ contextFilesService.ts# Archivos de contexto CRUD
 │  │  ├─ metricsService.ts     # Métricas
@@ -183,7 +186,7 @@ Los servicios usan `VITE_MODE` para elegir entre `VITE_URL_DEV` y `VITE_URL_PROD
 ## Componentes clave
 
 ### `chat/ChatInterface.tsx`
-Chat principal. Mantiene el estado de mensajes, streaming SSE a `/api/chat`, autoscroll, adjuntos de archivos, detener generación, heartbeat y shutdown. Renderiza cada mensaje con `MessageRow` y muestra el gauge de contexto en el header.
+Chat principal. Mantiene el estado de mensajes, streaming SSE a `/api/chat`, autoscroll, adjuntos de archivos, detener generación, heartbeat y shutdown. Renderiza cada mensaje con `MessageRow` y muestra el gauge de contexto en el header. Ante el evento SSE `decision` con `action: "discarded"` muestra un aviso de que el trabajo pendiente anterior fue descartado.
 
 ### `components/chatBlocks.tsx`
 Componentes compartidos entre las interfaces de chat y creación:
@@ -198,6 +201,9 @@ Página de creación de skills (multi-page). Flujo en dos fases: setup (nombre +
 ### `tool/ToolInterface.tsx` y `agent/AgentInterface.tsx`
 Páginas de creación de tools y agentes, con el mismo patrón de entrevista iterativa vía streaming SSE.
 
+### `workflow/WorkflowInterface.tsx`
+Página de creación de workflows (multi-page). Entrevista por chat con streaming SSE a `/api/create/workflow` y editor YAML con generar, validar y guardar (`/api/config/workflows/generate`, `/validate`, `/save`).
+
 ### `rag/RagInterface.tsx`
 Página de gestión de colecciones RAG: crear colecciones, subir archivos y agregar URLs.
 
@@ -205,10 +211,10 @@ Página de gestión de colecciones RAG: crear colecciones, subir archivos y agre
 Barra lateral con tabs: Conversaciones (`sessionsTab`), Configuración (`configTab`), Agente (`agentInfoTab`) y Crear (`createTab`).
 
 ### `configTab.tsx`
-Configuración: selector de proveedor/modelo, ventana de contexto, toggle verbose y gestión de archivos de contexto.
+Configuración: selector de proveedor/modelo, sección de modelo de decisión (habilitar, proveedor, modelo y ficha del catálogo), ventana de contexto, toggle verbose y gestión de archivos de contexto.
 
 ### `agentInfoTab.tsx`
-Panel de agentes con 5 sub-paneles: Tools, Skills, Agentes, MCP y RAG.
+Panel de agentes con 6 sub-paneles: Tools, Skills, Agentes, MCP, RAG y Workflows (selección del flujo activo: `smart` o un workflow).
 
 ### `MetricsModal.tsx`
 Dashboard de métricas con tabs: Overview, Sessions, Tools, Errors.
@@ -220,7 +226,7 @@ Panel de tareas programadas (agenda): agregar, editar horario y eliminar tareas.
 Pantalla inicial de configuración de providers (API keys) que aparece al primer arranque.
 
 ### Servicios (`services/`)
-Capa fina sobre `fetch`. `chatService` (SSE), `configService` (providers/models/MCP/verbose/contexto), `sessionService` (sesiones), `contextFilesService` (archivos de contexto), `metricsService` (métricas), `schedulerService` (tareas programadas), `telegramService` (bot de Telegram), `quoteHistoryService` (historial de cotizaciones).
+Capa fina sobre `fetch`. `chatService` (SSE), `configService` (providers/models/modelo de decisión/workflows/MCP/verbose/contexto), `sessionService` (sesiones), `contextFilesService` (archivos de contexto), `metricsService` (métricas), `schedulerService` (tareas programadas), `telegramService` (bot de Telegram), `quoteHistoryService` (historial de cotizaciones).
 
 ---
 

@@ -149,10 +149,8 @@ DECISION_PROVIDERS: dict[str, dict[str, Any]] = {
     # TypeSafe SDK (``AsyncTypeSafeClient`` with ``sdk_base_url`` + the
     # stored key). Separate from ``PROVIDER_REGISTRY`` on purpose: decision
     # models are selected and stored independently from chat models.
-    # ``models`` holds the fallback seed ids; the full model lists come from
-    # the ``decision_catalog`` table synced from
-    # ``models.dev/api.json?type=decision`` (any provider there works, the
-    # curated pair is just the offline fallback).
+    # The model lists come from the ``decision_catalog`` table synced from
+    # ``models.dev/api.json?type=decision`` (any provider there works).
     "openrouter": {
         "label": "OpenRouter",
         "sdk_base_url": "https://openrouter.ai/api",

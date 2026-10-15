@@ -159,6 +159,12 @@ Flujos deterministas definidos como archivos YAML planos (`~/.config/synapseForg
 
 El chat corre en modo **smart** (el agente decide) o con un workflow determinista seleccionado desde el panel de info del agente. Antes de ejecutar, el backend verifica que cada agente, tool y colección referenciada exista — si falta algo, responde con un mensaje amigable en vez de ejecutar. Los workflows corren con permisos de mínimo privilegio derivados de sus propios nodos. Un creador dedicado (entrevista + validación + aprobación del usuario) genera el YAML; los prompts propios pueden vivir como archivos sueltos en `workflows/prompts/`.
 
+### Checkpoints y modelo de decisión
+
+Cada tool call que el agente despacha se registra en SQLite antes de ejecutarse y se confirma cuando su resultado se guarda. Si un flujo se corta (cancelación, caída), el turno siguiente arranca con el trabajo sin confirmar inyectado como contexto, y el agente retoma en vez de repetir lo ya hecho. El registro se borra solo cuando el paso cierra con una respuesta final validada.
+
+Un **modelo de decisión** opcional (System One) se puede habilitar en **Config**, independiente del modelo de chat. Devuelve respuestas tipadas con nivel de confianza en vez de texto, y valida dos puntos: si una respuesta final realmente cierra el paso, y si un mensaje nuevo del usuario continúa el trabajo pendiente o pide otra cosa (en cuyo caso el trabajo pendiente se descarta). Los modelos salen del catálogo de decisión de models.dev, sincronizado como máximo una vez cada 24 horas, y hay que tener guardada la API key del proveedor. Con el modelo de decisión deshabilitado, el agente acepta su propia respuesta final y conserva siempre el trabajo pendiente, sin llamadas extra.
+
 ### Frontend
 
 SPA React/Vite/TypeScript con Tailwind v4 y shadcn/ui. Multi-página: chat, creación de skills, creación de workflows, gestión de RAG, documentación. Streaming SSE, visualización de tool calls, indicador de contexto, tareas programadas, uso y facturación, dashboard de métricas, toggle de Telegram.
@@ -209,7 +215,7 @@ synapseForge/
 │  └─ telegram/               #   Bot de Telegram
 ├─ frontend/                  # SPA React/Vite/TypeScript
 ├─ template/                  # Template de proyecto (usado por init)
-├─ tests/                     # Suite E2E declarativa (YAML)
+├─ tests/                     # Suites E2E declarativas (YAML) y tests unitarios
 └─ pyproject.toml             # Config del paquete
 ```
 
@@ -222,6 +228,7 @@ synapseForge/
 ├─ skills/            # Skills instalados
 ├─ tools/             # Tools custom (.py)
 ├─ agents/            # Definiciones de agentes (.md)
+├─ workflows/         # Workflows deterministas (<nombre>.yaml)
 ├─ knowledge/         # Colecciones RAG (ChromaDB)
 ├─ mcp.json           # Servidores MCP
 └─ config.yaml        # Permisos del router (opcional)
@@ -236,6 +243,15 @@ Suite E2E declarativa en `tests/e2e/`. Escenarios YAML que manejan el backend re
 ```bash
 python -m tests.e2e.runner                # todos los escenarios
 python -m tests.e2e.runner --only rag     # filtrar por nombre
+```
+
+Otras suites:
+
+```bash
+python -m tests.workflows.runner          # validación y ejecución de workflows (backend corriendo)
+python -m tests.checkpoints.runner        # checkpoints contra la agent.db real (backend + LLM)
+pytest tests/frontier                     # tests unitarios de checkpoints
+python -m tests.decisor.decision_cli      # modelo de decisión, corrida manual
 ```
 
 ---

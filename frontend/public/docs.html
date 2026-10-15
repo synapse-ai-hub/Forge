@@ -251,7 +251,7 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
         <section id="configuracion-externa">
           <h2>Configuración externa del usuario</h2>
           <h3>¿Qué es?</h3>
-          <p>Además de los archivos del proyecto, synapseForge lee archivos del usuario desde una carpeta de configuración personal. Acá viven tus tools personalizadas, tus agentes definidos a medida, tus skills, tus colecciones RAG y la configuración de servidores MCP.</p>
+          <p>Además de los archivos del proyecto, synapseForge lee archivos del usuario desde una carpeta de configuración personal. Acá viven tus tools personalizadas, tus agentes definidos a medida, tus skills, tus workflows, tus colecciones RAG y la configuración de servidores MCP.</p>
           <h3>¿Dónde está esa carpeta?</h3>
           <ul>
             <li><strong>En Linux o macOS:</strong> <code>~/.config/synapseForge/</code></li>
@@ -267,6 +267,7 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
               <tr><td><code>skills/</code></td><td>Subcarpetas, cada una con un <code>SKILL.md</code> que define una skill</td></tr>
               <tr><td><code>tools/</code></td><td>Archivos <code>.py</code> individuales, cada uno una tool externa</td></tr>
               <tr><td><code>agents/</code></td><td>Archivos <code>.md</code> con la definición de agentes y sus permisos, más <code>AGENT.md</code> opcional para el comportamiento general</td></tr>
+              <tr><td><code>workflows/</code></td><td>Archivos <code>.yaml</code> planos, uno por workflow determinista, y una carpeta opcional <code>prompts/</code> con prompts propios</td></tr>
               <tr><td><code>knowledge/</code></td><td>Colecciones RAG (ChromaDB) creadas desde la interfaz de creación</td></tr>
               <tr><td><code>mcp.json</code></td><td>Configuración de los servidores MCP disponibles (array JSON)</td></tr>
               <tr><td><code>config.yaml</code></td><td>(Opcional) Permisos del agente principal: tools, skills y sub-agentes a los que puede delegar</td></tr>
@@ -541,6 +542,20 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
           </ol>
         </section>
 
+        <section id="checkpoints">
+          <h2>Checkpoints y modelo de decisión</h2>
+          <h3>Checkpoints: retomar un flujo cortado</h3>
+          <p>Cada tool call que el agente despacha se registra antes de ejecutarse y se confirma cuando su resultado se guarda. Si el flujo se corta (cancelás la respuesta o el backend se cae), el siguiente turno arranca con el trabajo sin confirmar inyectado como contexto: el pedido original, las tool calls pendientes con sus argumentos completos y el último resultado registrado. El agente retoma desde ahí en vez de repetir lo ya hecho.</p>
+          <p>El registro solo se borra cuando el paso cierra con una respuesta final validada. Las tool calls ya confirmadas que quedaron de un corte se limpian automáticamente pasadas 24 horas (configurable con <code>FRONTIER_TTL_HOURS</code>); las pendientes se conservan hasta que se resuelven o se descartan. Los workflows usan el mismo mecanismo: cada <code>step</code> se registra como un bloque.</p>
+          <h3>Modelo de decisión (opcional)</h3>
+          <p>Un <strong>modelo de decisión</strong> (System One) devuelve respuestas tipadas con un nivel de confianza en vez de texto generado. Se habilita desde <strong>Configuración</strong>, es independiente del modelo de chat y solo hace dos validaciones:</p>
+          <ul>
+            <li><strong>Cierre de paso</strong>: cuando el agente da una respuesta final, el modelo evalúa si cumple lo pedido y no deja trabajo pendiente. Solo cierra el paso (y borra el registro) con confianza de al menos 0.8.</li>
+            <li><strong>Continuidad</strong>: al iniciar un turno con trabajo pendiente, el modelo evalúa si tu mensaje nuevo lo continúa o pide otra cosa. Si pide otra cosa con confianza alta, el trabajo pendiente se descarta y el chat muestra un aviso.</li>
+          </ul>
+          <p>Con el modelo de decisión deshabilitado, el agente acepta su propia respuesta final como cierre y conserva siempre el trabajo pendiente, sin llamadas extra. Ante cualquier error del modelo de decisión, el flujo sigue como si estuviera deshabilitado. Cada veredicto queda guardado en la sesión como un mensaje interno que nunca se envía al LLM.</p>
+        </section>
+
         <section id="interfaz-usuario">
           <h2>Interfaz de usuario</h2>
           <h3>¿Qué incluye?</h3>
@@ -551,6 +566,7 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
             <li><strong>Crear Skill</strong>: formulario con nombre, tarea, cuándo usarla, cuándo NO, y material de referencia. El LLM busca skills existentes que coincidan; si no encuentra, genera una nueva.</li>
             <li><strong>Crear Tool</strong>: entrevista iterativa con el LLM para generar una tool externa (<code>.py</code>).</li>
             <li><strong>Crear Agente</strong>: entrevista iterativa con el LLM para generar un agente (<code>.md</code>).</li>
+            <li><strong>Crear Workflow</strong>: entrevista por chat y editor YAML con generar, validar y guardar para definir un workflow determinista (<code>.yaml</code>).</li>
             <li><strong>Gestionar RAG</strong>: página para crear colecciones RAG, subir archivos y agregar URLs, procesada con ChromaDB.</li>
           </ul>
           <p>En las pantallas iniciales de creación (skill, tool y agente) podés elegir con qué modelo cloud se genera el elemento: seleccionás proveedor y modelo y pulsás <strong>Aplicar</strong>. La selección es efímera (solo vale para esa tarea mientras la pestaña está abierta); si no aplicás ninguna, se usa el modelo por defecto.</p>
@@ -563,6 +579,7 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
             <li><strong>Agentes</strong> — Lista los sub-agentes configurados.</li>
             <li><strong>MCP</strong> — Lista los servidores MCP con su estado (Conectado/Error).</li>
             <li><strong>RAG</strong> — Lista las colecciones de la base de conocimiento.</li>
+            <li><strong>Workflows</strong> — Elige el flujo activo: <strong>smart</strong> o uno de los workflows guardados.</li>
           </ul>
           <h3>Panel de configuración</h3>
           <p>En el panel lateral, hay una pestaña de <strong>Configuración</strong> con las siguientes opciones:</p>
@@ -570,6 +587,8 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
           <p>Podés seleccionar el proveedor de modelos (Ollama local si está corriendo, o cualquier provider cloud curado: Google y 14 OpenAI-compatibles) y el modelo específico a utilizar. Los modelos se listan desde el catálogo models.dev cacheado en SQLite: no hay modelos fijos. La selección se persiste entre sesiones y se aplica con el botón <strong>Aplicar</strong>. Al primer arranque aparece una pantalla inicial de configuración (que podés saltar) para cargar tus API keys; sin ningún proveedor disponible, el chat y los creadores quedan bloqueados hasta configurar uno.</p>
           <h4>Providers (API keys)</h4>
           <p>En la sección <strong>Providers</strong> podés cargar la API key de cualquiera de los 15 providers cloud curados: Google más 14 OpenAI-compatibles (Groq, OpenRouter, OpenAI, DeepSeek, xAI, Together AI, Fireworks AI, Cerebras, Mistral AI, Perplexity, Meta, Moonshot AI, Zhipu AI, Alibaba). Cada key es opcional: si no cargás una key para un proveedor, ese proveedor no está disponible. La pantalla inicial solo pide las dos keys auxiliares (Groq para transcripción de voz, Google para la fuente de conocimiento); el resto de los providers se configura acá. Las keys se guardan cifradas en la base de datos SQLite interna y no se vuelven a mostrar después de guardarlas. Al guardar una key se valida en vivo contra la API del proveedor: si es inválida se rechaza; si es válida, el proveedor queda disponible de inmediato en los selectores.</p>
+          <h4>Modelo de decisión</h4>
+          <p>Un interruptor habilita el modelo de decisión (ver la sección Checkpoints y modelo de decisión). Con el interruptor activo elegís proveedor y modelo y pulsás <strong>Aplicar</strong>. Los modelos se listan desde el catálogo de modelos de decisión de models.dev, y debajo se muestra la ficha del modelo (modalidades, ventana de contexto, límites y costos por millón de tokens). Para poder aplicarlo, la API key del proveedor tiene que estar cargada en la sección <strong>Providers</strong>, donde los proveedores de decisión aparecen marcados con «(decisión)».</p>
           <h4>Contexto (turnos)</h4>
           <p>Controla cuántos turnos de conversación se mantienen en el contexto del modelo. <code>-1</code> significa todo el historial. Reducir este número ayuda a controlar el uso de tokens y el costo.</p>
           <h4>Parámetros avanzados</h4>
@@ -585,6 +604,7 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
             <li><strong>Tarjetas de tool</strong> — Cuando el modelo invoca una tool, se muestra el nombre y los argumentos.</li>
             <li><strong>Tarjetas de sub-agente</strong> — Cuando se delega a un sub-agente, se muestra el nombre y el resultado.</li>
             <li><strong>Adjuntos</strong> — Los archivos que el usuario sube aparecen como chips debajo del mensaje.</li>
+            <li><strong>Aviso de trabajo descartado</strong> — Con el modelo de decisión habilitado, indica que el trabajo pendiente de un turno anterior se descartó porque el mensaje nuevo pedía otra cosa.</li>
           </ul>
           <h3>Gauge de contexto</h3>
           <p>En el header del chat hay un <strong>velocímetro</strong> que muestra el porcentaje de ventana de contexto usado por la sesión actual. Se llena de verde a rojo a medida que se acerca al límite del modelo.</p>
@@ -702,6 +722,7 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
               <tr><td>POST</td><td><code>/api/create/skill</code></td><td>Crear una skill mediante LLM (entrevista + agente, streaming SSE).</td></tr>
               <tr><td>POST</td><td><code>/api/create/tool</code></td><td>Crear una tool externa mediante LLM (entrevista + agente, streaming SSE).</td></tr>
               <tr><td>POST</td><td><code>/api/create/agent</code></td><td>Crear un sub-agente mediante LLM (entrevista + agente, streaming SSE).</td></tr>
+              <tr><td>POST</td><td><code>/api/create/workflow</code></td><td>Crear un workflow determinista mediante LLM (entrevista + validación, streaming SSE).</td></tr>
               <tr><td>GET</td><td><code>/api/sessions</code></td><td>Listar todas las sesiones de chat.</td></tr>
               <tr><td>GET</td><td><code>/api/sessions/titles</code></td><td>Listar los títulos de las sesiones.</td></tr>
               <tr><td>GET</td><td><code>/api/sessions/{id}</code></td><td>Cargar una sesión completa con todos sus mensajes.</td></tr>
@@ -710,6 +731,11 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
               <tr><td>GET</td><td><code>/api/config/providers</code></td><td>Listar proveedores de modelos disponibles.</td></tr>
               <tr><td>GET</td><td><code>/api/config/models</code></td><td>Listar modelos del proveedor seleccionado.</td></tr>
               <tr><td>POST</td><td><code>/api/config/models/select</code></td><td>Seleccionar modelo y proveedor.</td></tr>
+              <tr><td>GET</td><td><code>/api/config/models/capabilities</code></td><td>Capacidades de un modelo (razonamiento, temperatura, tool calling, structured output).</td></tr>
+              <tr><td>GET</td><td><code>/api/config/models/decision</code></td><td>Listar proveedores y modelos de decisión, y la selección actual.</td></tr>
+              <tr><td>POST</td><td><code>/api/config/models/decision/select</code></td><td>Seleccionar proveedor y modelo de decisión.</td></tr>
+              <tr><td>POST</td><td><code>/api/config/models/decision/enabled</code></td><td>Habilitar o deshabilitar el modelo de decisión.</td></tr>
+              <tr><td>GET</td><td><code>/api/config/models/decision/capabilities</code></td><td>Ficha de un modelo de decisión (límites, modalidades, costos).</td></tr>
               <tr><td>GET</td><td><code>/api/config/context-window</code></td><td>Obtener el límite de turnos en contexto.</td></tr>
               <tr><td>POST</td><td><code>/api/config/context-window</code></td><td>Configurar el límite de turnos en contexto.</td></tr>
               <tr><td>GET</td><td><code>/api/config/verbose-mode</code></td><td>Obtener el estado del modo verbose.</td></tr>
@@ -718,6 +744,11 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
               <tr><td>GET</td><td><code>/api/config/tools</code></td><td>Listar tools disponibles.</td></tr>
               <tr><td>GET</td><td><code>/api/config/agents</code></td><td>Listar sub-agentes disponibles.</td></tr>
               <tr><td>GET</td><td><code>/api/config/mcp</code></td><td>Listar servidores MCP con su estado.</td></tr>
+              <tr><td>GET</td><td><code>/api/config/workflows/selection</code></td><td>Workflow activo y workflows disponibles.</td></tr>
+              <tr><td>POST</td><td><code>/api/config/workflows/select</code></td><td>Activar <code>smart</code> o un workflow.</td></tr>
+              <tr><td>POST</td><td><code>/api/config/workflows/validate</code></td><td>Validar un YAML de workflow sin guardarlo.</td></tr>
+              <tr><td>POST</td><td><code>/api/config/workflows/save</code></td><td>Validar y guardar un workflow como <code>&lt;nombre&gt;.yaml</code>.</td></tr>
+              <tr><td>POST</td><td><code>/api/config/workflows/generate</code></td><td>Generar el YAML de un workflow a partir de una descripción.</td></tr>
               <tr><td>GET/POST</td><td><code>/api/context-files</code></td><td>Listar / subir archivos de contexto (instrucciones y documentos).</td></tr>
               <tr><td>DELETE</td><td><code>/api/context-files/{id}</code></td><td>Eliminar un archivo de contexto.</td></tr>
               <tr><td>GET</td><td><code>/api/metrics/overview</code></td><td>Métricas agregadas (sesiones, mensajes, tools, errores).</td></tr>
@@ -766,6 +797,7 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
             <li><strong>tool_result</strong> — La respuesta que devolvió la tool.</li>
             <li><strong>subagent_event</strong> — El agente principal delegó a un sub-agente. Incluye el nombre del sub-agente y su contenido.</li>
             <li><strong>session_title</strong> — El título generado para la sesión.</li>
+            <li><strong>decision</strong> — El modelo de decisión descartó el trabajo pendiente de un turno anterior (<code>action: "discarded"</code>).</li>
             <li><strong>done</strong> — Marca el final del stream e incluye el ID de la sesión.</li>
             <li><strong>error</strong> — Un error durante el procesamiento.</li>
           </ul>

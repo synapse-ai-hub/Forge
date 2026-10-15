@@ -183,6 +183,25 @@ Desde la pestaña **Crear** (botón de workflows) una entrevista asistida diseñ
 
 ---
 
+## Checkpoints y modelo de decisión
+
+### Retomar un flujo cortado
+
+Cada tool call que el agente despacha se registra antes de ejecutarse y se confirma cuando su resultado se guarda. Si el flujo se corta (se cancela la respuesta o se cae el backend), el siguiente turno arranca con el trabajo sin confirmar inyectado como contexto: el pedido original, las tool calls pendientes con sus argumentos completos y el último resultado registrado. El agente retoma desde ahí sin repetir lo ya hecho. El registro solo se borra cuando el paso cierra con una respuesta final validada; los workflows usan el mismo mecanismo.
+
+### Modelo de decisión (opcional)
+
+Un modelo de decisión (System One) devuelve respuestas tipadas con un nivel de confianza en vez de texto. Se habilita desde el panel de Configuración, sección **Modelo de decisión**: se activa el interruptor, se elige proveedor y modelo y se pulsa **Aplicar**. Es independiente del modelo de chat y requiere la API key del proveedor cargada en la sección **Providers**. Los modelos salen del catálogo de decisión de models.dev, que se sincroniza como máximo una vez cada 24 horas.
+
+Con el modelo habilitado hace dos validaciones:
+
+- **Cierre de paso**: cuando el agente da una respuesta final, evalúa si cumple lo pedido y no deja trabajo pendiente. Solo cierra el paso con confianza de al menos 0.8.
+- **Continuidad**: al iniciar un turno con trabajo pendiente, evalúa si el mensaje nuevo lo continúa o pide otra cosa. Si pide otra cosa con confianza alta, el trabajo pendiente se descarta y el chat muestra un aviso.
+
+Con el modelo deshabilitado, el agente acepta su propia respuesta final como cierre y conserva siempre el trabajo pendiente, sin llamadas extra. Ante cualquier error del modelo de decisión, el flujo sigue como si estuviera deshabilitado.
+
+---
+
 ## Métricas
 
 El botón **Métricas** del header abre el dashboard con cinco pestañas: **Resumen** (sesiones, mensajes, tokens, costos y actividad por día), **Sesiones**, **Tools** (llamadas y sub-agentes), **Modelos** y **Errores**.

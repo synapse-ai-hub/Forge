@@ -159,6 +159,12 @@ Deterministic flows defined as flat YAML files (`~/.config/synapseForge/workflow
 
 The chat runs in **smart** mode (the agent decides) or with one deterministic workflow selected from the agent info panel. Before running, the backend verifies that every referenced agent, tool and collection exists — if something is missing, it answers with a friendly message instead of executing. Workflows run under least-privilege permissions derived from their own nodes. A dedicated creator (interview + validation + user approval) generates the YAML; custom prompts can live as loose files in `workflows/prompts/`.
 
+### Checkpoints and decision model
+
+Every tool call the agent dispatches is recorded in SQLite before it runs and confirmed when its result commits. If a flow is cut (cancellation, crash), the next turn starts with the unconfirmed work injected as context, so the agent resumes instead of repeating what was already done. The record is deleted only when the step closes with a validated final answer.
+
+An optional **decision model** (System One) can be enabled in **Config**, independent of the chat model. It returns typed answers with a confidence level instead of text, and validates two points: whether a final answer really closes the step, and whether a new user message continues the pending work or asks for something else (in which case the pending work is discarded). Models come from the models.dev decision catalog, synced at most once every 24 hours, and the provider's API key must be saved. With the decision model disabled, the agent accepts its own final answer and always keeps the pending work, with no extra calls.
+
 ### Frontend
 
 React/Vite/TypeScript SPA with Tailwind v4 and shadcn/ui. Multi-page: chat, skill creation, workflow creation, RAG management, docs. SSE streaming, tool call visualization, context window gauge, scheduled tasks, usage and billing, metrics dashboard, Telegram toggle.
@@ -209,7 +215,7 @@ synapseForge/
 │  └─ telegram/               #   Telegram bot
 ├─ frontend/                  # React/Vite/TypeScript SPA
 ├─ template/                  # Project template (used by init)
-├─ tests/                     # E2E declarative suite (YAML)
+├─ tests/                     # Declarative E2E suites (YAML) and unit tests
 └─ pyproject.toml             # Package config
 ```
 
@@ -222,6 +228,7 @@ synapseForge/
 ├─ skills/            # Installed skills
 ├─ tools/             # Custom tools (.py)
 ├─ agents/            # Agent definitions (.md)
+├─ workflows/         # Deterministic workflows (<name>.yaml)
 ├─ knowledge/         # RAG collections (ChromaDB)
 ├─ mcp.json           # MCP servers
 └─ config.yaml        # Router permissions (optional)
@@ -236,6 +243,15 @@ Declarative E2E suite in `tests/e2e/`. YAML scenarios drive the real backend —
 ```bash
 python -m tests.e2e.runner                # all scenarios
 python -m tests.e2e.runner --only rag     # filter by name
+```
+
+Other suites:
+
+```bash
+python -m tests.workflows.runner          # workflow validation and execution (running backend)
+python -m tests.checkpoints.runner        # checkpoints against the real agent.db (running backend + LLM)
+pytest tests/frontier                     # checkpoint unit tests
+python -m tests.decisor.decision_cli      # decision model, manual run
 ```
 
 ---
