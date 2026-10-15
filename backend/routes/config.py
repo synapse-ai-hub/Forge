@@ -377,6 +377,24 @@ async def list_provider_keys() -> JSONResponse:
 
     try:
         keys = provider_keys.list_configured()
+        # Include decision-only providers (same dropdown, same table).
+        try:
+            from backend.agent.utils import decision_catalog
+
+            try:
+                decision_catalog.sync_catalog()
+            except Exception:
+                pass
+            seen = {k.get("provider") for k in keys}
+            for pid in decision_catalog.list_providers():
+                if pid in seen:
+                    continue
+                keys.append({
+                    "provider": pid,
+                    "configured": provider_keys.get_decision_key(pid) is not None,
+                })
+        except Exception as exc:
+            log_error(str(exc), source="backend/routes/config.py:list_provider_keys(decision)")
         return JSONResponse(
             status_code=200,
             content={"status": "success", "keys": keys},
@@ -393,22 +411,33 @@ async def list_provider_keys() -> JSONResponse:
 async def save_provider_key(provider: str, data: dict[str, Any]) -> JSONResponse:
     """Validate, store (encrypted) and activate the API key for a provider.
 
-    Body: ``{"api_key": "..."}``. The key is first validated against the
-    provider's live API; if invalid it is rejected (400) and nothing is
-    stored. On success the key is encrypted with Fernet, persisted in the
-    ``provider_api_keys`` table, the provider client is rebuilt and the
-    providers cache is refreshed so the new provider becomes selectable
-    immediately.
+    Body: ``{"api_key": "..."}``. Chat providers are validated against
+    the live API first; decision-only providers (any catalog provider
+    outside the chat registry) are stored directly — their gateways
+    expose only System One, with nothing to validate against. Same
+    table, same endpoint: a decision provider is just another provider.
     """
     from backend.agent.utils import provider_keys
 
     api_key = (data or {}).get("api_key", "")
-    validation = await asyncio.to_thread(provider_keys.validate_key, provider, api_key)
-    if validation.get("status") != "success":
-        return JSONResponse(status_code=400, content=validation)
-    result = await asyncio.to_thread(provider_keys.save_key, provider, api_key)
-    if result.get("status") != "success":
-        return JSONResponse(status_code=400, content=result)
+    pid = (provider or "").strip().lower()
+    if pid in provider_keys.PROVIDER_REGISTRY:
+        validation = await asyncio.to_thread(provider_keys.validate_key, provider, api_key)
+        if validation.get("status") != "success":
+            return JSONResponse(status_code=400, content=validation)
+        result = await asyncio.to_thread(provider_keys.save_key, provider, api_key)
+        if result.get("status") != "success":
+            return JSONResponse(status_code=400, content=result)
+    elif provider_keys.is_decision_supported(pid):
+        result = await asyncio.to_thread(provider_keys.save_decision_key, provider, api_key)
+        if result.get("status") != "success":
+            return JSONResponse(status_code=400, content=result)
+        return JSONResponse(status_code=200, content=result)
+    else:
+        return JSONResponse(
+            status_code=400,
+            content={"status": "error", "message": f"Provider inválido: '{provider}'."},
+        )
     # Refresh the providers cache FIRST so the new provider becomes
     # selectable immediately even if the client rebuild below fails.
     await asyncio.to_thread(refresh_providers_cache)
@@ -431,8 +460,47 @@ async def delete_provider_key(provider: str) -> JSONResponse:
 
     After deletion the client becomes unavailable and the providers cache
     is refreshed so the provider disappears from the selectable list.
+    Decision-only providers are deleted from the same table.
     """
     from backend.agent.utils import provider_keys
+
+    pid = (provider or "").strip().lower()
+    if pid not in provider_keys.PROVIDER_REGISTRY:
+        if provider_keys.is_decision_supported(pid):
+            try:
+                from backend.agent.utils.db import get_connection
+
+                conn = get_connection()
+                if conn is None:
+                    return JSONResponse(
+                        status_code=500,
+                        content={"status": "error", "message": "No se pudo abrir la base de datos."},
+                    )
+                try:
+                    with conn:
+                        cursor = conn.execute(
+                            "DELETE FROM provider_api_keys WHERE provider = ?",
+                            (pid,),
+                        )
+                        deleted = cursor.rowcount > 0
+                finally:
+                    conn.close()
+                message = (
+                    f"API key de {pid} eliminada."
+                    if deleted
+                    else f"No había API key guardada para {pid}."
+                )
+                return JSONResponse(status_code=200, content={"status": "success", "message": message})
+            except Exception as exc:
+                log_error(str(exc), source="backend/routes/config.py:delete_provider_key(decision)")
+                return JSONResponse(
+                    status_code=500,
+                    content={"status": "error", "message": f"Error eliminando la API key: {exc}"},
+                )
+        return JSONResponse(
+            status_code=400,
+            content={"status": "error", "message": f"Provider inválido: '{provider}'."},
+        )
 
     result = await asyncio.to_thread(provider_keys.delete_key, provider)
     if result.get("status") != "success":
@@ -925,6 +993,246 @@ async def select_model(data: dict[str, Any]) -> JSONResponse:
     )
 
 
+@router.get("/models/decision")
+async def list_decision_models() -> JSONResponse:
+    """List decision providers and the current decision selection.
+
+    Decision models (System One API) are selected independently from chat
+    models: the user first enables the decision section, then picks a
+    provider + model and applies it via ``POST
+    /config/models/decision/select``. Until then the response carries
+    ``model: null`` and decision calls stay gracefully unavailable.
+
+    Returns the decision providers (with their model ids from the
+    ``decision_catalog`` table) and the current selection (or nulls).
+    """
+    from backend.agent.utils import provider_keys
+
+    providers = provider_keys.list_decision_providers()
+    current_provider = agent.decision_provider if agent is not None else None
+    current_model = agent.decision_model if agent is not None else None
+    enabled = bool(agent.decision_enabled) if agent is not None else False
+    return JSONResponse(
+        status_code=200,
+        content={
+            "status": "success",
+            "providers": providers,
+            "provider": current_provider,
+            "model": current_model,
+            "enabled": enabled,
+        },
+    )
+
+
+@router.post("/models/decision/select")
+async def select_decision_model(data: dict[str, Any]) -> JSONResponse:
+    """Select a decision provider + model for the current session.
+
+    Request body::
+
+        {"model": "inception/mercury-decide:free", "provider": "openrouter"}
+
+    The model must exist in the ``decision_catalog`` table for the given
+    provider (the lists in ``GET /config/models/decision`` read from that
+    table). The selection is stored in the agent
+    singleton / persisted in SQLite (``config_kv`` keys
+    ``decision_provider``, ``decision_model``). It only takes effect when
+    the decision section is enabled (``POST
+    /config/models/decision/enabled``); otherwise decision calls stay
+    gracefully unavailable.
+    """
+    model = str(data.get("model") or "").strip()
+    provider = str(data.get("provider") or "").strip()
+
+    if not model:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "status": "error",
+                "message": "model is required.",
+            },
+        )
+
+    from backend.agent.utils import decision_catalog, provider_keys
+
+    if not provider_keys.is_decision_supported(provider):
+        return JSONResponse(
+            status_code=400,
+            content={
+                "status": "error",
+                "message": f"Unknown decision provider: '{provider}'.",
+            },
+        )
+
+    if model not in decision_catalog.get_models(provider):
+        return JSONResponse(
+            status_code=400,
+            content={
+                "status": "error",
+                "message": f"Unknown decision model '{model}' for provider '{provider}'.",
+            },
+        )
+
+    if provider_keys.get_decision_key(provider) is None:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "status": "error",
+                "message": f"Guardá primero la API key de '{provider}' abajo.",
+            },
+        )
+
+    if agent is None:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "error",
+                "message": "Agent not initialised.",
+            },
+        )
+
+    provider_id = provider.strip().lower()
+    agent.decision_provider = provider_id
+    agent.decision_model = model
+
+    try:
+        if session_manager is not None:
+            session_manager.set_config("decision_provider", provider_id)
+            session_manager.set_config("decision_model", model)
+    except Exception as exc:
+        log_error(str(exc), source="backend/routes/config.py")
+        logger.warning("No se pudo persistir el modelo de decisión: %s", exc)
+
+    logger.info("Decision model selected: %s (%s)", model, provider_id)
+    return JSONResponse(
+        status_code=200,
+        content={
+            "status": "success",
+            "message": f"Decision model '{model}' selected.",
+            "model": model,
+            "provider": provider_id,
+        },
+    )
+
+
+@router.post("/models/decision/enabled")
+async def set_decision_enabled(data: dict[str, Any]) -> JSONResponse:
+    """Enable or disable the decision section.
+
+    Request body::
+
+        {"enabled": true}
+
+    The flag is stored in the agent singleton / persisted in SQLite
+    (``config_kv`` key ``decision_enabled``). When disabled (or when no
+    provider + model is selected), decision calls stay gracefully
+    unavailable and the current flow is kept unchanged.
+    """
+    enabled = data.get("enabled")
+    if not isinstance(enabled, bool):
+        return JSONResponse(
+            status_code=400,
+            content={
+                "status": "error",
+                "message": "enabled must be a boolean.",
+            },
+        )
+
+    if agent is None:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "error",
+                "message": "Agent not initialised.",
+            },
+        )
+
+    agent.decision_enabled = enabled
+
+    try:
+        if session_manager is not None:
+            session_manager.set_config(
+                "decision_enabled", "true" if enabled else "false"
+            )
+    except Exception as exc:
+        log_error(str(exc), source="backend/routes/config.py")
+        logger.warning("No se pudo persistir decision_enabled: %s", exc)
+
+    logger.info("Decision enabled: %s", enabled)
+    return JSONResponse(
+        status_code=200,
+        content={
+            "status": "success",
+            "message": f"Decision {'enabled' if enabled else 'disabled'}.",
+            "enabled": enabled,
+        },
+    )
+
+
+@router.get("/models/decision/capabilities")
+async def get_decision_capabilities(model: str, provider: str) -> JSONResponse:
+    """Return catalog info for a specific decision model/provider.
+
+    Same row layout as the chat "Info del modelo" (modalities, context,
+    limits, costs), read from the ``decision_catalog`` table synced from
+    ``models.dev?type=decision``.
+
+    Query params:
+        model: Decision model ID
+        provider: Decision provider id
+    """
+    if not model or not provider:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "status": "error",
+                "message": "model and provider query params are required.",
+            },
+        )
+    try:
+        from backend.agent.utils import decision_catalog
+
+        row = await asyncio.to_thread(
+            decision_catalog.get_model, provider.strip(), model
+        )
+        if row is None:
+            return JSONResponse(
+                status_code=200,
+                content={"status": "success", "found": False},
+            )
+        import json as _json
+
+        def _parse_list(raw: object) -> list[str] | None:
+            if not raw:
+                return None
+            try:
+                val = _json.loads(raw) if isinstance(raw, str) else raw
+                return list(val) if isinstance(val, list) else None
+            except (ValueError, TypeError):
+                return None
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "success",
+                "found": True,
+                "context_window": row.get("context_window"),
+                "input_limit": row.get("input_limit"),
+                "output_limit": row.get("output_limit"),
+                "input_modalities": _parse_list(row.get("modalities_input")),
+                "output_modalities": _parse_list(row.get("modalities_output")),
+                "cost_input": row.get("cost_input"),
+                "cost_output": row.get("cost_output"),
+            },
+        )
+    except Exception as exc:
+        log_error(str(exc), source="backend/routes/config.py:get_decision_capabilities")
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": f"Error obteniendo capacidades: {exc}"},
+        )
+
+
 @router.get("/models/capabilities")
 async def get_model_capabilities(model: str, provider: str) -> JSONResponse:
     """Return reasoning capabilities for a specific model/provider.
@@ -1059,6 +1367,27 @@ def load_persisted_config() -> None:
     except Exception as exc:
         log_error(str(exc), source="backend/routes/config.py")
         logger.warning("No se pudo cargar verbose_mode: %s", exc)
+
+    try:
+        dprovider = session_manager.get_config("decision_provider")
+        dmodel = session_manager.get_config("decision_model")
+        denabled = session_manager.get_config("decision_enabled")
+        if agent is not None:
+            if dprovider:
+                agent.decision_provider = dprovider.strip()
+            if dmodel:
+                agent.decision_model = dmodel
+            agent.decision_enabled = (
+                denabled.strip().lower() == "true" if denabled else False
+            )
+            logger.info(
+                "Selección de decisión persistida cargada: %s/%s (enabled=%s)",
+                agent.decision_provider, agent.decision_model,
+                agent.decision_enabled,
+            )
+    except Exception as exc:
+        log_error(str(exc), source="backend/routes/config.py")
+        logger.warning("No se pudo cargar la selección de decisión: %s", exc)
 
 # Detect VRAM once at startup (it does not change while the app runs).
     # The result is cached in model_resolver and persisted in config_kv.

@@ -1,0 +1,56 @@
+scenario: checkpoint-clean-close-leaves-no-frontier
+description: >
+  Flujo real completo: se le pide al router un bloque paralelo de
+  inspecciones (igual que el e2e parallel), el stream termina con [DONE]
+  y el cierre validado tiene que haber borrado toda la frontera de la
+  sesión en agent.db. Requiere backend local + LLM configurado.
+cleanup: true
+steps:
+  - action: chat
+    message: "Inspeccioná el contenido de los directorios 'backend' y 'frontend' con las herramientas que prefieras, emitiendo todas las llamadas independientes juntas en el mismo bloque. Después resumí en una frase qué hay en cada uno."
+    expect:
+      done: true
+      nonempty: true
+      no_tool_error: true
+      parallel_block: true
+      events_include:
+        - tool_call
+        - tool_result
+      tools_called_any_of:
+        - list_dir
+        - read
+  - action: db_assert
+    session: main
+    expect:
+      total_rows: 0
+---
+scenario: checkpoint-cut-flow-leaves-open-frontier
+description: >
+  Corte real del flujo: el mismo pedido paralelo pero abortando el stream
+  a los pocos eventos (el cliente cierra, el loop guarda parcial). Las
+  filas despachadas y no commiteadas tienen que quedar en agent.db como
+  open. El siguiente turno en la misma sesión completa y cierra su propio
+  turno sin borrar el pendiente anterior (queda como contexto de resume).
+  Requiere backend local + LLM configurado.
+cleanup: true
+steps:
+  - action: chat
+    message: "Inspeccioná el contenido de los directorios 'backend' y 'frontend' con las herramientas que prefieras, emitiendo todas las llamadas independientes juntas en el mismo bloque. Después resumí en una frase qué hay en cada uno."
+    session: cut
+    abort_after_events: 3
+  - action: db_assert
+    session: cut
+    expect:
+      open_min: 1
+  - action: chat
+    message: "Continuá con lo pendiente y resumí en una frase qué hay en cada directorio."
+    session: cut
+    expect:
+      done: true
+      nonempty: true
+      no_tool_error: true
+  - action: db_assert
+    session: cut
+    expect:
+      turn_empty: 2
+      open_min: 1

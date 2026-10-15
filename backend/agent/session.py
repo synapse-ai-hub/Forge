@@ -44,7 +44,7 @@ class SessionManager:
         _initialized: Whether the database tables have been created.
     """
 
-    VALID_ROLES = frozenset({"system", "user", "assistant", "tool", "title"})
+    VALID_ROLES = frozenset({"system", "user", "assistant", "tool", "title", "decisor"})
 
     def __init__(self, db_path: str = DB_PATH) -> None:
         """Initialise the session manager.
@@ -371,7 +371,8 @@ class SessionManager:
         Args:
             session_id: The session identifier.
             role: Message role — must be one of ``"system"``,
-                ``"user"``, ``"assistant"``, ``"tool"``.
+                ``"user"``, ``"assistant"``, ``"tool"``, ``"title"``,
+                ``"decisor"``.
             content: Text content of the message (optional for tool
                 roles).
             reasoning: Reasoning / thinking trace for assistant messages.

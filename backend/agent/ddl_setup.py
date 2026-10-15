@@ -29,11 +29,13 @@ _DDL_SCRIPTS: tuple[str, ...] = (
     "ddl/scheduled_tasks.sql",
     "ddl/task_runs.sql",
     "ddl/model_catalog.sql",
+    "ddl/decision_catalog.sql",
     "ddl/billing.sql",
     "ddl/spend.sql",
     "ddl/spend_limits.sql",
     "ddl/external_usage.sql",
     "ddl/creator_calls.sql",
+    "ddl/step_frontier.sql",
 )
 
 

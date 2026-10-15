@@ -1,0 +1,52 @@
+[
+  {
+    "proveedor": "openrouter",
+    "modelo": "inception/mercury-decide:free",
+    "tokens_entrada": 477,
+    "tokens_salida": 1,
+    "tiempo": 0.79,
+    "decision": 0.0,
+    "confianza": null,
+    "gasto_usd": 0.0
+  },
+  {
+    "proveedor": "google",
+    "modelo": "gemini-3.5-flash-lite",
+    "tokens_entrada": 478,
+    "tokens_salida": 1,
+    "tiempo": 1.53,
+    "decision": "Sí",
+    "confianza": null,
+    "gasto_usd": 0.00014590000000000002
+  },
+  {
+    "proveedor": "groq",
+    "modelo": "openai/gpt-oss-20b",
+    "tokens_entrada": 523,
+    "tokens_salida": 168,
+    "tiempo": 0.83,
+    "decision": "Sí.",
+    "confianza": null,
+    "gasto_usd": 8.9625e-05
+  },
+  {
+    "proveedor": "openrouter",
+    "modelo": "inclusionai/ling-3.1-flash",
+    "tokens_entrada": 592,
+    "tokens_salida": 274,
+    "tiempo": 4.63,
+    "decision": "No. La cláusula no es válida para el locatario, porque junto con la 9.3 exige que las mejoras pagas por el locatario queden en beneficio del locador sin compensación, lo cual excede lo permitido.",
+    "confianza": null,
+    "gasto_usd": 0.0
+  },
+  {
+    "proveedor": "groq",
+    "modelo": "qwen/qwen3.8-27b",
+    "tokens_entrada": 0,
+    "tokens_salida": 0,
+    "tiempo": 0.38,
+    "decision": "\"Error code: 429 - {'error': {'message': \\\"Request too large for model `qwen/qwen3.8-27b` in organization `org_01knygg3ate5a9mqy8my4acsb5` service tier `on_demand` on output tokens per minute (OTPM): Limit 1000, Requested 1226. The request's expected output tokens exceed the enforced limit; reduce max_tokens (or the request's expected output) and try again. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\\\", 'type': 'tokens', 'code': 'rate_limit_exceeded'}}\"",
+    "confianza": null,
+    "gasto_usd": 0.0
+  }
+]

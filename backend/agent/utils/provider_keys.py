@@ -144,6 +144,260 @@ OpenAI-compatible ``{base_url}/models`` + chat-completions endpoints) or
 """
 
 
+DECISION_PROVIDERS: dict[str, dict[str, Any]] = {
+    # Curated gateways for System One decision models, called through the
+    # TypeSafe SDK (``AsyncTypeSafeClient`` with ``sdk_base_url`` + the
+    # stored key). Separate from ``PROVIDER_REGISTRY`` on purpose: decision
+    # models are selected and stored independently from chat models.
+    # ``models`` holds the fallback seed ids; the full model lists come from
+    # the ``decision_catalog`` table synced from
+    # ``models.dev/api.json?type=decision`` (any provider there works, the
+    # curated pair is just the offline fallback).
+    "openrouter": {
+        "label": "OpenRouter",
+        "sdk_base_url": "https://openrouter.ai/api",
+        "key_url": "https://openrouter.ai/settings/keys",
+        "models": ["inception/mercury-decide:free"],
+    },
+    "typesafe": {
+        "label": "TypeSafe",
+        "sdk_base_url": "https://api.typesafe.ai",
+        "key_url": "https://console.typesafe.ai/keys",
+        "models": ["jev-latest"],
+    },
+}
+"""Curated gateways for decision models (System One API).
+
+``sdk_base_url`` is the base passed to the TypeSafe SDK. Any provider
+present in the ``decision_catalog`` table (synced from
+``models.dev?type=decision``) is also accepted: its SDK base URL is
+derived from the catalog ``api`` field when it has no curated entry.
+"""
+
+
+def _decision_sdk_base_url(provider_id: str, catalog_api: str | None = None) -> str | None:
+    """Resolve the TypeSafe SDK base URL for a decision provider.
+
+    Curated gateways use their ``sdk_base_url``; any other catalog
+    provider derives it from the models.dev ``api`` field (trailing
+    ``/v1`` stripped, matching the OpenRouter convention).
+
+    Args:
+        provider_id: Normalized provider id.
+        catalog_api: ``api`` value from the decision catalog, if known.
+
+    Returns:
+        The SDK base URL, or ``None`` when it cannot be resolved.
+    """
+    try:
+        curated = DECISION_PROVIDERS.get(provider_id)
+        if curated and curated.get("sdk_base_url"):
+            return str(curated["sdk_base_url"]).rstrip("/")
+        api = (catalog_api or "").strip()
+        if not api:
+            try:
+                from backend.agent.utils import decision_catalog
+
+                api = (decision_catalog.get_api(provider_id) or "").strip()
+            except Exception:
+                api = ""
+        if not api:
+            return None
+        base = api.rstrip("/")
+        if base.lower().endswith("/v1"):
+            base = base[: -len("/v1")].rstrip("/")
+        return base or None
+    except Exception as e:
+        log_error(str(e), source="provider_keys.py:_decision_sdk_base_url")
+        return None
+
+
+def list_decision_providers() -> list[dict[str, Any]]:
+    """Return the decision-provider list for UI dropdowns.
+
+    Model lists come from the ``decision_catalog`` table (synced from
+    ``models.dev?type=decision``, any provider there works). Curated
+    metadata (label, key URL) applies where known; other providers use
+    their id as label.
+
+    Returns:
+        List of ``{"provider", "label", "key_url", "models"}`` dicts
+        (no key material).
+    """
+    try:
+        from backend.agent.utils import decision_catalog
+
+        try:
+            decision_catalog.sync_catalog()
+        except Exception:
+            pass
+        providers = decision_catalog.list_providers()
+        out: list[dict[str, Any]] = []
+        for pid in providers:
+            info = DECISION_PROVIDERS.get(pid, {})
+            out.append({
+                "provider": pid,
+                "label": str(info.get("label") or pid),
+                "key_url": info.get("key_url"),
+                "models": decision_catalog.get_models(pid),
+            })
+        return out
+    except Exception as e:
+        log_error(str(e), source="provider_keys.py:list_decision_providers")
+        return []
+
+
+def is_decision_supported(provider: str) -> bool:
+    """Check whether a provider id offers decision models.
+
+    Any provider present in the ``decision_catalog`` table (synced from
+    ``models.dev?type=decision``) counts, not just the curated pair.
+
+    Args:
+        provider: Provider id (e.g. ``"openrouter"``, ``"nano-gpt"``).
+
+    Returns:
+        True if the provider has decision models in the catalog.
+    """
+    try:
+        pid = (provider or "").strip().lower()
+        if pid in DECISION_PROVIDERS:
+            return True
+        from backend.agent.utils import decision_catalog
+
+        return pid in (decision_catalog.list_providers() or [])
+    except Exception as e:
+        log_error(str(e), source="provider_keys.py:is_decision_supported")
+        return False
+
+
+def get_decision_provider(provider: str) -> dict[str, Any] | None:
+    """Return the decision-provider entry (base URL, key URL, models).
+
+    Curated gateways return their registry entry; any other catalog
+    provider gets a derived entry (SDK base URL from the catalog
+    ``api`` field).
+
+    Args:
+        provider: Provider id (e.g. ``"openrouter"``, ``"nano-gpt"``).
+
+    Returns:
+        The entry dict, or ``None`` when unsupported.
+    """
+    try:
+        pid = (provider or "").strip().lower()
+        if pid in DECISION_PROVIDERS:
+            return DECISION_PROVIDERS.get(pid)
+        from backend.agent.utils import decision_catalog
+
+        if pid not in (decision_catalog.list_providers() or []):
+            return None
+        base_url = _decision_sdk_base_url(pid)
+        if not base_url:
+            return None
+        return {"label": pid, "sdk_base_url": base_url, "key_url": None, "models": decision_catalog.get_models(pid)}
+    except Exception as e:
+        log_error(str(e), source="provider_keys.py:get_decision_provider")
+        return None
+
+
+def save_decision_key(provider: str, api_key: str) -> dict:
+    """Encrypt and persist an API key for a decision provider.
+
+    Uses the same ``provider_api_keys`` table as chat keys (one key per
+    provider id). Any provider in the decision catalog is accepted.
+
+    Args:
+        provider: Decision provider id (any catalog provider).
+        api_key: The plain-text API key (never stored in clear).
+
+    Returns:
+        Contract response ``{"status": "success"|"error", "message": ...}``.
+    """
+    provider_id = (provider or "").strip().lower()
+    if not is_decision_supported(provider_id):
+        return {"status": "error", "message": f"Provider inválido: '{provider}'."}
+    if not api_key or not api_key.strip():
+        return {"status": "error", "message": "La API key no puede estar vacía."}
+    fernet = _load_fernet()
+    if fernet is None:
+        return {
+            "status": "error",
+            "message": "Cifrado no disponible (falta el paquete 'cryptography').",
+        }
+    try:
+        encrypted = fernet.encrypt(api_key.strip().encode("utf-8")).decode("ascii")
+        now = datetime.now().isoformat()
+        conn = _connect()
+        if conn is None:
+            return {"status": "error", "message": "No se pudo abrir la base de datos."}
+        try:
+            with conn:
+                conn.execute(
+                    load_query("providers/upsert_key.sql"),
+                    (provider_id, encrypted, now),
+                )
+        finally:
+            conn.close()
+        return {"status": "success", "message": f"API key de {provider_id} guardada."}
+    except Exception as e:
+        log_error(str(e), source="provider_keys.py:save_decision_key")
+        return {"status": "error", "message": f"Error guardando la API key: {e}"}
+
+
+def get_decision_key(provider: str) -> str | None:
+    """Return the decrypted API key for a decision provider, or ``None``.
+
+    Backend-only helper: the decrypted key must never be returned to the
+    frontend. Keys are resolved only from the encrypted DB storage.
+
+    Args:
+        provider: Decision provider id (any catalog provider).
+
+    Returns:
+        The plain-text API key, or ``None`` if not stored / undecryptable.
+    """
+    provider_id = (provider or "").strip().lower()
+    if not is_decision_supported(provider_id):
+        return None
+    return get_key(provider_id) if provider_id in PROVIDER_REGISTRY else _get_key_raw(provider_id)
+
+
+def _get_key_raw(provider_id: str) -> str | None:
+    """Decrypt the stored key for a provider id outside ``PROVIDER_REGISTRY``.
+
+    Same table and crypto as :func:`get_key`, without the registry gate
+    (decision-only providers such as ``"typesafe"`` live in
+    ``DECISION_PROVIDERS``).
+
+    Args:
+        provider_id: Normalized provider id.
+
+    Returns:
+        The plain-text API key, or ``None`` if not stored / undecryptable.
+    """
+    fernet = _load_fernet()
+    if fernet is None:
+        return None
+    try:
+        conn = _connect()
+        if conn is None:
+            return None
+        try:
+            row = conn.execute(
+                load_query("providers/get_encrypted_key.sql"),
+                (provider_id,),
+            ).fetchone()
+        finally:
+            conn.close()
+        if row is None:
+            return None
+        return fernet.decrypt(row["api_key_encrypted"].encode("ascii")).decode("utf-8")
+    except Exception as e:
+        log_error(str(e), source="provider_keys.py:_get_key_raw")
+        return None
+
+
 def list_supported() -> list[dict[str, str | None]]:
     """Return the curated provider list for UI dropdowns.
 

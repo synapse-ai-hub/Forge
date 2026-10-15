@@ -13,6 +13,7 @@ anyio>=4.13.0
 ollama>=0.1.0
 google-genai>=1.0.0
 openai>=1.0.0
+typesafe-sdk>=0.7.0
 
 # --- File Extraction ---
 pdf2image>=1.16.3

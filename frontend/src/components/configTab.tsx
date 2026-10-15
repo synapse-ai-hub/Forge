@@ -4,7 +4,7 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Collapsible } from "./ui/collapsible";
 import configService from "../services/configService";
-import type { ProviderKeyStatus, AdvancedParams } from "../services/configService";
+import type { ProviderKeyStatus, AdvancedParams, DecisionProvider } from "../services/configService";
 import contextFilesService, { type ContextFile } from "../services/contextFilesService";
 
 interface ConfigTabProps {
@@ -69,6 +69,56 @@ export function ConfigTab({ verboseMode, onVerboseModeChange }: ConfigTabProps) 
   const contextFileInputRef = useRef<HTMLInputElement>(null);
   const isFirstLoadRef = useRef(true);
 
+  /* ---- decision model (System One, independent from chat models) ---- */
+  const [decisionProviders, setDecisionProviders] = useState<DecisionProvider[]>([]);
+  const [decisionEnabled, setDecisionEnabled] = useState(false);
+  const [currentDecisionProvider, setCurrentDecisionProvider] = useState<string | null>(null);
+  const [currentDecisionModel, setCurrentDecisionModel] = useState<string | null>(null);
+  const [pendingDecisionProvider, setPendingDecisionProvider] = useState("");
+  const [pendingDecisionModel, setPendingDecisionModel] = useState<string | null>(null);
+  const [savingDecision, setSavingDecision] = useState(false);
+  const [decisionMessage, setDecisionMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  /* Decision model info (same layout as chat "Info del modelo"). */
+  const [decisionContextWindow, setDecisionContextWindow] = useState<number | null>(null);
+  const [decisionInputLimit, setDecisionInputLimit] = useState<number | null>(null);
+  const [decisionOutputLimit, setDecisionOutputLimit] = useState<number | null>(null);
+  const [decisionInputModalities, setDecisionInputModalities] = useState<string[] | null>(null);
+  const [decisionOutputModalities, setDecisionOutputModalities] = useState<string[] | null>(null);
+  const [decisionCostInput, setDecisionCostInput] = useState<number | null>(null);
+  const [decisionCostOutput, setDecisionCostOutput] = useState<number | null>(null);
+
+  const fetchDecisionInfo = useCallback(async (model: string, provider: string) => {
+    try {
+      const info = await configService.getDecisionCapabilities(model, provider);
+      if (info && info.found !== false) {
+        setDecisionContextWindow(info.context_window ?? null);
+        setDecisionInputLimit(info.input_limit ?? null);
+        setDecisionOutputLimit(info.output_limit ?? null);
+        setDecisionInputModalities(info.input_modalities ?? null);
+        setDecisionOutputModalities(info.output_modalities ?? null);
+        setDecisionCostInput(info.cost_input ?? null);
+        setDecisionCostOutput(info.cost_output ?? null);
+      } else {
+        setDecisionContextWindow(null);
+        setDecisionInputLimit(null);
+        setDecisionOutputLimit(null);
+        setDecisionInputModalities(null);
+        setDecisionOutputModalities(null);
+        setDecisionCostInput(null);
+        setDecisionCostOutput(null);
+      }
+    } catch (err) {
+      console.error("Error fetching decision info:", err);
+      setDecisionContextWindow(null);
+      setDecisionInputLimit(null);
+      setDecisionOutputLimit(null);
+      setDecisionInputModalities(null);
+      setDecisionOutputModalities(null);
+      setDecisionCostInput(null);
+      setDecisionCostOutput(null);
+    }
+  }, []);
+
   /* ---- provider API keys ---- */
   /* Curated providers (mirrors backend PROVIDER_REGISTRY). */
   const KEY_PROVIDER_OPTIONS: Array<{ provider: string; label: string }> = [
@@ -94,6 +144,14 @@ export function ConfigTab({ verboseMode, onVerboseModeChange }: ConfigTabProps) 
   const [savingKeyProvider, setSavingKeyProvider] = useState<string | null>(null);
   const [keysError, setKeysError] = useState<string | null>(null);
 
+  /* All key providers in one dropdown: chat + decision-only (same table). */
+  const keyOptions: Array<{ provider: string; label: string }> = [
+    ...KEY_PROVIDER_OPTIONS,
+    ...decisionProviders
+      .filter((p) => !KEY_PROVIDER_OPTIONS.some((o) => o.provider === p.provider))
+      .map((p) => ({ provider: p.provider, label: `${p.label} (decisión)` })),
+  ];
+
   const loadProviderKeys = useCallback(async () => {
     try {
       const resp = await configService.getProviderKeys();
@@ -103,15 +161,17 @@ export function ConfigTab({ verboseMode, onVerboseModeChange }: ConfigTabProps) 
       setKeyProvider((prev) => {
         if (prev) return prev;
         const configured = new Set(keys.filter((k) => k.configured).map((k) => k.provider));
+        const options =
+          keyOptions.length > 0 ? keyOptions : KEY_PROVIDER_OPTIONS;
         return (
-          KEY_PROVIDER_OPTIONS.find((o) => !configured.has(o.provider))?.provider ||
-          KEY_PROVIDER_OPTIONS[0].provider
+          options.find((o) => !configured.has(o.provider))?.provider ||
+          options[0].provider
         );
       });
     } catch (err) {
       console.error("Error cargando API keys:", err);
     }
-  }, []);
+  }, [decisionProviders]);
 
   useEffect(() => {
     loadProviderKeys();
@@ -158,11 +218,12 @@ export function ConfigTab({ verboseMode, onVerboseModeChange }: ConfigTabProps) 
   const load = useCallback(async (prov?: string) => {
     try {
       setLoading(true);
-      const [provResp, m, cw, prm] = await Promise.all([
+      const [provResp, m, cw, prm, dec] = await Promise.all([
         configService.getProviders(),
         configService.getModels(prov),
         configService.getContextWindow(),
         configService.getParameters().catch(() => null),
+        configService.getDecisionModels().catch(() => null),
       ]);
       setProviders(provResp.providers || []);
       setModels(m.models || []);
@@ -203,6 +264,18 @@ export function ConfigTab({ verboseMode, onVerboseModeChange }: ConfigTabProps) 
         setSavedParams(p);
         setReasoningSupported(prm.reasoning_supported);
         setResponseFormatSupported(prm.response_format_supported);
+      }
+      // Decision section: providers come from the decision_catalog table.
+      if (dec && dec.status === "success") {
+        setDecisionProviders(dec.providers || []);
+        setDecisionEnabled(dec.enabled === true);
+        setCurrentDecisionProvider(dec.provider || null);
+        setCurrentDecisionModel(dec.model || null);
+        setPendingDecisionProvider(dec.provider || "");
+        setPendingDecisionModel(dec.model || null);
+        if (dec.model && dec.provider) {
+          fetchDecisionInfo(dec.model, dec.provider);
+        }
       }
     } catch (err) {
       console.error("Error cargando configuración:", err);
@@ -396,6 +469,66 @@ export function ConfigTab({ verboseMode, onVerboseModeChange }: ConfigTabProps) 
       console.error("Error guardando contexto:", err);
     } finally {
       setSavingContext(false);
+    }
+  };
+
+  /* ---- decision model handlers (independent from chat models) ---- */
+  /* Like chat models: only providers with a stored key are selectable. */
+  const configuredDecisionProviders = decisionProviders.filter((p) =>
+    providerKeys.some((k) => k.provider === p.provider && k.configured),
+  );
+
+  const decisionModelsFor = (provider: string): string[] =>
+    decisionProviders.find((p) => p.provider === provider)?.models || [];
+
+  const handleToggleDecision = async (enabled: boolean) => {
+    try {
+      setDecisionMessage(null);
+      await configService.setDecisionEnabled(enabled);
+      setDecisionEnabled(enabled);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Error al guardar el estado de decisión.";
+      console.error("Error guardando estado de decisión:", err);
+      setDecisionMessage({ type: "error", text: msg });
+    }
+  };
+
+  const handleDecisionProviderChange = (value: string) => {
+    setPendingDecisionProvider(value);
+    const models = decisionModelsFor(value);
+    const next = models.length > 0 ? models[0] : null;
+    setPendingDecisionModel(next);
+    if (next) {
+      fetchDecisionInfo(next, value);
+    } else {
+      setDecisionContextWindow(null);
+      setDecisionInputLimit(null);
+      setDecisionOutputLimit(null);
+      setDecisionInputModalities(null);
+      setDecisionOutputModalities(null);
+      setDecisionCostInput(null);
+      setDecisionCostOutput(null);
+    }
+  };
+
+  const handleApplyDecision = async () => {
+    const isSame =
+      pendingDecisionModel === currentDecisionModel &&
+      pendingDecisionProvider === (currentDecisionProvider || "");
+    if (!decisionEnabled || !pendingDecisionModel || !pendingDecisionProvider || isSame || savingDecision) return;
+    try {
+      setSavingDecision(true);
+      setDecisionMessage(null);
+      await configService.selectDecisionModel(pendingDecisionModel, pendingDecisionProvider);
+      setCurrentDecisionModel(pendingDecisionModel);
+      setCurrentDecisionProvider(pendingDecisionProvider);
+      setDecisionMessage({ type: "success", text: "Modelo de decisión aplicado correctamente." });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Error al aplicar el modelo de decisión.";
+      console.error("Error aplicando modelo de decisión:", err);
+      setDecisionMessage({ type: "error", text: msg });
+    } finally {
+      setSavingDecision(false);
     }
   };
 
@@ -730,6 +863,199 @@ export function ConfigTab({ verboseMode, onVerboseModeChange }: ConfigTabProps) 
         </div>
       )}
 
+      {/* Modelo de decisión (System One, independiente del modelo de chat) */}
+      <div className="pt-2 border-t border-app-border">
+        <div className="flex items-center justify-between py-2">
+          <div>
+            <div className="text-xs font-medium text-app-text-secondary">
+              Modelo de decisión
+            </div>
+            <p className="text-[11px] text-app-text-secondary mt-1">
+              Valida cierres y decisiones con un modelo System One. Si está apagado, el flujo actual no cambia.
+            </p>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={decisionEnabled}
+            onClick={() => handleToggleDecision(!decisionEnabled)}
+            className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none focus:ring-2 focus:ring-app-primary-light ${
+              decisionEnabled ? "bg-app-primary" : "bg-app-bg-tertiary"
+            }`}
+          >
+            <span
+              className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${
+                decisionEnabled ? "translate-x-4" : "translate-x-0"
+              }`}
+            />
+          </button>
+        </div>
+
+        <div className={decisionEnabled ? "space-y-5" : "opacity-50 pointer-events-none space-y-5"}>
+          <div>
+            <div className="text-xs font-medium text-app-text-secondary">
+              Proveedor de decisión
+            </div>
+            <select
+            value={pendingDecisionProvider}
+            onChange={(e) => handleDecisionProviderChange(e.target.value)}
+            disabled={!decisionEnabled || savingDecision}
+            className="mt-1 w-full rounded-lg border border-app-border bg-white px-3 py-2 text-sm text-app-text focus:outline-none focus:ring-2 focus:ring-app-primary-light"
+          >
+            {pendingDecisionProvider === "" && (
+              <option value="">Seleccion&aacute; un proveedor</option>
+            )}
+            {configuredDecisionProviders.length === 0 ? (
+              <option value="">No hay proveedores disponibles</option>
+            ) : (
+              configuredDecisionProviders.map((p) => (
+                <option key={p.provider} value={p.provider}>
+                  {p.label}
+                </option>
+              ))
+            )}
+            </select>
+          </div>
+
+          <div>
+            <div className="text-xs font-medium text-app-text-secondary">
+              Modelo de decisión
+            </div>
+            <select
+            value={pendingDecisionModel || ""}
+            onChange={(e) => {
+              const next = e.target.value || null;
+              setPendingDecisionModel(next);
+              if (next && pendingDecisionProvider) {
+                fetchDecisionInfo(next, pendingDecisionProvider);
+              } else {
+                setDecisionContextWindow(null);
+                setDecisionInputLimit(null);
+                setDecisionOutputLimit(null);
+                setDecisionInputModalities(null);
+                setDecisionOutputModalities(null);
+                setDecisionCostInput(null);
+                setDecisionCostOutput(null);
+              }
+            }}
+            disabled={!decisionEnabled || savingDecision || decisionModelsFor(pendingDecisionProvider).length === 0}
+            className="mt-1 w-full rounded-lg border border-app-border bg-white px-3 py-2 text-sm text-app-text focus:outline-none focus:ring-2 focus:ring-app-primary-light"
+          >
+            {decisionModelsFor(pendingDecisionProvider).length === 0 ? (
+              <option value="">No hay modelos disponibles</option>
+            ) : (
+              decisionModelsFor(pendingDecisionProvider).map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))
+              )}
+            </select>
+          </div>
+
+          {(decisionContextWindow !== null || decisionInputLimit !== null || decisionOutputLimit !== null || decisionInputModalities !== null || decisionOutputModalities !== null || decisionCostInput !== null || decisionCostOutput !== null) && (
+            <Collapsible title="Info del modelo">
+              <div className="space-y-1.5">
+                {decisionInputModalities !== null && decisionInputModalities.length > 0 && (
+                  <div className="flex justify-between items-center text-[11px]">
+                    <span className="text-app-text-secondary">Entrada</span>
+                    <span className="text-app-primary font-medium">{decisionInputModalities.map(m => m.charAt(0).toUpperCase() + m.slice(1)).join(", ")}</span>
+                  </div>
+                )}
+                {decisionOutputModalities !== null && decisionOutputModalities.length > 0 && (
+                  <div className="flex justify-between items-center text-[11px]">
+                    <span className="text-app-text-secondary">Salida</span>
+                    <span className="text-app-primary font-medium">{decisionOutputModalities.map(m => m.charAt(0).toUpperCase() + m.slice(1)).join(", ")}</span>
+                  </div>
+                )}
+                {decisionContextWindow !== null && (
+                  <div className="flex justify-between items-center text-[11px]">
+                    <span className="text-app-text-secondary">Contexto</span>
+                    <span className="text-app-primary font-medium">{decisionContextWindow.toLocaleString()} tokens</span>
+                  </div>
+                )}
+                {decisionInputLimit !== null && (
+                  <div className="flex justify-between items-center text-[11px]">
+                    <span className="text-app-text-secondary">Entrada máx</span>
+                    <span className="text-app-primary font-medium">{decisionInputLimit.toLocaleString()} tokens</span>
+                  </div>
+                )}
+                {decisionOutputLimit !== null && (
+                  <div className="flex justify-between items-center text-[11px]">
+                    <span className="text-app-text-secondary">Salida máx</span>
+                    <span className="text-app-primary font-medium">{decisionOutputLimit.toLocaleString()} tokens</span>
+                  </div>
+                )}
+                {(decisionCostInput !== null || decisionCostOutput !== null) && (
+                  <div className="flex justify-between items-center text-[11px]">
+                    <span className="text-app-text-secondary">Costo</span>
+                    <span className="text-app-primary font-medium">
+                      {decisionCostInput !== null && `In $${decisionCostInput}`}
+                      {decisionCostInput !== null && decisionCostOutput !== null && " · "}
+                      {decisionCostOutput !== null && `Out $${decisionCostOutput}`}
+                      <span className="text-app-text-secondary font-normal"> /M tok</span>
+                    </span>
+                  </div>
+                )}
+              </div>
+            </Collapsible>
+          )}
+
+          {/* Single Apply button for decision provider + model */}
+          <Button
+            onClick={handleApplyDecision}
+            disabled={
+              savingDecision ||
+              !pendingDecisionModel ||
+              !pendingDecisionProvider ||
+              (pendingDecisionModel === currentDecisionModel &&
+                pendingDecisionProvider === (currentDecisionProvider || ""))
+            }
+            variant="gradient"
+            className="w-full"
+          >
+            {savingDecision ? (
+              <>
+                <svg
+                  className="animate-spin -ml-1 mr-2 h-4 w-4"
+                  xmlns="http://www.w3.org/2000/svg"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                >
+                  <circle
+                    className="opacity-25"
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    stroke="currentColor"
+                    strokeWidth="4"
+                  />
+                  <path
+                    className="opacity-75"
+                    fill="currentColor"
+                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                  />
+                </svg>
+                Aplicando...
+              </>
+            ) : (
+              "Aplicar"
+            )}
+          </Button>
+          {decisionMessage && (
+            <div
+              className={`text-xs rounded-lg px-3 py-2 border ${
+                decisionMessage.type === "success"
+                  ? "text-green-700 bg-green-50 border-green-200"
+                  : "text-red-600 bg-red-50 border-red-200"
+              }`}
+            >
+              {decisionMessage.text}
+            </div>
+          )}
+        </div>
+      </div>
+
       {/* API keys de providers */}
       <Collapsible title="API keys de proveedores">
         <p className="text-[11px] text-app-text-secondary mb-2">
@@ -750,7 +1076,7 @@ export function ConfigTab({ verboseMode, onVerboseModeChange }: ConfigTabProps) 
               }}
               className="flex-1 rounded-lg border border-app-border bg-white px-2 py-1.5 text-xs text-app-text focus:outline-none focus:ring-2 focus:ring-app-primary-light"
             >
-              {KEY_PROVIDER_OPTIONS.map((o) => (
+              {keyOptions.map((o) => (
                 <option key={o.provider} value={o.provider}>
                   {o.label}{isKeyConfigured(o.provider) ? " ✓" : ""}
                 </option>

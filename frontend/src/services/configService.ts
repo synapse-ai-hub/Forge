@@ -107,6 +107,21 @@ export interface ModelCapabilitiesResponse {
   cost_output: number | null;
 }
 
+export interface DecisionProvider {
+  provider: string;
+  label: string;
+  key_url?: string;
+  models: string[];
+}
+
+export interface DecisionModelsResponse {
+  status: string;
+  providers: DecisionProvider[];
+  provider: string | null;
+  model: string | null;
+  enabled: boolean;
+}
+
 export const configService = {
   /** List available models and the currently selected one. */
   async getModels(provider?: string): Promise<ModelsResponse> {
@@ -279,6 +294,8 @@ export const configService = {
       throw new Error(result.message || `HTTP ${response.status}`);
     }
   },
+
+
 
   /** Whether the initial provider-setup screen was already completed/skipped. */
   async getSetupCompleted(): Promise<SetupCompletedResponse> {
@@ -498,6 +515,75 @@ export const configService = {
       throw new Error(data.message || `HTTP ${response.status}`);
     }
     return { yaml: data.data?.yaml || "", name: data.data?.name || "" };
+  },
+
+  /** List decision providers (from the decision_catalog table) + current selection. */
+  async getDecisionModels(): Promise<DecisionModelsResponse> {
+    const response = await fetch(`${API_BASE_URL}/api/config/models/decision`, {
+      method: "GET",
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    return response.json();
+  },
+
+  /** Select a decision provider + model (must exist in the decision catalog). */
+  async selectDecisionModel(model: string, provider: string): Promise<void> {
+    const response = await fetch(`${API_BASE_URL}/api/config/models/decision/select`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model, provider }),
+    });
+    const result = await response.json().catch(() => null);
+    if (!response.ok) {
+      throw new Error(
+        (result && result.message) || `HTTP ${response.status}: ${response.statusText}`
+      );
+    }
+    if (result && result.status === "error") {
+      throw new Error(result.message || "Error al seleccionar el modelo de decisión");
+    }
+  },
+
+  /** Get catalog info for a decision model (same layout as chat model info). */
+  async getDecisionCapabilities(model: string, provider: string): Promise<{
+    status: string;
+    found?: boolean;
+    context_window: number | null;
+    input_limit: number | null;
+    output_limit: number | null;
+    input_modalities: string[] | null;
+    output_modalities: string[] | null;
+    cost_input: number | null;
+    cost_output: number | null;
+  }> {
+    const response = await fetch(
+      `${API_BASE_URL}/api/config/models/decision/capabilities?model=${encodeURIComponent(model)}&provider=${encodeURIComponent(provider)}`,
+      { method: "GET" }
+    );
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    return response.json();
+  },
+
+  /** Enable or disable the decision section. */
+  async setDecisionEnabled(enabled: boolean): Promise<void> {
+    const response = await fetch(`${API_BASE_URL}/api/config/models/decision/enabled`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled }),
+    });
+    const result = await response.json().catch(() => null);
+    if (!response.ok) {
+      throw new Error(
+        (result && result.message) || `HTTP ${response.status}: ${response.statusText}`
+      );
+    }
+    if (result && result.status === "error") {
+      throw new Error(result.message || "Error al guardar el estado de decisión");
+    }
   },
 };
 

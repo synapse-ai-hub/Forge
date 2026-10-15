@@ -84,6 +84,17 @@ from backend.agent.utils.model_resolver import (
     get_vram_gb,
     ollama_default_context,
 )
+from backend.agent.utils.decision import should_close_step, should_keep_pending
+from backend.agent.utils.frontier_helpers import (
+    build_resume_message,
+    clear_session,
+    clear_turn,
+    collect_garbage,
+    extract_task_child_id,
+    mark_call_done,
+    record_block_dispatch,
+    set_task_child,
+)
 from backend.agent.utils.spend_handler import check_spend_limit
 from backend.agent.utils.rate_limit_handler import (
     classify_error_category,
@@ -649,6 +660,45 @@ class AgentLoop:
             session_manager.save_message(
                 session_id, "user", content=user_message, turn_number=turn_number,
             )
+
+            # --- 5a. Resume unsettled frontier (read-first) ---
+            # A cut flow leaves open rows behind (they are only deleted on
+            # validated close). They are read FIRST, before the LLM runs,
+            # and injected as an ephemeral system message: facts only,
+            # nothing truncated. In-memory only, never persisted — the
+            # same pattern as the empty-response hint. Confirmed rows
+            # older than the TTL are garbage-collected first (open rows
+            # are never collected: any future turn may resume them).
+            try:
+                collect_garbage(float(os.getenv("FRONTIER_TTL_HOURS", "24") or 24))
+            except Exception as exc:
+                log_error(str(exc), source="loop.py:run(frontier_gc)")
+            # Continuity gate (Option A): when the new message is unrelated
+            # to the pending frontier, discard it instead of re-injecting
+            # it forever. Only runs with a decision model enabled; without
+            # one should_keep_pending returns True (current behavior).
+            # Emits a "decision" SSE event so the frontend can render it
+            # as a card (ignored by older frontends).
+            try:
+                keep_pending = await should_keep_pending(session_id, effective_message)
+            except Exception as exc:
+                log_error(str(exc), source="loop.py:run(continuity)")
+                keep_pending = True
+            if not keep_pending:
+                try:
+                    clear_session(session_id)
+                except Exception as exc:
+                    log_error(str(exc), source="loop.py:run(continuity_clear)")
+                yield f"data: {json.dumps({'type': 'decision', 'content': {'action': 'discarded', 'reason': 'unrelated'}}, ensure_ascii=False)}\n\n"
+                resume_text = None
+            else:
+                try:
+                    resume_text = build_resume_message(session_id)
+                except Exception as exc:
+                    log_error(str(exc), source="loop.py:run(resume)")
+                    resume_text = None
+            if resume_text:
+                messages.append({"role": "system", "content": resume_text})
 
             # --- 5b. Generate title on first turn (root sessions only, non-blocking) ---
             # Sub-agents (depth > 0) skip title generation entirely: each one
@@ -1236,6 +1286,35 @@ class AgentLoop:
                             tc_index += len(batch)
                             continue
 
+                    # ---- Record the dispatched block in the step frontier ----
+                    # One open row per call, written BEFORE execution so a
+                    # cut flow leaves them behind for the next turn. Rows
+                    # flip to done on ordered commit and are only deleted
+                    # when the step closes with a validated done signal.
+                    # Never breaks the loop (the helper never raises).
+                    # Id-less provider payloads (e.g. Google wire format)
+                    # carry no call ids: synthesize a stable internal id so
+                    # dispatch rows and saved results join exactly. Without
+                    # it, parallel same-tool calls share a NULL id and all
+                    # resolve to one result.
+                    for _idx, _btc, _c, _q in pending:
+                        if isinstance(_btc, dict) and not _btc.get("id"):
+                            _btc["id"] = f"tc-{turn_number}-{step}-{_idx}"
+                    record_block_dispatch(
+                        session_id,
+                        turn_number,
+                        step,
+                        [
+                            (
+                                idx,
+                                btc.get("id", ""),
+                                btc.get("name", "?"),
+                                btc.get("args") or {},
+                            )
+                            for idx, btc, _cfg, _queue in pending
+                        ],
+                    )
+
                     # ---- Execute the whole block concurrently ----
                     # Every queued call runs under its own ContextVar
                     # snapshot. Sub-agent event queues are multiplexed to
@@ -1390,6 +1469,10 @@ class AgentLoop:
                         else:
                             tool_msg = {
                                 "role": "tool",
+                                # Synthesized at dispatch when the provider
+                                # sends none (Google): internal tracking only,
+                                # the Gemini converter never sends it out.
+                                "tool_call_id": tc.get("id", ""),
                                 "tool_name": tc["name"],
                                 "content": tool_content,
                             }
@@ -1418,6 +1501,18 @@ class AgentLoop:
                             message=str(result_data.get("message", "Tool failed"))[:500] if isinstance(result_data, dict) and result_data.get("status") == "error" else "",
                             usage={"total_time": block_durations.get(idx, 0.0)},
                         )
+
+                        # The result committed: flip its frontier row to done.
+                        mark_call_done(session_id, turn_number, step, idx)
+                        # A task call exposes its child session id in the
+                        # result XML: attach it to the frontier row so the
+                        # child stays visible to the parent.
+                        if tc.get("name") == "task":
+                            child_id = extract_task_child_id(result_data)
+                            if child_id:
+                                set_task_child(
+                                    session_id, turn_number, step, idx, child_id
+                                )
 
                         # Collect result for assistant message's tool_results field
                         tool_results.append({
@@ -1520,6 +1615,13 @@ class AgentLoop:
                             "time_to_first_token": (usage_data or {}).get("time_to_first_token"),
                         },
                 )
+
+                # Validated done signal (final content, no tool_calls):
+                # the step closes only when the decision accepts it
+                # (LLM signal alone, or JEV verdict when configured).
+                # Otherwise the frontier stays for the next turn.
+                if await should_close_step(session_id, turn_number, cleaned, step=step):
+                    clear_turn(session_id, turn_number)
 
                 # Emit the session title before [DONE] so the sidebar refreshes
                 # with the generated title even if it finished after the loop.

@@ -128,16 +128,24 @@ def _set_sync_timestamp(provider: str) -> None:
 # Fetch from models.dev
 # ---------------------------------------------------------------------------
 
-def _fetch_models_dev() -> dict[str, Any]:
+def _fetch_models_dev(model_type: str | None = None) -> dict[str, Any]:
     """Download the full catalog from models.dev.
+
+    Args:
+        model_type: Optional models.dev type filter (e.g. ``"decision"``).
+            ``None`` (default) fetches the default catalog, which omits
+            specialized model types.
 
     Returns:
         The parsed JSON dict (provider → data).
     """
     import requests
 
+    url = _MODELS_DEV_URL
+    if model_type:
+        url = f"{_MODELS_DEV_URL}?type={model_type}"
     resp = requests.get(
-        _MODELS_DEV_URL,
+        url,
         headers={"User-Agent": "synapseForge/1.0"},
         timeout=_TIMEOUT_SECONDS,
     )
@@ -177,6 +185,7 @@ def _extract_provider_models(catalog: dict, provider: str) -> list[dict]:
         rows.append({
             "provider": provider,
             "model_id": model_id,
+            "type": model_data.get("type"),
             "name": model_data.get("name"),
             "description": model_data.get("description"),
             "family": model_data.get("family"),

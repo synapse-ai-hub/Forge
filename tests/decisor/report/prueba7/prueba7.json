@@ -1,0 +1,52 @@
+[
+  {
+    "proveedor": "openrouter",
+    "modelo": "inception/mercury-decide:free",
+    "tokens_entrada": 1376,
+    "tokens_salida": 1,
+    "tiempo": 1.12,
+    "decision": 1.0,
+    "confianza": null,
+    "gasto_usd": 0.0
+  },
+  {
+    "proveedor": "google",
+    "modelo": "gemini-3.5-flash-lite",
+    "tokens_entrada": 1477,
+    "tokens_salida": 1,
+    "tiempo": 1.44,
+    "decision": "Sí",
+    "confianza": null,
+    "gasto_usd": 0.0004456
+  },
+  {
+    "proveedor": "groq",
+    "modelo": "openai/gpt-oss-20b",
+    "tokens_entrada": 1340,
+    "tokens_salida": 1224,
+    "tiempo": 1.84,
+    "decision": "Sí.",
+    "confianza": null,
+    "gasto_usd": 0.0004677
+  },
+  {
+    "proveedor": "openrouter",
+    "modelo": "inclusionai/ling-3.1-flash",
+    "tokens_entrada": 1526,
+    "tokens_salida": 11262,
+    "tiempo": 110.78,
+    "decision": "No, no se aprueba.\n\nIncumplimiento: al recibir 400/401/403/404/422, `NonRetryableError` se lanza dentro del `try` pero no hereda de `requests.RequestException`, por lo que el `except` no la captura: ese intento fallido no genera el `logger.warning` obligatorio (los warnings solo se emiten en la rama de errores reintentables; el test citado solo cubre esa rama). Además, `max_attempts` es un parámetro sobrescribible por el caller, con lo que no se garantiza el corte máximo de 5 intentos.\n\nCon un solo incumplimiento, la regla de merge no se cumple.",
+    "confianza": null,
+    "gasto_usd": 0.0
+  },
+  {
+    "proveedor": "groq",
+    "modelo": "qwen/qwen3.8-27b",
+    "tokens_entrada": 1391,
+    "tokens_salida": 2,
+    "tiempo": 0.47,
+    "decision": "Sí",
+    "confianza": null,
+    "gasto_usd": 0.0011208
+  }
+]
