@@ -1,11 +1,10 @@
 """Decision model catalog — System One models in SQLite.
 
 Synced from ``https://models.dev/api.json?type=decision`` (any provider
-with decision models, not just a curated pair). The ``decision_catalog``
-table holds one row per ``(provider, model_id)``; the dropdowns (``GET
-/config/models/decision``) read from this table. When the sync cannot run
-(offline), :func:`ensure_seeded` keeps the curated fallback so the feature
-stays usable.
+with decision models). The ``decision_catalog`` table holds one row per
+``(provider, model_id)``; the dropdowns (``GET /config/models/decision``)
+read from this table. If the sync has not run yet (offline or first start),
+the catalog is empty and no models are shown.
 """
 
 from __future__ import annotations
@@ -161,110 +160,6 @@ def sync_catalog() -> dict:
         return {"status": "success", "models": len(rows)}
     except Exception as e:
         log_error(str(e), source="decision_catalog.py:sync_catalog(insert)")
-        return {"status": "error", "message": f"Database error: {e}"}
-    finally:
-        conn.close()
-
-
-def ensure_seeded() -> dict:
-    """Insert the curated decision models if missing (idempotent).
-
-    Returns:
-        ``{"status": "success", "models": count}`` or
-        ``{"status": "error", "message": ...}``.
-    """
-    try:
-        from backend.agent.utils import provider_keys
-    except Exception as e:
-        log_error(str(e), source="decision_catalog.py:ensure_seeded(import)")
-        return {"status": "error", "message": f"Could not load providers: {e}"}
-
-    import json as _json
-
-    now = datetime.now(timezone.utc).isoformat()
-    costs: dict[str, dict[str, float | None]] = {
-        # Verified costs (input/output USD per 1M tokens).
-        "inception/mercury-decide:free": {"input": 0.0, "output": 0.0},
-        "jev-latest": {"input": 0.042, "output": 0.0},
-    }
-    # Verified core fields for curated models that models.dev does not
-    # list (source: https://docs.typesafe.ai/models — Jev 1.13: 64k
-    # context per request, text-only input, output tokens free).
-    # Only fills fields that are currently NULL; never overwrites data.
-    seed_extras: dict[tuple[str, str], dict[str, Any]] = {
-        ("typesafe", "jev-latest"): {
-            "context_window": 64000,
-            "modalities_input": _json.dumps(["text"]),
-            "modalities_output": _json.dumps(["text"]),
-        },
-    }
-    rows: list[dict[str, Any]] = []
-    for pid, info in (provider_keys.DECISION_PROVIDERS or {}).items():
-        for model_id in info.get("models") or []:
-            # Never overwrite synced data: the seed is a fallback for
-            # models missing from models.dev, not an authority.
-            try:
-                existing = get_model(pid, str(model_id))
-            except Exception:
-                existing = None
-            if existing is not None:
-                extras = seed_extras.get((pid, str(model_id)))
-                if extras:
-                    merged = dict(existing)
-                    filled = False
-                    for key, value in extras.items():
-                        if merged.get(key) is None and value is not None:
-                            merged[key] = value
-                            filled = True
-                    if filled:
-                        merged["updated_at"] = now
-                        rows.append(merged)
-                continue
-            cost = costs.get(str(model_id), {"input": None, "output": None})
-            extras = seed_extras.get((pid, str(model_id)), {})
-            rows.append({
-                "provider": pid,
-                "model_id": model_id,
-                "type": "decision",
-                "name": None,
-                "description": None,
-                "family": None,
-                "context_window": extras.get("context_window"),
-                "input_limit": None,
-                "output_limit": None,
-                "reasoning": 0,
-                "reasoning_options": None,
-                "tool_call": 0,
-                "attachment": 0,
-                "temperature": 0,
-                "structured_output": 0,
-                "modalities_input": extras.get("modalities_input"),
-                "modalities_output": extras.get("modalities_output"),
-                "cost_input": cost["input"],
-                "cost_output": cost["output"],
-                "cost_cache_read": None,
-                "cost_cache_write": None,
-                "open_weights": 0,
-                "status": None,
-                "api": None,
-                "npm": None,
-                "updated_at": now,
-            })
-    if not rows:
-        return {"status": "error", "message": "No curated decision models."}
-
-    conn = _connect()
-    if conn is None:
-        return {"status": "error", "message": "Could not open database."}
-    try:
-        with conn:
-            conn.executemany(
-                load_query("decision_catalog/upsert_model.sql"),
-                rows,
-            )
-        return {"status": "success", "models": len(rows)}
-    except Exception as e:
-        log_error(str(e), source="decision_catalog.py:ensure_seeded(insert)")
         return {"status": "error", "message": f"Database error: {e}"}
     finally:
         conn.close()

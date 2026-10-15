@@ -381,9 +381,6 @@ async def list_provider_keys() -> JSONResponse:
         try:
             from backend.agent.utils import decision_catalog
 
-            # Seed first (fallback rows), then sync (authority). The seed
-            # never overwrites existing rows, so synced data always wins.
-            decision_catalog.ensure_seeded()
             try:
                 decision_catalog.sync_catalog()
             except Exception:
