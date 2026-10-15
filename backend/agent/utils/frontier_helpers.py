@@ -184,8 +184,9 @@ def _user_text(session_id: str, turn_number: int) -> str:
 def _tool_result_text(row: dict[str, Any]) -> str:
     """Return the last recorded tool result for a frontier row.
 
-    Matches by exact ``tool_call_id`` first, falling back to
-    ``(turn, step, tool_name)`` when the id is NULL (Google wire format).
+    Matches by exact ``tool_call_id`` first (ids are synthesized at
+    dispatch when the provider sends none), falling back to
+    ``(turn, step, tool_name)`` for legacy rows without id.
 
     Args:
         row: Frontier row dict.

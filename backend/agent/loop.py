@@ -1292,6 +1292,14 @@ class AgentLoop:
                     # flip to done on ordered commit and are only deleted
                     # when the step closes with a validated done signal.
                     # Never breaks the loop (the helper never raises).
+                    # Id-less provider payloads (e.g. Google wire format)
+                    # carry no call ids: synthesize a stable internal id so
+                    # dispatch rows and saved results join exactly. Without
+                    # it, parallel same-tool calls share a NULL id and all
+                    # resolve to one result.
+                    for _idx, _btc, _c, _q in pending:
+                        if isinstance(_btc, dict) and not _btc.get("id"):
+                            _btc["id"] = f"tc-{turn_number}-{step}-{_idx}"
                     record_block_dispatch(
                         session_id,
                         turn_number,
@@ -1461,6 +1469,10 @@ class AgentLoop:
                         else:
                             tool_msg = {
                                 "role": "tool",
+                                # Synthesized at dispatch when the provider
+                                # sends none (Google): internal tracking only,
+                                # the Gemini converter never sends it out.
+                                "tool_call_id": tc.get("id", ""),
                                 "tool_name": tc["name"],
                                 "content": tool_content,
                             }
