@@ -1504,28 +1504,14 @@ _SELECTED_WORKFLOW_DEFAULT = "smart"
 def _list_workflow_names() -> list[str]:
     """List available workflow names from disk.
 
-    Scans ``~/.config/synapseForge/workflows/*/workflow.yaml`` with
-    containment checks. Returns sorted names. Never raises.
+    Delegates to ``workflow_loader.list_workflows`` (flat
+    ``~/.config/synapseForge/workflows/<nombre>.yaml`` files).
+    Returns sorted names. Never raises.
     """
     try:
-        from backend.agent.utils.config_dir import get_workflows_dir
+        from backend.agent.utils.workflow_loader import list_workflows
 
-        workflows_dir = get_workflows_dir()
-        names: list[str] = []
-        if not workflows_dir.is_dir():
-            return names
-        for entry in sorted(workflows_dir.iterdir()):
-            try:
-                if not entry.is_dir():
-                    continue
-                if entry.name.startswith("."):
-                    continue
-                yaml_path = entry / "workflow.yaml"
-                if yaml_path.is_file():
-                    names.append(entry.name)
-            except (OSError, ValueError):
-                continue
-        return names
+        return list_workflows()
     except Exception as exc:
         log_error(str(exc), source="backend/routes/config.py:_list_workflow_names")
         return []
@@ -1649,7 +1635,7 @@ async def validate_workflow_endpoint(payload: dict[str, Any]) -> JSONResponse:
 
 @router.post("/workflows/save")
 async def save_workflow_endpoint(payload: dict[str, Any]) -> JSONResponse:
-    """Validate and save a workflow YAML under workflows/<name>/workflow.yaml."""
+    """Validate and save a workflow YAML as workflows/<name>.yaml (flat file)."""
     try:
         import os as _os
         import re as _re
@@ -1688,15 +1674,12 @@ async def save_workflow_endpoint(payload: dict[str, Any]) -> JSONResponse:
             )
         workflows_dir = get_workflows_dir()
         base = _os.path.realpath(workflows_dir)
-        target = _os.path.realpath(workflows_dir / name / "workflow.yaml")
+        target = _os.path.realpath(workflows_dir / f"{name}.yaml")
         if not target.startswith(base + _os.sep):
             return JSONResponse(
                 status_code=400,
                 content={"status": "error", "message": "Ruta no permitida."},
             )
-        target_dir = workflows_dir / name
-        target_dir.mkdir(parents=True, exist_ok=True)
-        (target_dir / "agent").mkdir(parents=True, exist_ok=True)
         with open(target, "w", encoding="utf-8") as fh:
             fh.write(raw if raw.endswith("\n") else raw + "\n")
         return JSONResponse(
@@ -1736,15 +1719,14 @@ async def generate_workflow_endpoint(payload: dict[str, Any]) -> JSONResponse:
             )
         from backend.agent.loop import AgentLoop
 
-        system_prompt = (
-            "Generás workflows deterministas en YAML. Reglas: latencia mínima, "
-            "costo mínimo, eficiencia máxima. Mismo step corre en paralelo con "
-            "barrera, distinto step es secuencial. Tipos de nodo: agent "
-            "(requiere agent_name), tool (requiere tool), rag (requiere "
-            "collection). Cada nodo lleva id, type y step entero desde 1. "
-            "El último nodo lleva final: true. Respondé SOLO con el YAML "
-            "dentro de un bloque ```yaml, sin explicaciones."
-        )
+        try:
+            system_prompt = agent.prompt("generate_workflow")
+        except FileNotFoundError:
+            logger.exception("Prompt generate_workflow.md no encontrado.")
+            return JSONResponse(
+                status_code=500,
+                content={"status": "error", "message": "No se pudo iniciar la generación."},
+            )
         transient_id = f"workflow-generate:{_uuid.uuid4().hex[:8]}"
         try:
             create_res = session_manager.create_session(transient_id)

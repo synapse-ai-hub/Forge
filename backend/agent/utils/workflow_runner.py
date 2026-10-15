@@ -63,11 +63,80 @@ class WorkflowRunner:
             SSE strings with the same format as ``AgentLoop.run``.
         """
         from backend.agent.utils.error_logger import log_error
-        from backend.agent.utils.loop_helpers import execute_tool
+        from backend.agent.utils.loop_helpers import _tool_call_ctx, execute_tool
 
         nodes = list(workflow.get("nodes", []))
         on_failure = workflow.get("on_failure", "continue")
         name = workflow.get("name", "workflow")
+        # Least-privilege permissions for this run: only the tools the
+        # validated YAML references. The user consented by activating the
+        # workflow. Scoped via ContextVar snapshot (same pattern as the
+        # parallel blocks in AgentLoop): reset when the run finishes so the
+        # ambient permissions are never mutated.
+        allowed: dict[str, str] = {}
+        try:
+            for _n in nodes:
+                if not isinstance(_n, dict):
+                    continue
+                _t = _n.get("type")
+                if _t == "tool" and _n.get("tool"):
+                    # "task" delegates to sub-agents with its own nested
+                    # permission model: never allow it flat here. Use
+                    # "agent" nodes for delegation inside workflows.
+                    _tool_name = str(_n["tool"])
+                    if _tool_name != "task":
+                        allowed[_tool_name] = "allow"
+                elif _t == "run":
+                    allowed["shell"] = "allow"
+                elif _t == "rag":
+                    allowed["rag"] = "allow"
+        except Exception as exc:
+            log_error(str(exc), source="workflow_runner.py:allowset")
+        _ctx_token = _tool_call_ctx.set({"tool_permissions": allowed})
+        try:
+            async for _sse in self._run_steps(
+                session_id, user_message, workflow, nodes, on_failure, name,
+                turn_number, stream_cancel_event, execute_tool,
+            ):
+                yield _sse
+        finally:
+            try:
+                _tool_call_ctx.reset(_ctx_token)
+            except Exception:
+                pass
+
+    async def _run_steps(
+        self,
+        session_id: str,
+        user_message: str,
+        workflow: dict[str, Any],
+        nodes: list[dict[str, Any]],
+        on_failure: str,
+        name: str,
+        turn_number: int = 1,
+        stream_cancel_event: Optional[asyncio.Event] = None,
+        execute_tool=None,
+    ) -> AsyncIterator[str]:
+        """Execute the DAG steps (sequential steps, parallel groups).
+
+        Runs under the permission snapshot set by :meth:`run`.
+
+        Args:
+            session_id: Parent session identifier.
+            user_message: Original user message.
+            workflow: Validated workflow data from the loader.
+            nodes: Normalized node list.
+            on_failure: ``continue`` or ``abort``.
+            name: Workflow name for messages.
+            turn_number: Turn number for persistence.
+            stream_cancel_event: Optional cancellation event.
+            execute_tool: Tool executor from ``loop_helpers``.
+
+        Yields:
+            SSE strings with the same format as ``AgentLoop.run``.
+        """
+        from backend.agent.utils.error_logger import log_error
+
         state: dict[str, Any] = {
             "input": user_message,
             "results": {},
@@ -76,6 +145,7 @@ class WorkflowRunner:
         }
         steps = sorted({n["step"] for n in nodes})
         final_text = ""
+        has_final = any(n.get("final") for n in nodes if isinstance(n, dict))
 
         yield f"data: {json.dumps({'type': 'chunk', 'content': f'_Ejecutando workflow {name}._'}, ensure_ascii=False)}\n\n"
 
@@ -98,6 +168,8 @@ class WorkflowRunner:
                             )
                         elif node["type"] == "tool":
                             result = await self._run_tool_node(node, state, execute_tool)
+                        elif node["type"] == "run":
+                            result = await self._run_run_node(node, execute_tool)
                         else:
                             result = await self._run_rag_node(node, state, execute_tool)
                         if isinstance(result, dict) and result.get("status") == "error" and attempt < attempts:
@@ -175,7 +247,7 @@ class WorkflowRunner:
                         yield f"data: {json.dumps({'type': 'chunk', 'content': 'Workflow abortado por fallo de rama.'}, ensure_ascii=False)}\n\n"
                         yield "data: [DONE]\n\n"
                         return
-                if node.get("final") or (step == steps[-1] and node == group[-1]):
+                if node.get("final") or (not has_final and step == steps[-1] and node == group[-1]):
                     final_text = str(outcome["data"] or final_text)
 
         answer = final_text.strip() or "Workflow completado sin respuesta final."
@@ -216,6 +288,19 @@ class WorkflowRunner:
 
         t0 = time.time()
         agent_name = node.get("agent_name", "")
+        try:
+            if not agent_name or ".." in agent_name or "/" in agent_name or "\\" in agent_name:
+                return {"status": "error", "message": f"Nombre de agente inválido en nodo '{node.get('id', '')}'.", "data": ""}
+            from backend.agent.utils.config_dir import get_agents_dir
+
+            agent_file = get_agents_dir() / f"{agent_name}.md"
+            if not agent_file.is_file():
+                return {"status": "error",
+                        "message": f"No se encontró el agente '{agent_name}' (nodo '{node.get('id', '')}'). Revisá que exista en la carpeta de agentes.",
+                        "data": ""}
+        except Exception as exc:
+            log_error(str(exc), source="workflow_runner.py:agent_exists")
+            return {"status": "error", "message": f"No se pudo verificar el agente '{agent_name}'.", "data": ""}
         prompt_template = node.get("prompt", "") or state.get("input", "")
         try:
             context = _json.dumps(state.get("results", {}), ensure_ascii=False)[:4000]
@@ -309,14 +394,28 @@ class WorkflowRunner:
         t0 = time.time()
         args = dict(node.get("args", {}))
         query = node.get("query", "") or state.get("input", "")
+        injected_query = False
         if query and "query" not in args and "text" not in args and "content" not in args:
-            args.setdefault("query", query)
+            args["query"] = query
+            injected_query = True
         tc = {"name": node.get("tool", ""), "args": args}
         try:
             result = await execute_tool(self._agent, tc)
         except Exception as exc:
             log_error(str(exc), source="workflow_runner.py:tool_node")
             return {"status": "error", "message": f"Tool '{tc['name']}' falló.", "data": ""}
+        if (
+            isinstance(result, dict) and result.get("status") == "error"
+            and injected_query and "unexpected keyword argument" in str(result.get("message", ""))
+        ):
+            # Strict handlers (e.g. read(file_path)) reject the injected
+            # context key: retry once with only the declared args.
+            try:
+                args.pop("query", None)
+                result = await execute_tool(self._agent, {"name": node.get("tool", ""), "args": args})
+            except Exception as exc:
+                log_error(str(exc), source="workflow_runner.py:tool_node(retry)")
+                return {"status": "error", "message": f"Tool '{tc['name']}' falló.", "data": ""}
         if isinstance(result, dict) and result.get("status") == "error":
             return result
         data = result.get("data", "") if isinstance(result, dict) else result
@@ -326,6 +425,63 @@ class WorkflowRunner:
             text = str(data)
         _ = round(time.time() - t0, 2)
         return {"status": "success", "message": "Nodo tool ok.", "data": text}
+
+    async def _run_run_node(self, node: dict[str, Any], execute_tool) -> dict[str, Any]:
+        """Run a run node (shell command, github-actions style).
+
+        Executes ``node["run"]`` through the ``shell`` tool so it inherits
+        its sandbox (worker thread, timeout, 50 KB truncation, cancel).
+        ``workdir`` is confined to the project root when set.
+
+        Args:
+            node: Normalized run node (``run``, ``timeout``, ``workdir``).
+            execute_tool: Tool executor from ``loop_helpers``.
+
+        Returns:
+            Contract dict ``{status, message, data}`` with the command output.
+        """
+        import json as _json
+        import os as _os
+
+        from backend.agent.utils.error_logger import log_error
+        from backend.agent.utils.workflow_validator import _valid_run_workdir
+
+        command = str(node.get("run", "") or "")
+        if not command.strip():
+            return {"status": "error", "message": f"Nodo '{node.get('id', '')}' sin comando 'run'.", "data": ""}
+        try:
+            timeout = int(node.get("timeout", 30000))
+        except (TypeError, ValueError):
+            timeout = 30000
+        timeout = min(max(timeout, 1000), 300000)
+        args: dict[str, Any] = {"command": command, "timeout": timeout}
+        workdir = str(node.get("workdir", "") or "").strip()
+        if workdir:
+            if not _valid_run_workdir(workdir):
+                return {"status": "error", "message": f"Nodo '{node.get('id', '')}' con 'workdir' inválido.", "data": ""}
+            try:
+                base = _os.path.realpath(_os.getcwd())
+                full = _os.path.realpath(_os.path.join(base, workdir.strip().replace("\\", "/")))
+                if _os.path.commonpath([base, full]) != base:
+                    return {"status": "error", "message": f"Nodo '{node.get('id', '')}' con 'workdir' inválido.", "data": ""}
+                args["workdir"] = full
+            except Exception as exc:
+                log_error(str(exc), source="workflow_runner.py:run_workdir")
+                return {"status": "error", "message": f"Nodo '{node.get('id', '')}' con 'workdir' inválido.", "data": ""}
+        tc = {"name": "shell", "args": args}
+        try:
+            result = await execute_tool(self._agent, tc)
+        except Exception as exc:
+            log_error(str(exc), source="workflow_runner.py:run_node")
+            return {"status": "error", "message": f"Comando del nodo '{node.get('id', '')}' falló.", "data": ""}
+        if isinstance(result, dict) and result.get("status") == "error":
+            return result
+        data = result.get("data", "") if isinstance(result, dict) else result
+        try:
+            text = _json.dumps(data, ensure_ascii=False) if isinstance(data, (dict, list)) else str(data)
+        except Exception:
+            text = str(data)
+        return {"status": "success", "message": "Nodo run ok.", "data": text}
 
     async def _run_rag_node(self, node: dict[str, Any], state: dict[str, Any], execute_tool) -> dict[str, Any]:
         """Run a rag node against a collection."""

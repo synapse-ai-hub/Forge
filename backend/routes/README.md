@@ -33,7 +33,7 @@ Documentación de los endpoints HTTP expuestos por `backend/routes`.
 - **`metrics`**: métricas de uso, tools, errores y modelos.
 - **`rag`**: colecciones RAG, embedding compatibility, reindex, archivos y URLs.
 - **`scheduler`**: tareas programadas (agenda) y ejecuciones.
-- **`create`**: creación de skills, tools y agents vía streaming SSE.
+- **`create`**: creación de skills, tools, agents y workflows vía streaming SSE (paquete `backend/routes/create/`: `common.py`, `skill.py`, `tool.py`, `agent.py`, `workflow.py`).
 - **`conversation`**: exportación de conversaciones a Markdown.
 - **`events`**: event bus SSE (Telegram → frontend).
 - **`telegram`**: estado y toggle del bot de Telegram.
@@ -372,9 +372,9 @@ Devuelve las ejecuciones más recientes de tareas (más nuevas primero).
 
 ---
 
-### 8. Create (`backend/routes/create.py`)
+### 8. Create (`backend/routes/create/`)
 
-Creación de skills, tools y agents vía streaming SSE (mismo patrón que chat).
+Creación de skills, tools, agents y workflows vía streaming SSE (mismo patrón que chat). Paquete: `common.py` (router, modelos y helpers), `skill.py`, `tool.py`, `agent.py`, `workflow.py`.
 
 #### `POST /api/create/skill`
 
@@ -399,6 +399,14 @@ Crea un agente vía streaming SSE.
 **Body (JSON):** `{"descripcion": "...", "name": "...", "mensajes": [...]}`.
 
 **Respuesta:** `text/event-stream` con eventos similares a los anteriores.
+
+#### `POST /api/create/workflow`
+
+Crea un workflow determinista vía streaming SSE (entrevista + validación + aprobación).
+
+**Body (JSON):** `{"descripcion": "...", "name": "...", "mensajes": [...], "model": "...", "provider": "..."}`.
+
+**Respuesta:** `text/event-stream` con eventos: `chunk`, `tool_call`, `tool_result`, `workflow_action`, `workflow_result_final`, `error`, `aborted`.
 
 ---
 

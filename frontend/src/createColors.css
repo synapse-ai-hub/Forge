@@ -1,7 +1,7 @@
 /* ============================================================
  * createColors.css
  * Paleta única compartida por todas las páginas de creación
- * (skill.html, rag.html, tool.html).
+ * (skill.html, rag.html, tool.html, agent.html, workflow.html).
  * Mismos colores: acento, header, hover, gradiente, bordes.
  * Override solo si el fetch de /colors.json (solo index.html) fija
  * otras variables; estas quedan como fallback consistente.

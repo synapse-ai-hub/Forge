@@ -77,6 +77,10 @@ python -m tests.e2e.runner --base-url http://127.0.0.1:8000
 | `main_flow.yaml` | `main-flow-basic-chat`, `main-flow-with-attachment-context`, `main-flow-cancel-stream` |
 | `parallel.yaml` | `parallel-two-list-dir-same-block`, `parallel-three-list-dir-same-block` |
 
+### Runner de workflows (`tests/workflows/`)
+
+Los workflows tienen su propio runner: `python -m tests.workflows.runner` (filtros `test workflows`, `--only <nombre>`, `--base-url <url>`). Reutiliza `tests.e2e.runner` (endpoints reales, sin mocks) y agrega dos criterios propios: `response_contains` (substrings en el texto final del chat, para el aviso amigable de refs faltantes) y `verify.workflow` / `verify.selected` (verifica en `GET /api/config/workflows/selection` que el workflow guardado aparezca en `available` y opcionalmente sea el `selected`). Escenarios en `tests/workflows/scenarios/workflows.yaml` (validación sin LLM) y `workflows_run.yaml` (ejecución real con backend vivo). Cada corrida genera un JSON en `tests/workflows/reports/` (no versionado).
+
 ---
 
 ## Formato de escenarios YAML
