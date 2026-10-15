@@ -191,7 +191,7 @@ async def should_keep_pending(session_id: str, new_message: str) -> bool:
 def _save_decisor_row(session_id: str, turn_number: int,
                       step: int | None, data: dict[str, Any],
                       usage: dict[str, Any] | None,
-                      verdict: float, closed: bool,
+                      verdict: float, outcome: bool,
                       question: str = "close") -> None:
     """Persist the decision verdict as a ``"decisor"`` message.
 
@@ -205,7 +205,7 @@ def _save_decisor_row(session_id: str, turn_number: int,
         data: ``Agent.decision`` response data (model, provider).
         usage: Token / time report from the decision call.
         verdict: ``noul`` probability returned by the model.
-        closed: Whether the step was closed.
+        outcome: Gate result — True means closed (close gate) or kept (continue gate).
         question: Question name (``"close"`` or ``"continue"``).
     """
     try:
@@ -213,6 +213,7 @@ def _save_decisor_row(session_id: str, turn_number: int,
 
         if session_manager is None:
             return
+        result_key = "closed" if question == "close" else "kept"
         session_manager.save_message(
             session_id=session_id,
             role="decisor",
@@ -221,7 +222,7 @@ def _save_decisor_row(session_id: str, turn_number: int,
                 "type": "noul",
                 "verdict": verdict,
                 "threshold": DECISION_CLOSE_THRESHOLD,
-                "closed": closed,
+                result_key: outcome,
             }),
             status="success",
             usage=usage if isinstance(usage, dict) else None,

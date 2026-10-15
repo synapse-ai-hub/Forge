@@ -200,33 +200,31 @@ def test_build_resume_message_none_when_clean(frontier_db):
     assert frontier_helpers.build_resume_message("sess-1") is None
 
 
-def test_parse_jev_verdict():
+def test_should_close_accepts_llm_without_decisor(monkeypatch):
+    import asyncio
+    import backend.instances as instances
     from backend.agent.utils import decision
 
-    assert decision.parse_jev_verdict({"done": True}) is True
-    assert decision.parse_jev_verdict({"done": False}) is False
-    assert decision.parse_jev_verdict({}) is None
-    assert decision.parse_jev_verdict("basura") is None
+    monkeypatch.setattr(instances, "agent", None)
+    assert asyncio.run(decision.should_close_step("sess-1", 1, "listo")) is True
 
 
-def test_should_close_accepts_llm_without_jev(frontier_db, monkeypatch):
+def test_should_close_fail_open_on_decision_error(monkeypatch):
+    import asyncio
+    import backend.instances as instances
     from backend.agent.utils import decision
 
-    monkeypatch.delenv("JEV_API_KEY", raising=False)
-    monkeypatch.delenv("JEV_ENDPOINT", raising=False)
-    frontier_helpers.record_block_dispatch(
-        "sess-1", 1, 1, [(0, "call-0", "write", {})]
-    )
-    assert decision.should_close_step("sess-1", 1, "listo") is True
+    class _MockAgent:
+        decision_enabled = True
 
+        async def decision(self, *args, **kwargs):
+            raise RuntimeError("simulated error")
 
-def test_should_close_fail_open_on_jev_error(frontier_db, monkeypatch):
-    from backend.agent.utils import decision
+        def prompt(self, name):
+            return "instrucciones"
 
-    monkeypatch.setenv("JEV_API_KEY", "test-key")
-    monkeypatch.setenv("JEV_ENDPOINT", "http://127.0.0.1:1/unreachable")
-    monkeypatch.setenv("JEV_TIMEOUT", "1")
-    assert decision.should_close_step("sess-1", 1, "listo") is True
+    monkeypatch.setattr(instances, "agent", _MockAgent())
+    assert asyncio.run(decision.should_close_step("sess-1", 1, "listo")) is True
 
 
 def test_collect_garbage_deletes_only_old_done(frontier_db):

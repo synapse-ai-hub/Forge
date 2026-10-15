@@ -1141,7 +1141,6 @@ class Agent():
                 },
             ))
         except Exception as e:
-            print(f'Error en decision.\n{str(e)}')
             log_error(str(e), source="agent.py:decision")
             try:
                 self._record_spend(effective_provider, effective_model or 'unknown', None)
