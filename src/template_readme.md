@@ -98,40 +98,24 @@
 ```plaintext
 <repo>nombre_repo</repo>/
 │
-├─ backend/                      # [Descripción: ej. API FastAPI]
+├─ backend/                      # API FastAPI + framework de agentes
 │  ├─ main.py                    # Entry point
-│  ├─ routes/                    # Endpoints
-│  ├─ utils/                     # Helpers, tools, contratos
-│  ├─ agent.py                   # Agente LLM (si aplica)
-│  └─ db.py                      # Acceso a base de datos (si aplica)
+│  ├─ agent/                     # Agente: loop, llamadas al LLM, tools, sesiones, permisos, prompts
+│  ├─ routes/                    # Endpoints de la API
+│  └─ telegram/                  # Bot de Telegram
 │
-├─ frontend/                     # [Descripción: ej. App React/Vite/TypeScript]
+├─ frontend/                     # App React/Vite/TypeScript
 │  └─ src/
-│     ├─ components/
-│     ├─ services/
-│     └─ ...
 │
-├─ intelligence/                 # Prompts, modelos, self-learning (si aplica)
-│  ├─ prompts/
-│  └─ self_learning/
+├─ config/                       # Configuración del proyecto (replace.json)
+├─ src/                          # Assets (logo)
 │
-├─ db/                           # Scripts de base de datos (si aplica)
-│  └─ ddl_setup.py
-│
-├─ docs/                         # Documentación técnica
-│  └─ [archivos específicos]
-│
-├─ cicd/                         # CI/CD y deploy (si aplica)
-│
-├─ .commands/                    # CLI local PowerShell (si aplica)
-│  ├─ commands.json
-│  └─ init.ps1
-│
-├─ tests/                        # Tests (si aplica)
-│
-├─ .github/                      # Workflows y scripts auxiliares (si aplica)
-│
+├─ .env                          # Variables de entorno
+├─ .env.example                  # Variables de entorno de ejemplo
 ├─ .gitignore
+├─ .dockerignore
+├─ Dockerfile                    # Imagen del proyecto
+├─ docker-compose.yml
 ├─ requirements.txt              # Dependencias
 ├─ LICENSE
 └─ README.md

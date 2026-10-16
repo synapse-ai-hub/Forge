@@ -364,7 +364,7 @@ Métricas de uso por modelo.
 
 ### 6. RAG (`backend/routes/rag.py`)
 
-Requiere API key de OpenRouter configurada.
+Requiere API key de Google configurada (embeddings).
 
 #### `POST /api/rag/collections`
 

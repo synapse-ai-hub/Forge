@@ -6,15 +6,15 @@
 
 # Onboarding rápido
 
-Bienvenido/a al proyecto `<repo>nombre_repo</repo>`. Estos son los pasos mínimos para dejar tu entorno listo y comenzar a contribuir.
+Bienvenido/a al proyecto `synapseForge`. Estos son los pasos mínimos para dejar tu entorno listo y comenzar a contribuir.
 
 ---
 
 ## 1. Clonar el repositorio
 
 ```bash
->>> git clone https://github.com/<owner>nombre_owner</owner>/<repo>nombre_repo</repo>.git
->>> cd <repo>nombre_repo</repo>
+>>> git clone https://github.com/synapse-ai-hub/synapseForge.git
+>>> cd synapseForge
 ```
 
 ---
@@ -22,8 +22,8 @@ Bienvenido/a al proyecto `<repo>nombre_repo</repo>`. Estos son los pasos mínimo
 ## 2. Instalar dependencias
 
 ```bash
->>> python -m venv .<repo>nombre_repo</repo>
->>> .\<repo>nombre_repo</repo>\Scripts\Activate.ps1
+>>> python -m venv .synapseForge
+>>> .\synapseForge\Scripts\Activate.ps1
 >>> pip install -r requirements.txt
 ```
 
@@ -71,7 +71,7 @@ Al abrir PR en GitHub, usar el template correspondiente según el tipo de cambio
 
 ```bash
 # Ejemplo: abrir PR con template de feature
-https://github.com/<owner>nombre_owner</owner>/<repo>nombre_repo</repo>/compare/main...feature/mi-feature?template=feature.md
+https://github.com/synapse-ai-hub/synapseForge/compare/main...feature/mi-feature?template=feature.md
 ```
 
 ---
@@ -83,6 +83,6 @@ https://github.com/<owner>nombre_owner</owner>/<repo>nombre_repo</repo>/compare/
 
 ---
 
-Autor: <empresa>nombre_empresa</empresa>  
+Autor: synapse.ai  
 Última actualización: 2025-10-13
 

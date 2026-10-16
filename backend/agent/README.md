@@ -89,9 +89,9 @@ Centraliza la interacción con los proveedores LLM (proveedores cloud curados u 
 
 `Agent` (en `agent.py`) conserva el estado, los clientes y la limpieza de salida; las llamadas al LLM viven en mixins del paquete `llm/`: `completion.py` (`llm_process`), `streaming.py` (`llm_streaming`), `decision.py` (`decision`), `tool_calls.py` (normalización de tool calls), `gemini.py` (conversión al formato Gemini) y `api_type.py` (resolución del tipo de API del proveedor).
 
-### 5. `tools.py` — Registro de herramientas
+### 5. `tools/` — Registro de herramientas
 
-Define el catálogo completo de herramientas del agente:
+Paquete que define el catálogo completo de herramientas del agente. `__init__.py` tiene el registro y el despacho centrales (`ToolsBase`) y compone la clase `Tools` con una tool nativa por archivo (`read.py`, `write.py`, `websearch.py`, ...). `from backend.agent.tools import Tools` sigue valiendo.
 - Métodos nativos (parser, websearch, webfetch, etc.).
 - Carga dinámica de tools externas desde `~/.config/synapseForge/tools/`.
 - Construcción del esquema function-calling para el LLM.
@@ -414,9 +414,9 @@ Cuando el usuario consulte sobre instalaciones de agua, desagües, sanitarios o 
 
 El agente distingue tres tipos de herramientas:
 
-### 1. Tools nativas (en `tools.py`)
+### 1. Tools nativas (en `tools/`)
 
-Definidas como métodos de la clase `Tools`. Incluyen:
+Definidas como métodos de la clase `Tools`, un módulo por tool. Incluyen:
 - `read`, `write`, `edit`, `glob`, `grep`, `list_dir` — Operaciones de archivos.
 - `websearch`, `webfetch` — Búsqueda y fetch web.
 - `rag`, `search_memory` — Consulta de colecciones RAG y memoria de largo plazo.
@@ -456,11 +456,11 @@ async def calculadora(expresion: str) -> dict:
 
 ### 3. Tools MCP
 
-Los servidores MCP configurados en `mcp.json` exponen sus herramientas automáticamente. `tools.py` las descubre vía `mcp_helper.py` (usando el SDK oficial `mcp`) y las registra como tools nativas con prefijo `mcp_<server>_<tool>`. El agente las invoca igual que cualquier otra tool. Cada servidor tiene un timeout propio: si falla, se aísla y el resto del sistema sigue funcionando.
+Los servidores MCP configurados en `mcp.json` exponen sus herramientas automáticamente. `tools/__init__.py` las descubre vía `mcp_helper.py` (usando el SDK oficial `mcp`) y las registra como tools nativas con prefijo `mcp_<server>_<tool>`. El agente las invoca igual que cualquier otra tool. Cada servidor tiene un timeout propio: si falla, se aísla y el resto del sistema sigue funcionando.
 
 ### Carga y registro
 
-- `tools.py` escanea `~/.config/synapseForge/tools/` al instanciar `Tools`.
+- `tools/__init__.py` escanea `~/.config/synapseForge/tools/` al instanciar `Tools`.
 - Valida que cada archivo tenga los 4 atributos requeridos.
 - Construye el esquema function-calling para el LLM.
 - Las tools externas aparecen junto a las nativas y MCP en la lista disponible.
@@ -486,7 +486,7 @@ Los servidores MCP configurados en `mcp.json` exponen sus herramientas automáti
    ```python
    await agent.tools._execute_tool(tc["name"], **tc["args"])
    ```
-8. `_execute_tool` en `tools.py` despacha a nativa, externa o MCP — **solo recibe `name` y `**kwargs` (los args del tool_call)**.
+8. `_execute_tool` en `tools/__init__.py` despacha a nativa, externa o MCP — **solo recibe `name` y `**kwargs` (los args del tool_call)**.
 
 > **Los parámetros LLM (`temperature`, `top_p`, `max_tokens`, `model`) se pasan SOLO a `llm_streaming()` — NUNCA a las tools.**
 
@@ -527,74 +527,17 @@ Los servidores MCP configurados en `mcp.json` exponen sus herramientas automáti
 ```plaintext
 backend/agent/
 │
-├─ __init__.py              # Inicialización del paquete
-├─ agent.py                 # Clase principal del agente (LLM provider)
-├─ llm/                     # Llamadas al LLM (mixins de Agent)
-│   ├─ api_type.py          # Resolución del tipo de API del proveedor
-│   ├─ completion.py        # llm_process (sin streaming)
-│   ├─ streaming.py         # llm_streaming
-│   ├─ decision.py          # decision (modelo de decisión)
-│   ├─ tool_calls.py        # Normalización de tool calls
-│   └─ gemini.py            # Conversión al formato Gemini
-├─ loop/                    # Bucle while(true) del agente
-│   ├─ agent_loop.py        # Clase AgentLoop
-│   ├─ constants.py         # Límites de iteraciones y reintentos
-│   ├─ router_tools.py      # Schema de tools de respaldo del router
-│   └─ helpers.py           # Helpers del bucle
+├─ agent.py                 # Clase Agent: estado, clientes y limpieza de salida
+├─ llm/                     # Llamadas al LLM por responsabilidad (mixins de Agent)
+├─ loop/                    # Bucle while(true) del agente (AgentLoop)
+├─ tools/                   # Registro y despacho de tools + una tool nativa por archivo
 ├─ session.py               # Persistencia SQLite
-├─ ddl_setup.py             # Creación idempotente de tablas SQLite
-├─ permissions.py           # Resolución de permisos y prompts
-├─ tools.py                 # Registro y ejecución de herramientas
-├─ agent_db/                # Base de datos SQLite
-│   └─ agent.db
-├─ prompts/                 # Prompts del sistema
-│   ├─ system_prompt.md     # Prompt base del router
-│   ├─ help.md              # Documentación interna para tool help
-│   ├─ title.md             # Prompt para generar títulos de sesión
-│   ├─ mandatory.md         # Reglas ## MANDATORY: inyectadas a todos los agentes
-│   ├─ create_skill.md     # Prompt para crear skills con LLM
-│   ├─ create_tool.md      # Prompt para crear tools con LLM
-│   ├─ create_agent.md     # Prompt para crear agentes con LLM
-│   ├─ iterate_skill.md      # Prompt para iterar skills
-│   ├─ iterate_tool.md       # Prompt para iterar tools
-│   ├─ iterate_agent.md      # Prompt para iterar agentes
-│   ├─ interview_workflow.md # Prompt de entrevista para workflows
-│   ├─ create_workflow.md    # Prompt para crear workflows con LLM
-│   ├─ iterate_workflow.md   # Prompt para iterar workflows
-│   ├─ generate_workflow.md  # Prompt para generar el YAML de un workflow
-│   ├─ decision_close.md     # Pregunta del modelo de decisión: cierre de paso
-│   ├─ decision_continue.md  # Pregunta del modelo de decisión: continuidad del pendiente
-│   ├─ evaluate_skills.md    # Prompt para evaluar skills existentes
-│   └─ explain_skill.md    # Prompt para explicar skills
-├─ utils/                   # Utilidades auxiliares
-│   ├─ agent_helpers.py     # Helpers de endpoints AgentInfo
-│   ├─ chunking.py          # División de documentos en chunks
-│   ├─ clean_memory.py      # Liberación de modelos
-│   ├─ config.py            # Configuración vía entorno
-│   ├─ config_dir.py        # Gestión del directorio ~/.config/synapseForge/
-│   ├─ contract.py          # Contratos de respuesta
-│   ├─ create_helpers.py    # Helpers de creación vía LLM
-│   ├─ decision.py          # Gates de cierre de paso y continuidad
-│   ├─ decision_catalog.py  # Catálogo de modelos de decisión (models.dev)
-│   ├─ email_parser.py      # Parseo de correos electrónicos
-│   ├─ error_logger.py      # Registro de errores
-│   ├─ frontier_helpers.py  # Frontera de tool calls (checkpoints)
-│   ├─ loop_helpers.py      # Helpers del loop
-│   ├─ mcp_helper.py        # Integración MCP
-│   ├─ model_catalog.py     # Catálogo de modelos (models.dev)
-│   ├─ model_resolver.py    # Resolución del modelo activo
-│   ├─ provider_keys.py     # Gestión de API keys
-│   ├─ rag_helpers.py       # Helpers RAG
-│   ├─ scheduler_helpers.py # Helpers de tareas programadas
-│   ├─ skill_loader.py      # Carga de skills
-│   ├─ skills_helpers.py    # Helpers de skills
-│   ├─ subagent_logger.py   # Logging de sub-agentes
-│   ├─ tools_helpers.py     # Helpers de tools externas
-│   ├─ vector_db.py         # Wrapper ChromaDB
-│   ├─ workflow_loader.py   # Carga de workflows (<nombre>.yaml)
-│   ├─ workflow_runner.py   # Ejecución de workflows
-│   ├─ workflow_validator.py # Validación del esquema de workflows
-│   └─ workflows_helpers.py # Helpers de workflows (listado, evaluación, referencias)
+├─ ddl_setup.py             # Creación idempotente de tablas
+├─ permissions.py           # Permisos y prompts por agente
+├─ agent_db/                # SQLite: agent.db y queries/ (SQL organizado por tema)
+├─ prompts/                 # Prompts del sistema, de creación/iteración y del modelo de decisión (.md)
+├─ utils/                   # Soporte: contratos, catálogos de modelos, RAG, MCP, workflows,
+│                           #   checkpoints (frontier), gasto, etc.
 └─ README.md
 ```
 

@@ -14,7 +14,7 @@
 Ejecutar esto **cada vez** que abrís la terminal:
 
 ```powershell
-.\.<repo>nombre_repo</repo>\Scripts\Activate.ps1
+.\.synapseForge\Scripts\Activate.ps1
 . .\.commands\init.ps1
 ```
 
