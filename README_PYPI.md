@@ -118,7 +118,7 @@ GUI editor for `frontend/public/colors.json`. Refresh the browser (F5) to see ch
 
 | Command | Description |
 |---------|-------------|
-| `synapseforge init [dir]` | Scaffold a project from bundled template (GUI) |
+| `synapseforge init [dir]` | Scaffold a project from the latest template downloaded from GitHub (GUI) |
 | `synapseforge launch -p <path> -n <exe> [--skip-frontend] [--no-embed] [-c]` | Build self-contained desktop app / distribution zip (`-c` compiles backend to `.pyc`, default ships `.py`) |
 | `synapseforge colors [dir]` | Edit `frontend/public/colors.json` via GUI (live reload) |
 | `synapseforge run [dir]` | Start uvicorn + npm dev servers, open browser (venv must be active) |

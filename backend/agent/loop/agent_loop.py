@@ -41,25 +41,14 @@ import logging
 import os
 import sys
 import time as _time
-import yaml
 from typing import Any, AsyncGenerator
 
-import urllib.request
-from dotenv import load_dotenv
-
-# Custom SUBAGENT log level (registered in subagent_logger.py, imported via agent/__init__.py)
-
-# ---------------------------------------------------------------------------
-# Ensure the project root is in sys.path so absolute imports (backend.*)
-# resolve correctly regardless of how the file is invoked.
-# ---------------------------------------------------------------------------
-_current_dir = os.path.dirname(os.path.abspath(__file__))
-_project_root = os.path.dirname(os.path.dirname(_current_dir))
-if _project_root not in sys.path:
-    sys.path.insert(0, _project_root)
-
-from datetime import datetime
-from backend.agent.utils.error_logger import log_error, set_error_context, reset_error_context, get_error_context
+from backend.agent.utils.error_logger import (
+    log_error,
+    set_error_context,
+    reset_error_context,
+    get_error_context,
+)
 from backend.agent.utils.skill_loader import format_skills_section
 from backend.agent.utils.contract import zero_usage
 from backend.agent.permissions import (
@@ -69,8 +58,6 @@ from backend.agent.permissions import (
     get_agent_parameters,
 )
 from backend.agent.utils.clean_memory import liberar_modelo
-from backend.agent.utils import provider_keys
-from backend.agent.utils.model_catalog import get_provider_api_type
 from backend.instances import agent, session_manager
 from backend.agent.utils.loop_helpers import (
     _tool_call_ctx,
@@ -96,200 +83,22 @@ from backend.agent.utils.frontier_helpers import (
     set_task_child,
 )
 from backend.agent.utils.spend_handler import check_spend_limit
-from backend.agent.utils.rate_limit_handler import (
-    classify_error_category,
-    get_retry_delay,
+from backend.agent.utils.rate_limit_handler import classify_error_category, get_retry_delay
+from backend.agent.loop.constants import (
+    LLM_BACKOFF_BASE_SECONDS,
+    MAX_EMPTY_RESPONSE_RETRIES,
+    MAX_ITERATIONS,
+    MAX_LLM_RETRIES,
+    MAX_SUBAGENT_DEPTH,
+)
+from backend.agent.loop.router_tools import _ROUTER_TOOLS
+from backend.agent.loop.helpers import (
+    _load_router_permissions,
+    _read_param_override,
+    _resolve_tool_api_type,
 )
 
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Config endpoint
-# ---------------------------------------------------------------------------
-
-_CONFIG_BASE_URL = os.getenv("CONFIG_BASE_URL", "http://127.0.0.1:8000/api/config")
-
-MAX_ITERATIONS = 25
-"""Maximum tool-calling iterations before forcing a response (safety net)."""
-
-MAX_SUBAGENT_DEPTH = 3
-"""Maximum nesting depth for sub-agent delegation (recursion guard)."""
-
-MAX_EMPTY_RESPONSE_RETRIES = 2
-"""Maximum retries when the final LLM response is empty (no content, no tool_calls)."""
-
-MAX_LLM_RETRIES = 5
-"""Maximum retries for the LLM streaming call on rate-limit/transient errors.
-
-The first attempt plus up to ``MAX_LLM_RETRIES`` retries, with exponential
-back-off waits of 2s, 4s, 8s, 16s and 32s (62s total).
-"""
-
-LLM_BACKOFF_BASE_SECONDS = 2.0
-"""Base delay (seconds) for the exponential back-off between LLM retries."""
-
-
-def _resolve_tool_api_type(effective_provider: str | None) -> str:
-    """Resolve the API type used to pick the tool-message format.
-
-    Reads the synced catalog first and falls back to the curated
-    ``provider_keys.PROVIDER_REGISTRY`` when the catalog has no rows
-    for the provider (sync never ran).
-
-    Args:
-        effective_provider: Provider name or ``None``.
-
-    Returns:
-        ``"openai-compatible"``, ``"google"``, ``"ollama"`` or
-        ``"unknown"``.
-    """
-    try:
-        api_type = get_provider_api_type(effective_provider or "")
-    except Exception:
-        api_type = "unknown"
-    if api_type == "unknown":
-        try:
-            info = provider_keys.PROVIDER_REGISTRY.get(
-                (effective_provider or "").strip(), {}
-            )
-            api_type = str(info.get("api_type") or "unknown")
-        except Exception:
-            api_type = "unknown"
-    return api_type
-
-# Tool schema for the router agent (agent_name=None). Fallback only: the
-# router's guaranteed tools (task, help, search_memory, read, websearch,
-# webfetch) are normally resolved from the tools registry via merged
-# permissions. config.yaml can ADD extra tools but never remove these.
-_ROUTER_TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "task",
-            "description": "Delegate work to a sub-agent.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "agent_name": {
-                        "type": "string",
-                        "description": "Name of the sub-agent to delegate to."
-                    },
-                    "prompt": {
-                        "type": "string",
-                        "description": "Detailed task description for the sub-agent (user message)."
-                    }
-                },
-                "required": ["agent_name", "prompt"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "help",
-            "description": "Lee la documentación interna del agente sobre su funcionamiento.",
-            "parameters": {
-                "type": "object",
-                "properties": {}
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "search_memory",
-            "description": (
-                "Busca en conversaciones anteriores del usuario (memoria de "
-                "largo plazo). Úsala cuando el usuario pregunte por "
-                "conversaciones previas o mencione información que no está "
-                "en la sesión actual."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "Consulta en lenguaje natural sobre conversaciones pasadas."
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "description": "Cantidad máxima de resultados (default 5)."
-                    }
-                },
-                "required": ["query"]
-            }
-        }
-    }
-]
-"""Tool schema list for the router agent (``task`` + ``help`` + ``search_memory``)."""
-
-
-def _load_router_permissions() -> dict | None:
-    """Load the router's permissions from ``~/.config/synapseForge/config.yaml``.
-
-    Reads the ``permissions`` section (same structure as agent frontmatter:
-    ``tool``, ``skill`` and ``task`` sub-blocks).
-
-    Returns:
-        The ``permissions`` dict, or ``None`` if the file does not exist,
-        has no ``permissions`` section, or cannot be read.
-    """
-    from backend.agent.utils.config_dir import get_config_dir
-
-    cfg_path = get_config_dir() / "config.yaml"
-    if not cfg_path.is_file():
-        return None
-    try:
-        with open(cfg_path, encoding="utf-8") as f:
-            data = yaml.safe_load(f) or {}
-    except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
-        log_error(str(exc), source="loop.py:_load_router_permissions")
-        return None
-    perms = data.get("permissions")
-    return perms if isinstance(perms, dict) else None
-
-
-def _read_param_override(key: str) -> Any:
-    """Read a global advanced-parameter override from ``config_kv``.
-
-    Reads the value persisted by ``POST /api/config/models/select``
-    (keys ``param_temperature``, ``param_top_p``, ``param_reasoning``,
-    ``param_budget_tokens``, ``param_response_format``).
-    The literal string ``"null"`` (or a missing/unparseable key) means
-    "default" → returns ``None`` so the caller falls back to the next
-    level of the precedence chain.
-
-    Args:
-        key: ``config_kv`` key to read.
-
-    Returns:
-        The parsed override value (``float`` for temperature/top_p,
-        ``bool`` for reasoning, ``str`` for response_format) or ``None``
-        when there is no explicit override.
-    """
-    try:
-        raw = session_manager.get_config(key)
-    except Exception as exc:
-        logger.warning("No se pudo leer el parámetro %s: %s", key, exc)
-        return None
-    if raw is None or raw.strip().lower() == "null":
-        return None
-    try:
-        if key == "param_reasoning":
-            # Can be boolean (old format) or string (new format: "on"/"off"/"low"/"medium"/"high"/"max"/"default"/"none"/"0"/"1024"/etc.)
-            val = raw.strip().lower()
-            if val in ("true", "on"):
-                return "on"
-            elif val in ("false", "off"):
-                return "off"
-            else:
-                return raw.strip()
-        if key == "param_response_format":
-            return raw.strip().lower()
-        return float(raw)
-    except (TypeError, ValueError):
-        return None
-
 
 class AgentLoop:
     """Agent loop with native tool calling.
@@ -316,10 +125,6 @@ class AgentLoop:
             max_iterations: Max tool-calling iterations.
         """
         self.max_iterations = max_iterations
-
-    # ------------------------------------------------------------------
-    # Public entry point
-    # ------------------------------------------------------------------
 
     async def run(
         self,
@@ -728,7 +533,7 @@ class AgentLoop:
                             title_result = await agent.llm_process(
                                 model=model,
                                 prompt=title_prompt,
-                                max_tokens=100,
+                                max_tokens=1000,
                                 temperature=temperature,
                                 top_p=top_p,
                                 reasoning=False,
@@ -1737,10 +1542,6 @@ class AgentLoop:
                 # logger.info("[DEBUG_TIEMPO_SSE] run() finally — reset_error_context FAILED: %s, t=%.3f", _exc, _time.time())
                 pass
 
-
-# ------------------------------------------------------------------
-# Access point (entry point for direct testing)
-# ------------------------------------------------------------------
 
 if __name__ == "__main__":
     async def _main() -> None:

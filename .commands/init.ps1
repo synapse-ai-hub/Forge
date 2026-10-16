@@ -1,4 +1,4 @@
-# init.ps1 - <repo>nombre_repo</repo> CLI Loader
+# init.ps1 - synapseForge CLI Loader
 # Uso: . .\init.ps1
 
 # Configuración de salida
@@ -7,7 +7,7 @@
 $jsonPath = Join-Path $PSScriptRoot "commands.json"
 
 Write-Host ""
-Write-Host "  <repo>nombre_repo</repo> | Global Framework" -ForegroundColor Cyan
+Write-Host "  synapseForge | Global Framework" -ForegroundColor Cyan
 Write-Host "  ------------------------------------------------" -ForegroundColor DarkGray
 
 if (Test-Path $jsonPath) {

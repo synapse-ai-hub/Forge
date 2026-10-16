@@ -1,10 +1,10 @@
 <p align="center">
-  <img src="../src/logo_empresa.png" alt="Logo" width="150">
+  <img src="https://github.com/synapse-ai-hub/sources/raw/main/logo_transparente.png" alt="Logo" width="150">
 </p>
 
 ---
 
-## Flujo de trabajo Git recomendado para `<repo>nombre_repo</repo>`
+## Flujo de trabajo Git recomendado para `synapseForge`
 
 Este documento explica cómo debemos trabajar con Git en este proyecto para mantener un historial limpio, permitir que varias personas colaboren sin conflictos y que cualquiera pueda realizar un merge (habrá una persona designada, pero queremos que el proceso sea accesible).
 
@@ -269,7 +269,7 @@ Recomendación: usar rebase para mantener un historial lineal y limpio. Usar `--
 
 ```bash
 # Ejemplo: abrir PR con template de feature
-https://github.com/<owner>nombre_owner</owner>/<repo>nombre_repo</repo>/compare/main...feature/mi-feature?template=feature.md
+https://github.com/synapse-ai-hub/synapseForge/compare/main...feature/mi-feature?template=feature.md
 ```
 
 3. Incluir descripción clara: qué hace, por qué, cómo probarlo, snapshot/artefactos si aplica.
@@ -459,4 +459,5 @@ A: Revertir el commit problemático con `git revert <sha>` y desplegar un hotfix
 
 ---
 
-Autor: <empresa>nombre_empresa</empresa>  
+Autor: synapse.ai  
+Última actualización: 2025-10-13

@@ -1,12 +1,12 @@
 <p align="center">
-  <img src="../src/logo_empresa.png" alt="Logo" width="150">
+  <img src="https://github.com/synapse-ai-hub/sources/raw/main/logo_transparente.png" alt="Logo" width="150">
 </p>
 
 ---
 
 # Contributing
 
-Gracias por contribuir a `<repo>nombre_repo</repo>`. Este documento resume las normas y buenas prácticas para contribuir de manera ordenada.
+Gracias por contribuir a `synapseForge`. Este documento resume las normas y buenas prácticas para contribuir de manera ordenada.
 
 ---
 
@@ -16,9 +16,9 @@ Gracias por contribuir a `<repo>nombre_repo</repo>`. Este documento resume las n
 
 El sistema soporta múltiples proveedores de LLM (Ollama local y providers cloud curados como base). Para agregar un nuevo proveedor:
 
-1. Revisar `backend/agent/agent.py` — ahí está la clase `Agent` con los métodos de conexión.
+1. Revisar `backend/agent/agent.py` (clase `Agent`) y `backend/agent/llm/` — ahí están los métodos de conexión (`completion.py`, `streaming.py`, `api_type.py`).
 2. Agregar el nuevo provider siguiendo la misma interfaz: recibe `model`, `messages` y devuelve streaming o completion.
-3. Agregar el provider al selector en `backend/routes/config.py` (lista de proveedores).
+3. Agregar el provider al selector en `backend/routes/config/providers.py` (lista de proveedores).
 4. Agregar la lógica de resolución de modelos en `backend/agent/utils/model_resolver.py`.
 5. El frontend (`frontend/src/services/configService.ts`) obtiene la lista automáticamente desde `GET /api/config/providers`.
 
@@ -96,6 +96,5 @@ chore: actualizar dependencias
 
 ---
 
-Autor: synapse.ai 
-Última actualización: 2026-07-27
-
+Autor: synapse.ai  
+Última actualización: 2025-10-13

@@ -12,7 +12,7 @@ the backend in plain text. The encryption secret is resolved as:
 If neither is available (e.g. the generated file was deleted), stored
 keys can no longer be decrypted and are reported as not configured.
 
-Imported by ``backend/routes/config.py`` and ``backend/agent/agent.py``.
+Imported by ``backend/routes/config/`` and ``backend/agent/agent.py``.
 """
 
 from __future__ import annotations

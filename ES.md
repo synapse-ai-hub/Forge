@@ -208,16 +208,19 @@ Se registra toda la actividad con modelos cloud: chat, tools, creadores, agenda,
 ```plaintext
 synapseForge/
 ├─ synapseforge/              # CLI + GUIs tkinter
-├─ pipeline/                  # Init (template) + Launch (forja)
+├─ pipeline/                  # Pipelines init / update / launch + template.zip
 ├─ backend/                   # FastAPI + Framework de Agentes
-│  ├─ agent/                  #   AgentLoop, Tools, Sesiones, Permisos
-│  ├─ routes/                 #   Endpoints API
-│  └─ telegram/               #   Bot de Telegram
+│  ├─ agent/                  #   Agente, loop, llamadas al LLM, tools, sesiones, permisos
+│  ├─ routes/                 #   Endpoints API, un módulo por tema
+│  └─ telegram/               #   Bot de Telegram (polling, dispatch, comandos)
 ├─ frontend/                  # SPA React/Vite/TypeScript
-├─ template/                  # Template de proyecto (usado por init)
+├─ .commands/                 # Comandos de desarrollo (sync, push, template, test)
+├─ on_boarding/               # Guías para contribuir y flujo de Git
 ├─ tests/                     # Suites E2E declarativas (YAML) y tests unitarios
 └─ pyproject.toml             # Config del paquete
 ```
+
+`pipeline/template.zip` es el template de proyecto que descargan `synapseforge init` y `synapseforge update`. Se regenera desde `backend/` y `frontend/` (sin `node_modules`, `__pycache__` ni la base de datos local) con el comando rápido `template`.
 
 ---
 

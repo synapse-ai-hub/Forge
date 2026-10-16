@@ -26,7 +26,7 @@ def list_commands():
         
         # Encabezado
         print(f"\n{YELLOW}╔════════════════════════════════════════╗")
-        print(f"║               <repo>nombre_repo</repo>               ║")
+        print(f"║               synapseForge               ║")
         print(f"╚════════════════════════════════════════╝{RESET}")
         
         print(f"{DARK_GRAY}  Comandos disponibles:{RESET}")

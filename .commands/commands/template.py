@@ -14,6 +14,22 @@ TEMPLATE_DIR = ROOT / "template"
 ZIP_PATH = ROOT / "pipeline" / "template.zip"
 
 
+_AGENT_DB_FILES = {"agent.db", "agent.db-shm", "agent.db-wal"}
+
+
+def _ignore_frontend(directory: str, names: list[str]) -> set[str]:
+    """Excluye de la copia lo que no va en el template del frontend."""
+    return {n for n in names if n in ("node_modules", "__pycache__")}
+
+
+def _ignore_backend(directory: str, names: list[str]) -> set[str]:
+    """Excluye de la copia lo que no va en el template del backend."""
+    ignored = {n for n in names if n == "__pycache__"}
+    if Path(directory).name == "agent_db":
+        ignored |= _AGENT_DB_FILES & set(names)
+    return ignored
+
+
 def main() -> None:
     if not TEMPLATE_DIR.is_dir():
         print(f"ERROR: No existe {TEMPLATE_DIR}")
@@ -31,42 +47,13 @@ def main() -> None:
     if (TEMPLATE_DIR / "frontend").is_dir():
         shutil.rmtree(TEMPLATE_DIR / "frontend")
 
-    # 3. Copiar backend completo desde D:\...\ synapseForge\backend a template/backend
-    SOURCE_BACKEND = ROOT / "backend"
-    
-    shutil.copytree(SOURCE_BACKEND, TEMPLATE_DIR / "backend")
+    # 3. Copiar backend desde synapseForge/backend a template/backend
+    #    (sin __pycache__ ni la base de datos y sus archivos -shm/-wal)
+    shutil.copytree(ROOT / "backend", TEMPLATE_DIR / "backend", ignore=_ignore_backend)
 
-    # 4. Copiar frontend completo desde D:\... \synapseForge\frontend a template/frontend
-    SOURCE_FRONTEND = ROOT / "frontend"
-    
-    shutil.copytree(SOURCE_FRONTEND, TEMPLATE_DIR / "frontend")
-
-    # ========================================================================
-    # LIMPIEZA EN TEMPLATE/ (nunca en las carpetas originales)
-    # ========================================================================
-    
-    BACKEND_TEMPLATE = TEMPLATE_DIR / "backend"
-    FRONTEND_TEMPLATE = TEMPLATE_DIR / "frontend"
-
-    # 5. Limpiar backend: borrar __pycache__ recursivo y .db archivo específico
-    for path in BACKEND_TEMPLATE.rglob("__pycache__"):
-        if path.is_dir():
-            shutil.rmtree(path)
-
-    # 5b. Limpiar agent_db: dejar solo .gitkeep (borra agent.db, -wal, -shm, etc.)
-    _agent_db_dir = BACKEND_TEMPLATE / "agent" / "agent_db"
-    if _agent_db_dir.is_dir():
-        for _agent_db_file in _agent_db_dir.iterdir():
-            if _agent_db_file.name != ".gitkeep":
-                if _agent_db_file.is_dir():
-                    shutil.rmtree(_agent_db_file)
-                else:
-                    _agent_db_file.unlink()
-
-    # 6. Limpiar frontend: borrar solo node_modules/ en template/frontend (no en el origen)
-    for path in FRONTEND_TEMPLATE.rglob("node_modules"):
-        if path.is_dir():
-            shutil.rmtree(path)
+    # 4. Copiar frontend desde synapseForge/frontend a template/frontend
+    #    (sin node_modules ni __pycache__)
+    shutil.copytree(ROOT / "frontend", TEMPLATE_DIR / "frontend", ignore=_ignore_frontend)
 
     # Borrar zip anterior antes de crear uno nuevo
     if ZIP_PATH.exists():
