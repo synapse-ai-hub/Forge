@@ -48,6 +48,7 @@ docs/
 
 # Agente opencode
 .synapseAgents/
+.claude/
 
 # Templates
 template/
@@ -70,3 +71,5 @@ tests/workflows/reports/
 
 # Pruebas embeddings
 pruebas_chroma.ipynb
+
+
