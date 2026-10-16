@@ -308,15 +308,17 @@ El agente principal (router) no tiene tools ni skills directas por defecto — s
 
 ```yaml
 permissions:
-  tool:
+  tools:
     read: allow
-  skill:
+  skills:
     mi_skill: allow
-  task:
+  tasks:
     explorador: allow
 ```
 
-- Si el archivo **no existe** → el router queda solo con `task`.
+Las claves son siempre `tools`, `skills` y `tasks` (plural). Las skills listadas se inyectan en el system prompt del router como `## Skills Disponibles`, igual que en un sub-agente.
+
+- Si el archivo **no existe** → el router usa las tools base (`task`, `help`, `search_memory`, `read`, `websearch`, `webfetch`) y no tiene skills.
 - Si existe → usa **solo** los permisos explícitos del yaml.
 - `task` está **siempre** disponible: si el yaml no lo lista, se permite para todos los sub-agentes; si lo lista, solo para los indicados.
 

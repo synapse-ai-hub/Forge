@@ -46,7 +46,7 @@ def _load_router_permissions() -> dict | None:
     """Load the router's permissions from ``~/.config/synapseForge/config.yaml``.
 
     Reads the ``permissions`` section (same structure as agent frontmatter:
-    ``tool``, ``skill`` and ``task`` sub-blocks).
+    ``tools``, ``skills`` and ``tasks`` sub-blocks, always plural).
 
     Returns:
         The ``permissions`` dict, or ``None`` if the file does not exist,

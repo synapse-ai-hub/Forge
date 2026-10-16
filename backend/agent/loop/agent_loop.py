@@ -367,8 +367,12 @@ class AgentLoop:
             if system_prompt is None:
                 system_prompt = build_system_prompt(agent_name)
 
-            # Sub-agents get their skills/agents appended (router prompt already
-            # includes them via system_prompt.md placeholders).
+            # Router permissions (config.yaml) are read once: step 2 injects
+            # their skills and step 3 resolves their tools and tasks.
+            router_perms = _load_router_permissions() if agent_name is None else None
+
+            # Sub-agents get their skills/agents appended (the router lists its
+            # agents in build_system_prompt; its skills come from config.yaml).
             if agent_name is not None:
                 skills_section = format_skills_section(skill_permissions=skill_permissions)
                 agents_result = list_agents()
@@ -388,6 +392,16 @@ class AgentLoop:
                     f"## Skills Disponibles\n{skills_section}\n\n"
                     f"## Agentes Disponibles\n{agents}"
                 )
+            elif router_perms is not None:
+                # Router: no skills by default. If config.yaml lists skills,
+                # they are injected like a sub-agent's.
+                router_skills = router_perms.get("skills")
+                if isinstance(router_skills, dict) and router_skills:
+                    skills_section = format_skills_section(skill_permissions=router_skills)
+                    if skills_section:
+                        system_prompt = (
+                            f"{system_prompt}\n\n## Skills Disponibles\n{skills_section}"
+                        )
 
             # Append temp directory path to system prompt (concatenation, no .format)
             system_prompt = f"{system_prompt}\n\n## Directorio temporal\n{temp_path}"
@@ -397,7 +411,6 @@ class AgentLoop:
                 # Router: if config.yaml defines permissions, use them as
                 # the complete set (no floor). If config.yaml has no
                 # permissions, fall back to the guaranteed floor tools.
-                router_perms = _load_router_permissions()
                 if router_perms is not None:
                     # config.yaml defines permissions — use them exclusively.
                     tool_permissions = {}
