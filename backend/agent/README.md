@@ -51,7 +51,7 @@ El módulo **Agent** es el núcleo del asistente conversacional. Implementa un b
 
 ## Estructura del producto
 
-### 1. `loop.py` — Bucle principal del agente
+### 1. `loop/` — Bucle principal del agente
 
 Implementa el `while(true)` orquestador:
 1. Crea o recupera la sesión en SQLite.
@@ -62,6 +62,8 @@ Implementa el `while(true)` orquestador:
 6. Persiste cada mensaje en SQLite.
 
 Expone el método `run(session_id, message)` que retorna un `AsyncGenerator` de eventos SSE (`chunk`, `tool_call`, `tool_result`, `session_title`, `done`).
+
+El paquete se reparte así: `agent_loop.py` (clase `AgentLoop`), `constants.py` (límites de iteraciones y reintentos), `router_tools.py` (schema de tools de respaldo del router) y `helpers.py` (tipo de API de las tools, permisos del router y overrides de parámetros). `__init__.py` re-exporta `AgentLoop`, así que `from backend.agent.loop import AgentLoop` sigue valiendo.
 
 ### 2. `session.py` — Persistencia SQLite
 
@@ -77,13 +79,15 @@ Configuración del loop vía variables de entorno (`.env`):
 - `COMPACTION_TRIGGER_TOKENS`, `COMPACTION_STRATEGY`, `COMPACTION_TAIL_TURNS`, etc.
 - Dataclasses `CompactionConfig` y `SessionContext` para parámetros de compactación.
 
-### 4. `agent.py` — Clase principal del agente
+### 4. `agent.py` y `llm/` — Clase principal del agente
 
 Centraliza la interacción con los proveedores LLM (proveedores cloud curados u Ollama local):
 - Selección del proveedor según la configuración persistida en DB (nunca variables de entorno).
 - Streaming de respuestas con detección nativa de tool calls.
 - Gestión de la instancia de herramientas (`Tools`).
 - Atributos runtime: `provider` (LOCAL/API), `_resolved_model` (modelo activo).
+
+`Agent` (en `agent.py`) conserva el estado, los clientes y la limpieza de salida; las llamadas al LLM viven en mixins del paquete `llm/`: `completion.py` (`llm_process`), `streaming.py` (`llm_streaming`), `decision.py` (`decision`), `tool_calls.py` (normalización de tool calls), `gemini.py` (conversión al formato Gemini) y `api_type.py` (resolución del tipo de API del proveedor).
 
 ### 5. `tools.py` — Registro de herramientas
 
@@ -101,7 +105,7 @@ Resuelve en tiempo de ejecución:
 - Skills habilitadas (`get_skill_permissions`).
 - Contenido del system prompt (`get_agent_prompt`).
 - Filtrado de herramientas/skills según el agente activo.
-- Permisos del agente principal (router) desde `config.yaml` (ver `loop.py`).
+- Permisos del agente principal (router) desde `config.yaml` (ver `loop/`).
 
 ### 7. `utils/contract.py` — Contratos de respuesta
 
@@ -332,7 +336,7 @@ Los siguientes parámetros se seleccionan desde el **frontend** y se guardan en 
 | `decision_model` | Modelo de decisión | `POST /config/models/decision/select` |
 | `selected_workflow` | Workflow activo (`smart` = flujo por defecto) | `POST /config/workflows/select` |
 
-Se cargan automáticamente al inicio vía `load_persisted_config()` en `backend/routes/config.py` y se aplican al agente singleton.
+Se cargan automáticamente al inicio vía `load_persisted_config()` en `backend/routes/config/runtime.py` y se aplican al agente singleton.
 
 > **Modelo por defecto**: no existe. El usuario elige proveedor + modelo y aplica (`POST /config/models/select`). Si hay un modelo persistido de una sesión anterior, se respeta.
 
@@ -474,7 +478,7 @@ Los servidores MCP configurados en `mcp.json` exponen sus herramientas automáti
    {"id": "call_xxx", "name": "tool_name", "args": {"param": "value"}}
    ```
    Y yield `{'type': 'tool_calls_detected', 'content': [normalized_tool_calls]}`.
-6. `loop.py` recibe el evento, itera cada `tc` y llama:
+6. `loop/agent_loop.py` recibe el evento, itera cada `tc` y llama:
    ```python
    result_data = await execute_tool(agent, tc)
    ```
@@ -525,7 +529,18 @@ backend/agent/
 │
 ├─ __init__.py              # Inicialización del paquete
 ├─ agent.py                 # Clase principal del agente (LLM provider)
-├─ loop.py                  # Bucle while(true) del agente
+├─ llm/                     # Llamadas al LLM (mixins de Agent)
+│   ├─ api_type.py          # Resolución del tipo de API del proveedor
+│   ├─ completion.py        # llm_process (sin streaming)
+│   ├─ streaming.py         # llm_streaming
+│   ├─ decision.py          # decision (modelo de decisión)
+│   ├─ tool_calls.py        # Normalización de tool calls
+│   └─ gemini.py            # Conversión al formato Gemini
+├─ loop/                    # Bucle while(true) del agente
+│   ├─ agent_loop.py        # Clase AgentLoop
+│   ├─ constants.py         # Límites de iteraciones y reintentos
+│   ├─ router_tools.py      # Schema de tools de respaldo del router
+│   └─ helpers.py           # Helpers del bucle
 ├─ session.py               # Persistencia SQLite
 ├─ ddl_setup.py             # Creación idempotente de tablas SQLite
 ├─ permissions.py           # Resolución de permisos y prompts
@@ -597,7 +612,7 @@ El agente sigue un ciclo iterativo:
 6. **Loop** (`while True`):
    a. Se llama al LLM con `messages` + `tools` vía `agent.llm_streaming()`.
    b. `llm_streaming` normaliza tool_calls de todos los proveedores a `{"id", "name", "args"}` y yield `tool_calls_detected`.
-   c. `loop.py` ejecuta cada tool vía `execute_tool(agent, tc)` → `agent.tools._execute_tool(name, **args)`.
+   c. `loop/agent_loop.py` ejecuta cada tool vía `execute_tool(agent, tc)` → `agent.tools._execute_tool(name, **args)`.
    d. Resultados se agregan como `role: "tool"` y continúa el loop.
    e. Si el LLM devuelve contenido sin tool_calls → se emite como `chunk` SSE y se cierra el loop.
 7. **Persistencia**: Cada mensaje se guarda en SQLite.

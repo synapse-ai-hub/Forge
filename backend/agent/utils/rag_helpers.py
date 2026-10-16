@@ -14,7 +14,7 @@ stream.
 Keeping this logic in ``utils`` (instead of inline in the route) follows the
 project convention of separating helpers from endpoints.
 
-Imported by ``backend/routes/rag.py`` and ``backend/agent/loop.py``.
+Imported by ``backend/routes/rag.py`` and ``backend/agent/loop/``.
 """
 
 from __future__ import annotations
