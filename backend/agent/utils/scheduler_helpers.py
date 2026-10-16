@@ -11,7 +11,7 @@ async loop started from the application lifespan. Each execution:
    like a user-triggered run.
 
 All functions are imported by ``backend/routes/scheduler.py``,
-``backend/main.py`` and ``backend/telegram/bot.py``.
+``backend/main.py`` and ``backend/telegram/``.
 
 Timezone: the system local time is used directly (no configuration).
 """
