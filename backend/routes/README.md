@@ -93,7 +93,9 @@ Elimina una sesión y todos sus mensajes.
 
 ---
 
-### 3. Config (`backend/routes/config.py`)
+### 3. Config (`backend/routes/config/`)
+
+Paquete con un router por tema, armados bajo un único `/config` en `__init__.py`: `runtime.py` (ventana de contexto, modo verbose, setup y `load_persisted_config`), `providers.py`, `parameters.py`, `models.py`, `decision.py` (modelo de decisión), `listings.py` (skills, tools, agentes y MCP) y `workflows.py`.
 
 #### `GET /api/config/providers`
 
