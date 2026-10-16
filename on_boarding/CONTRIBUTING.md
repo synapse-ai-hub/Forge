@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="../src/logo_empresa.png" alt="Logo" width="150">
+  <img src="https://github.com/synapse-ai-hub/sources/raw/main/logo_transparente.png" alt="Logo" width="150">
 </p>
 
 ---
@@ -18,7 +18,7 @@ El sistema soporta múltiples proveedores de LLM (Ollama local y providers cloud
 
 1. Revisar `backend/agent/agent.py` — ahí está la clase `Agent` con los métodos de conexión.
 2. Agregar el nuevo provider siguiendo la misma interfaz: recibe `model`, `messages` y devuelve streaming o completion.
-3. Agregar el provider al selector en `backend/routes/config.py` (lista de proveedores).
+3. Agregar el provider al selector en `backend/routes/config/providers.py` (lista de proveedores).
 4. Agregar la lógica de resolución de modelos en `backend/agent/utils/model_resolver.py`.
 5. El frontend (`frontend/src/services/configService.ts`) obtiene la lista automáticamente desde `GET /api/config/providers`.
 
