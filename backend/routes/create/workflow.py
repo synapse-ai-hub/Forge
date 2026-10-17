@@ -160,17 +160,16 @@ async def post_create_workflow_stream(req: CreateWorkflowRequest):
                 return
             try:
                 workflow_archivo = str(_workflow_file_path(valid_iter_name or "workflow"))
-                try:
-                    iter_prompt = agent.prompt(
-                        "iterate_workflow",
-                        nombre=valid_iter_name or "(inferir)",
-                        archivo=workflow_archivo,
-                        conversacion=_formatear_mensajes(mensajes),
-                    )
-                except FileNotFoundError:
-                    logger.exception("Prompt iterate_workflow.jinja no encontrado.")
-                    yield _sse({"type": "error", "content": _FRIENDLY_ERROR_WORKFLOW})
-                    return
+                iter_prompt = agent.prompt(
+                    "iterate_workflow",
+                    nombre=valid_iter_name or "(inferir)",
+                    archivo=workflow_archivo,
+                    conversacion=_formatear_mensajes(mensajes),
+                )
+            except FileNotFoundError:
+                logger.exception("Prompt iterate_workflow.jinja no encontrado.")
+                yield _sse({"type": "error", "content": _FRIENDLY_ERROR_WORKFLOW})
+                return
             except Exception as exc:
                 log_error(str(exc), source="create.py:workflow(iterate_format)")
                 yield _sse({"type": "error", "content": _FRIENDLY_ERROR_WORKFLOW})

@@ -129,6 +129,17 @@ export interface DecisionModelsResponse {
   enabled: boolean;
 }
 
+/** Message of a failed response: the backend's ``message``, else the HTTP status (the body may not be JSON). */
+async function errorMessage(response: Response): Promise<string> {
+  try {
+    const data = await response.json();
+    if (data && data.message) return data.message;
+  } catch {
+    // body is not JSON (e.g. a plain 500)
+  }
+  return `HTTP ${response.status}`;
+}
+
 export const configService = {
   /** List available models and the currently selected one. */
   async getModels(provider?: string): Promise<ModelsResponse> {
@@ -396,8 +407,7 @@ export const configService = {
       }
     );
     if (!response.ok) {
-      const data = await response.json();
-      throw new Error(data.message || `HTTP ${response.status}`);
+      throw new Error(await errorMessage(response));
     }
   },
 
@@ -410,8 +420,7 @@ export const configService = {
       { method: "DELETE" }
     );
     if (!response.ok) {
-      const data = await response.json();
-      throw new Error(data.message || `HTTP ${response.status}`);
+      throw new Error(await errorMessage(response));
     }
   },
 
@@ -422,8 +431,7 @@ export const configService = {
       { method: "DELETE" }
     );
     if (!response.ok) {
-      const data = await response.json();
-      throw new Error(data.message || `HTTP ${response.status}`);
+      throw new Error(await errorMessage(response));
     }
   },
 
@@ -434,8 +442,7 @@ export const configService = {
       { method: "DELETE" }
     );
     if (!response.ok) {
-      const data = await response.json();
-      throw new Error(data.message || `HTTP ${response.status}`);
+      throw new Error(await errorMessage(response));
     }
   },
 
@@ -446,8 +453,7 @@ export const configService = {
       { method: "DELETE" }
     );
     if (!response.ok) {
-      const data = await response.json();
-      throw new Error(data.message || `HTTP ${response.status}`);
+      throw new Error(await errorMessage(response));
     }
   },
 
@@ -470,8 +476,7 @@ export const configService = {
       { method: "DELETE" }
     );
     if (!response.ok) {
-      const data = await response.json();
-      throw new Error(data.message || `HTTP ${response.status}`);
+      throw new Error(await errorMessage(response));
     }
   },
 

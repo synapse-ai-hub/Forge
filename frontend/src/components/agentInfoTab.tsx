@@ -14,11 +14,13 @@ export function AgentInfoTab() {
   const loadMcp = useCallback(async () => {
     try {
       setMcpLoading(true);
+      setMcpError(null);
       const data = await configService.getMcp();
       setMcpServers(data.servers);
       setMcpError(data.error);
     } catch (err) {
       console.error("Error cargando MCP:", err);
+      setMcpError(err instanceof Error ? err.message : "Error al cargar los servidores MCP.");
     } finally {
       setMcpLoading(false);
     }
