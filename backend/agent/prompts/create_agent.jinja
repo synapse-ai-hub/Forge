@@ -114,13 +114,11 @@ El system prompt debe seguir esta estructura (adaptá según el rol del agente, 
 
 **2. Reglas de negocio** — Las reglas que el agente DEBE seguir. No listes reglas genéricas; escribí reglas específicas del dominio que describiste en la entrevista. Cada regla debe explicar el POR QUÉ, no solo el QUÉ.
 
-**3. Cómo usar sus tools** — Para cada tool que el agente tiene, explicá CUÁNDO usarla y CÓMO. Si tiene `read`, explicá que primero debe explorar el directorio con `list_dir` antes de leer archivos. Si tiene `shell`, explicá qué tipo de comandos puede ejecutar y qué restricciones tiene. Si tiene `rag`, explicá cuándo consultar la base de conocimiento. Incluí ejemplos concretos cuando la tool tiene parámetros complejos.
+**3. Formato de respuesta** — Cómo debe estructurar su respuesta final. Si genera código, si debe ser conciso o detallado, si debe incluir explicaciones o solo resultados.
 
-**4. Formato de respuesta** — Cómo debe estructurar su respuesta final. Si genera código, si debe ser conciso o detallado, si debe incluir explicaciones o solo resultados.
+**4. Errores** — Qué hacer cuando una tool falla o no encuentra lo que busca. Nunca repetir la misma llamada exacta; siempre variar el enfoque.
 
-**5. Errores** — Qué hacer cuando una tool falla o no encuentra lo que busca. Nunca repetir la misma llamada exacta; siempre variar el enfoque.
-
-**6. Límites** — Qué NO debe hacer. No inventar información que no tiene, no ejecutar comandos destructivos sin verificación, no delegar si puede resolver directamente.
+**5. Límites** — Qué NO debe hacer. No inventar información que no tiene, no ejecutar comandos destructivos sin verificación, no delegar si puede resolver directamente.
 
 ### Directrices para escribir el cuerpo
 
