@@ -145,16 +145,20 @@ Contiene módulos de soporte genéricos para el funcionamiento del agente:
 
 ### 9. `prompts/` — Prompts del sistema
 
-Almacena los prompts del agente en formato markdown:
-- `system_prompt.md` — Prompt base del router.
-- `mandatory.md` — Reglas `## MANDATORY:` inyectadas al final del system prompt de todos los agentes.
-- `help.md` — Documentación interna para la tool `help`.
-- `title.md` — Generación de títulos de sesión.
-- `create_skill.md`, `create_tool.md`, `create_agent.md` — Prompts de creación vía LLM.
-- `iterate_skill.md`, `iterate_tool.md`, `iterate_agent.md` — Prompts de iteración.
-- `evaluate_skills.md`, `explain_skill.md` — Prompts auxiliares.
-- `interview_workflow.md`, `create_workflow.md`, `iterate_workflow.md`, `generate_workflow.md` — Prompts de entrevista, creación, iteración y generación de workflows.
-- `decision_close.md`, `decision_continue.md` — Instrucciones de las preguntas del modelo de decisión (cierre de paso y continuidad).
+Todos los prompts son templates Jinja (`.jinja`) y se cargan con `agent.prompt(nombre, **contexto)`, que renderiza `prompts/<nombre>.jinja` con las variables que se le pasen. Si el template tiene un error de sintaxis o le falta una variable, se registra el error y se devuelve el texto crudo, sin cortar el chat. Los prompts de los sub-agentes no pasan por acá: se toma el texto del `.md` del agente debajo del frontmatter.
+
+- `system_prompt.jinja` — Prompt base del router. Solo incluye las secciones de las tools que el router tiene habilitadas (`tools`).
+- `mandatory.jinja` — Reglas `## MANDATORY:` inyectadas al final del system prompt de todos los agentes.
+- `seguridad.jinja` — Reglas `## Seguridad` (prompt injection, fuga de datos, comandos y SQL), después de `MANDATORY` en todos los agentes. Las reglas de una tool aparecen solo si el agente la tiene.
+- `paralelizacion.jinja` — Instrucciones para emitir llamadas independientes en paralelo.
+- `help.jinja` — Documentación interna para la tool `help`.
+- `title.jinja` — Generación de títulos de sesión.
+- `create_*.jinja`, `iterate_*.jinja`, `interview_*.jinja` — Prompts de creación, iteración y entrevista vía LLM (agent, skill, tool, workflow).
+- `generate_workflow.jinja` — Generación de workflows.
+- `evaluate_skills.jinja`, `explain_skill.jinja`, `craft_prompt.jinja` — Prompts auxiliares.
+- `decision_close.jinja`, `decision_continue.jinja` — Instrucciones de las preguntas del modelo de decisión (cierre de paso y continuidad).
+
+`AGENT.md`, los archivos de contexto y las descripciones de agentes se concatenan como texto plano y nunca se renderizan como template.
 
 ### 10. `agent_db/` — Base de datos SQLite
 
@@ -300,7 +304,7 @@ Este archivo almacena **exclusivamente** la configuración de servidores MCP (Mo
 
 ### 1b. `AGENT.md` — Comportamiento general
 
-`AGENT.md` (si existe en `~/.config/synapseForge/agents/`) se inyecta como sección `## Behavior` en el system prompt de **todos** los agentes (router y sub-agentes), **antes** de `## MANDATORY:`. No reemplaza el system prompt: `system_prompt.md` es siempre la base del router, y cada sub-agente usa su propio `.md`. Sirve para comportamiento general del proyecto (compatibilidad con opencode/claude code).
+`AGENT.md` (si existe en `~/.config/synapseForge/agents/`) se inyecta como sección `## Behavior` en el system prompt de **todos** los agentes (router y sub-agentes), **antes** de `## MANDATORY:`. No reemplaza el system prompt: `system_prompt.jinja` es siempre la base del router, y cada sub-agente usa su propio `.md`. Sirve para comportamiento general del proyecto (compatibilidad con opencode/claude code).
 
 ### 1c. `config.yaml` — Permisos del router
 
@@ -537,7 +541,7 @@ backend/agent/
 ├─ ddl_setup.py             # Creación idempotente de tablas
 ├─ permissions.py           # Permisos y prompts por agente
 ├─ agent_db/                # SQLite: agent.db y queries/ (SQL organizado por tema)
-├─ prompts/                 # Prompts del sistema, de creación/iteración y del modelo de decisión (.md)
+├─ prompts/                 # Prompts del sistema, de creación/iteración y del modelo de decisión (.jinja)
 ├─ utils/                   # Soporte: contratos, catálogos de modelos, RAG, MCP, workflows,
 │                           #   checkpoints (frontier), gasto, etc.
 └─ README.md
