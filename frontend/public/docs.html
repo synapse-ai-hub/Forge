@@ -749,6 +749,9 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
               <tr><td>GET</td><td><code>/api/sessions/titles</code></td><td>Listar los títulos de las sesiones.</td></tr>
               <tr><td>GET</td><td><code>/api/sessions/{id}</code></td><td>Cargar una sesión completa con todos sus mensajes.</td></tr>
               <tr><td>DELETE</td><td><code>/api/sessions/{id}</code></td><td>Eliminar una sesión y todos sus datos asociados.</td></tr>
+              <tr><td>GET</td><td><code>/api/feedback/{session_id}</code></td><td>Feedback 👍/👎 de todas las respuestas de la sesión.</td></tr>
+              <tr><td>PUT</td><td><code>/api/feedback/{session_id}/{turn_number}</code></td><td>Guardar o cambiar el feedback de una respuesta.</td></tr>
+              <tr><td>DELETE</td><td><code>/api/feedback/{session_id}/{turn_number}</code></td><td>Quitar el feedback de una respuesta.</td></tr>
               <tr><td>GET</td><td><code>/health</code></td><td>Estado del servidor.</td></tr>
               <tr><td>POST</td><td><code>/api/heartbeat</code></td><td>Keep-alive del frontend (latido cada 10 segundos).</td></tr>
               <tr><td>GET</td><td><code>/api/config/providers</code></td><td>Listar proveedores de modelos disponibles.</td></tr>
@@ -827,6 +830,7 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
           <h3>El endpoint de chat (streaming)</h3>
           <p>El endpoint de chat devuelve los eventos en formato <strong>Server-Sent Events</strong>. Cada evento es un objeto JSON con un tipo y su contenido asociado. Los tipos principales son:</p>
           <ul>
+            <li><strong>turn</strong> — Número de turno de la respuesta, al inicio del stream. El frontend lo usa para asociar el 👍/👎 a la respuesta.</li>
             <li><strong>chunk</strong> — Fragmentos de la respuesta del modelo que se van acumulando en pantalla.</li>
             <li><strong>reasoning</strong> — Fragmentos del razonamiento del modelo.</li>
             <li><strong>tool_call</strong> — El modelo decidió usar una tool. Incluye el nombre y los argumentos.</li>

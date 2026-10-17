@@ -35,6 +35,8 @@ export interface SessionMessage {
   id: string;
   type: "user" | "assistant";
   content: string;
+  /** Turn of the session the message belongs to. */
+  turn_number?: number | null;
   reasoning?: string | null;
   toolCalls?: Array<{ id?: string; name: string; args: Record<string, any> }> | null;
   toolResults?: Array<{ tool_call_id?: string; tool_name: string; result: any }> | null;

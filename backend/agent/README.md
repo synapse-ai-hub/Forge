@@ -66,7 +66,7 @@ Implementa el `while(true)` orquestador. Por cada mensaje del usuario:
 9. Itera hasta `MAX_ITERATIONS` (25): llama al LLM en streaming → si hay `tool_calls` las ejecuta (las de una misma respuesta, en paralelo) y continúa → si hay contenido lo emite como SSE y termina. Reintenta las respuestas vacías (hasta 2) y los errores transitorios o de rate limit del proveedor con backoff exponencial (hasta 5).
 10. Persiste cada mensaje en SQLite y, al cerrar el turno de una sesión raíz, lo indexa en la memoria de largo plazo.
 
-Expone el método `run(session_id, user_message, ...)` que retorna un `AsyncGenerator` de eventos SSE: `chunk`, `reasoning`, `tool_call`, `tool_result`, `subagent_call`, `subagent_result`, `subagent_event`, `session_title`, `token_counter` y `decision`, seguidos de `[DONE]`.
+Expone el método `run(session_id, user_message, ...)` que retorna un `AsyncGenerator` de eventos SSE: `turn`, `chunk`, `reasoning`, `tool_call`, `tool_result`, `subagent_call`, `subagent_result`, `subagent_event`, `session_title`, `token_counter` y `decision`, seguidos de `[DONE]`.
 
 El paquete se reparte así: `agent_loop.py` (clase `AgentLoop`), `constants.py` (límites de iteraciones y reintentos), `router_tools.py` (schema de tools de respaldo del router) y `helpers.py` (tipo de API de las tools, permisos del router y overrides de parámetros). `__init__.py` re-exporta `AgentLoop`, así que `from backend.agent.loop import AgentLoop` sigue valiendo.
 
@@ -186,6 +186,7 @@ Directorio que contiene el archivo `agent.db` con las tablas:
 - `model_catalog` y `decision_catalog` — Modelos por proveedor (chat y decisión), con límites, modalidades y tarifas.
 - `error_log` — Registro de excepciones del backend (session_id, turn_number, exception, source, created_at).
 - `step_frontier` — Tool calls despachadas del paso en curso (`open` / `done`).
+- `message_feedback` — Pulgar arriba o abajo del usuario sobre una respuesta, una fila por `(session_id, turn_number)`. Guarda también el modelo y el proveedor que respondió, y se borra con la sesión.
 - `turn_latency` — Latencia de cada turno.
 - `scheduled_tasks` y `task_runs` — Tareas programadas y sus ejecuciones.
 - `spend`, `spend_limits`, `billing`, `external_usage` y `creator_calls` — Gasto y uso por proveedor y modelo, límites de presupuesto y llamadas de los creadores.
@@ -618,7 +619,7 @@ El agente sigue un ciclo iterativo:
    d. Resultados se agregan como `role: "tool"` y continúa el loop.
    e. Si el LLM devuelve contenido sin tool_calls → se emite como `chunk` SSE; `should_close_step` valida el cierre y `clear_turn` borra la frontera del turno.
 8. **Persistencia**: Cada mensaje se guarda en SQLite y el turno de una sesión raíz se indexa en la memoria de largo plazo.
-9. **Eventos SSE**: `chunk`, `reasoning`, `tool_call`, `tool_result`, `subagent_call`, `subagent_result`, `subagent_event`, `session_title`, `token_counter`, `decision`, seguidos de `[DONE]`.
+9. **Eventos SSE**: `turn` (número de turno de la respuesta, al inicio; solo el loop raíz), `chunk`, `reasoning`, `tool_call`, `tool_result`, `subagent_call`, `subagent_result`, `subagent_event`, `session_title`, `token_counter`, `decision`, seguidos de `[DONE]`.
 
 ---
 

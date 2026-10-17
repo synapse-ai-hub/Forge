@@ -36,6 +36,7 @@ Las respuestas siguen dos formatos:
 - **`app`**: salud, heartbeat y apagado del servidor.
 - **`chat`**: conversación streaming vía Server-Sent Events (SSE).
 - **`sessions`**: listado, obtención y eliminación de sesiones de chat.
+- **`feedback`**: pulgar arriba o abajo sobre las respuestas del asistente.
 - **`config`**: proveedores y API keys, modelos de chat y de decisión, parámetros, ventana de contexto, modo verbose, setup inicial, listados de skills, tools, agentes y MCP, y workflows.
 - **`context_files`**: archivos de contexto (instrucciones y documentos).
 - **`metrics`**: métricas de sesiones, mensajes, tools, errores, modelos y costos, con exportación a CSV.
@@ -92,6 +93,7 @@ Streaming de un turno de conversación vía Server-Sent Events. Acepta el mensaj
 
 | Evento | `content` |
 |--------|-----------|
+| `turn` | Número de turno de la respuesta, al inicio del stream (solo el loop raíz). |
 | `chunk` | Fragmento de texto de la respuesta. |
 | `reasoning` | Fragmento del razonamiento del modelo. |
 | `tool_call` | `{name, args}` de la tool que se va a ejecutar. |
@@ -137,6 +139,32 @@ Devuelve el historial completo de mensajes de una sesión. Cada turno aporta un 
 Elimina una sesión y todos sus mensajes.
 
 **Respuesta:** contrato `{status, message}`.
+
+---
+
+### 2b. Feedback (`backend/routes/feedback.py`)
+
+Pulgar arriba o abajo sobre una respuesta del asistente, guardado en `agent.db` (`message_feedback`). Una respuesta se identifica con `(session_id, turn_number)`, el mismo número que trae el mensaje `turn-N` de la historia y el evento SSE `turn` del chat.
+
+#### `GET /api/feedback/{session_id}`
+
+Devuelve el feedback de todas las respuestas de la sesión.
+
+**Respuesta:** `{status, data: {"<turn_number>": "up" | "down"}}`.
+
+#### `PUT /api/feedback/{session_id}/{turn_number}`
+
+Guarda el feedback de una respuesta, o lo cambia si ya tenía. También guarda el modelo y el proveedor que la generaron.
+
+**Body:** `{feedback_type: "up" | "down"}`.
+
+**Respuesta:** `{status, message}`. `status: "error"` si el tipo es inválido, la sesión no existe o el turno no tiene respuesta.
+
+#### `DELETE /api/feedback/{session_id}/{turn_number}`
+
+Quita el feedback de una respuesta (no pasa nada si no tenía).
+
+**Respuesta:** `{status, message}`.
 
 ---
 

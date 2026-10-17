@@ -358,6 +358,9 @@ class AgentLoop:
 
             # --- 1b. Get turn_number for this message ---
             turn_number = session_manager.get_last_turn_number(session_id) + 1
+            if depth == 0:
+                # Lets the frontend tie this answer to its turn (feedback buttons).
+                yield f"data: {json.dumps({'type': 'turn', 'content': turn_number})}\n\n"
 
             def _schedule_latency() -> None:
                 """Persist this turn's latency in the background (non-blocking)."""

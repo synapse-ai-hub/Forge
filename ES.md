@@ -262,6 +262,7 @@ pytest tests/frontier                     # tests unitarios de checkpoints
 pytest tests/prompts                      # prompts Jinja, formato de permisos y reglas de seguridad
 pytest tests/mcp                          # servidores MCP por stdio, HTTP y SSE, e interruptor de servidores
 pytest tests/loop                         # salidas tempranas del loop del agente
+pytest tests/feedback                     # 👍/👎 sobre las respuestas
 python -m tests.decisor.decision_cli      # modelo de decisión, corrida manual
 ```
 

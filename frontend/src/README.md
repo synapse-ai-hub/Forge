@@ -64,6 +64,7 @@ frontend/
 │  │  └─ logo_cliente.png      # Logo del cliente
 │  ├─ chat/                    # Chat principal
 │  │  ├─ ChatInterface.tsx     # Chat (streaming SSE, adjuntos, autoscroll, gauge de contexto)
+│  │  ├─ useSessionFeedback.ts # Hook del 👍/👎 de las respuestas de la sesión
 │  │  └─ chatMain.tsx          # Entry de la página de chat: carga colors.json → setea CSS vars → render App
 │  ├─ skill/                   # Creación de skills
 │  │  ├─ SkillInterface.tsx    # Página de creación de skills (setup + chat + overlay)
@@ -101,6 +102,7 @@ frontend/
 │  ├─ services/                # Capa de comunicación con API
 │  │  ├─ chatService.ts        # Streaming SSE a /api/chat
 │  │  ├─ configService.ts      # Providers, models, modelo de decisión, workflows, MCP, verbose, contexto
+│  │  ├─ feedbackService.ts    # 👍/👎 sobre las respuestas (por sesión y turno)
 │  │  ├─ sessionService.ts     # Sesiones CRUD
 │  │  ├─ contextFilesService.ts# Archivos de contexto CRUD
 │  │  ├─ metricsService.ts     # Métricas
@@ -196,7 +198,7 @@ Chat principal. Mantiene el estado de mensajes, streaming SSE a `/api/chat`, aut
 
 ### `components/chatBlocks.tsx`
 Componentes compartidos entre las interfaces de chat y creación:
-- `MessageRow` — Fila de mensaje (asistente con avatar + bloques intercalados, usuario con burbuja).
+- `MessageRow` — Fila de mensaje (asistente con avatar + bloques intercalados, usuario con burbuja). Debajo de cada respuesta van los botones Copiar y 👍/👎, con los colores del tema.
 - `MarkdownRenderer` — Renderiza markdown a HTML con sanitización DOMPurify.
 - `ToolCallBlock` — Tarjeta de tool call con estados y sub-pasos de sub-agentes.
 - `ReasoningBlock`, `FileChip`, `FileWarningBanner`, `TypingIndicator`.
@@ -235,7 +237,7 @@ Panel de tareas programadas (agenda): agregar, editar horario y eliminar tareas.
 Pantalla inicial de configuración de providers (API keys) que aparece al primer arranque.
 
 ### Servicios (`services/`)
-Capa fina sobre `fetch`. `chatService` (SSE), `configService` (providers/models/modelo de decisión/workflows/MCP/verbose/contexto), `sessionService` (sesiones), `contextFilesService` (archivos de contexto), `metricsService` (métricas), `schedulerService` (tareas programadas), `telegramService` (bot de Telegram), `quoteHistoryService` (historial de cotizaciones).
+Capa fina sobre `fetch`. `chatService` (SSE), `configService` (providers/models/modelo de decisión/workflows/MCP/verbose/contexto), `sessionService` (sesiones), `feedbackService` (👍/👎 de las respuestas), `contextFilesService` (archivos de contexto), `metricsService` (métricas), `schedulerService` (tareas programadas), `telegramService` (bot de Telegram), `quoteHistoryService` (historial de cotizaciones).
 
 ---
 
