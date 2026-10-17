@@ -31,22 +31,25 @@ Frontend del **<nombre>nombre_proyecto</nombre>**. Aplicación React 19 + TypeSc
 - **Gestión de sesiones**: Sidebar con historial, títulos, preview y eliminación.
 - **Tool calls visibles**: Colapsables por tool con input/output formateado.
 - **Adjuntos**: Arrastrar y soltar archivos; extracción de texto automática.
-- **Creación asistida por LLM**: Páginas standalone para crear skills, tools y agentes.
+- **Creación asistida por LLM**: Páginas standalone para crear skills, tools, agentes y workflows.
 - **Gestión de RAG**: Página para crear colecciones, subir archivos y agregar URLs.
 - **Gauge de contexto**: Indicador de uso de la ventana de contexto en el header.
 - **Tareas programadas**: Panel de agenda para programar ejecuciones.
-- **Tema oscuro/claro**: Persistido en localStorage.
+- **Métricas, uso y facturación**: Dashboard de métricas, consumo del mes y límites de gasto por proveedor y modelo.
+- **Telegram y MCP**: Toggle del bot de Telegram y panel de servidores MCP con interruptor para activar o desactivar cada uno.
+- **Colores del tema**: Variables CSS configurables (`colors.json`), editables en vivo con `synapseforge colors`.
 
 ---
 
 ## Stack Tecnológico
 
 - **React 19** + **TypeScript 5**
-- **Vite 6** (dev server + build)
-- **Tailwind CSS 4** (utilidad-first styling)
+- **Vite 6** (dev server + build multi-page)
+- **Tailwind CSS 4** (utilidad-first styling) + **shadcn/ui** sobre **Radix UI**
 - **Lucide React** (iconos)
 - **Marked** (renderizado markdown en mensajes)
 - **DOMPurify** (sanitización XSS del markdown)
+- **Mermaid** (diagramas en los mensajes)
 
 ---
 
@@ -62,7 +65,7 @@ frontend/
 │  ├─ chat/                    # Chat principal
 │  │  ├─ ChatInterface.tsx     # Chat (streaming SSE, adjuntos, autoscroll, gauge de contexto)
 │  │  ├─ useSessionFeedback.ts # Hook del 👍/👎 de las respuestas de la sesión
-│  │  └─ chatMain.tsx          # Entry de la página de chat
+│  │  └─ chatMain.tsx          # Entry de la página de chat: carga colors.json → setea CSS vars → render App
 │  ├─ skill/                   # Creación de skills
 │  │  ├─ SkillInterface.tsx    # Página de creación de skills (setup + chat + overlay)
 │  │  └─ skillMain.tsx         # Entry de la skill page (multi-page)
@@ -86,9 +89,11 @@ frontend/
 │  │  ├─ createTab.tsx         # Creación de skills/tools/agentes/workflows/RAG
 │  │  ├─ chatBlocks.tsx        # Componentes compartidos (MessageRow, MarkdownRenderer, ToolCallBlock, ReasoningBlock, FileChip, etc.)
 │  │  ├─ ContextGauge.tsx      # Gauge de ventana de contexto
+│  │  ├─ UsageTab.tsx          # Consumo del mes por proveedor
+│  │  ├─ BillingTab.tsx        # Gasto por proveedor y modelo, y límites de gasto
 │  │  ├─ CreateModelSelector.tsx # Selector de modelo para creación
-│  │  ├─ HistoryModal.tsx      # Historial de cotizaciones
-│  │  ├─ MetricsModal.tsx      # Dashboard de métricas
+│  │  ├─ HistoryModal.tsx      # Historial de cotizaciones (consulta `/api/quotes/history`)
+│  │  ├─ MetricsModal.tsx      # Dashboard de métricas por rango de tiempo
 │  │  ├─ SchedulerModal.tsx    # Tareas programadas (agenda)
 │  │  ├─ SetupScreen.tsx       # Pantalla inicial de configuración de providers
 │  │  ├─ MessageBubble.tsx     # Burbuja de mensaje (legacy)
@@ -108,10 +113,11 @@ frontend/
 │  │  ├─ mermaid.ts            # Renderizado de diagramas mermaid
 │  │  └─ conversationExport.ts # Exportación de conversaciones a Markdown
 │  ├─ App.tsx                  # Componente raíz + estado global
-│  ├─ main.tsx                 # Entry: carga colors.json → setea CSS vars → render App
 │  ├─ index.css                # Estilos globales + @theme (colores)
+│  ├─ createColors.css         # Paleta compartida por las páginas de creación
 │  └─ vite-env.d.ts            # Tipos de Vite
-├─ index.html
+├─ index.html                  # Página del chat
+├─ skill.html, tool.html, agent.html, workflow.html, rag.html  # Páginas de creación y de RAG
 ├─ package.json
 ├─ tsconfig.json
 ├─ tsconfig.app.json
@@ -143,7 +149,7 @@ frontend/
 >>> npm run dev
 ```
 
-Abre `http://localhost:5173` (proxy a `http://localhost:8000/api` configurado en `vite.config.ts`).
+Abre `http://localhost:3000`. El frontend llama directamente al backend en `http://localhost:8000` (CORS habilitado para los puertos 3000 y 5173).
 
 4. **Build producción**
 
@@ -151,7 +157,7 @@ Abre `http://localhost:5173` (proxy a `http://localhost:8000/api` configurado en
 >>> npm run build
 ```
 
-Output en `dist/`.
+Output en `dist/`: una página por entrada (`index.html`, `skill.html`, `tool.html`, `agent.html`, `workflow.html` y `rag.html`). El backend sirve `dist/` cuando existe.
 
 ---
 
@@ -166,13 +172,13 @@ VITE_URL_PROD=http://localhost:8000
 VITE_URL_BASE=http://localhost:8000
 ```
 
-Los servicios usan `VITE_MODE` para elegir entre `VITE_URL_DEV` y `VITE_URL_PROD`; `VITE_URL_BASE` se usa como base de la API en varios servicios.
+Los servicios `chatService`, `configService`, `sessionService`, `contextFilesService` y `quoteHistoryService` usan `VITE_MODE` para elegir entre `VITE_URL_DEV` y `VITE_URL_PROD`. `VITE_URL_BASE` es la base de la API en `metricsService`, `schedulerService`, `telegramService` y en los componentes y páginas que llaman a la API directamente (`App`, uso y facturación, páginas de creación y de RAG). `VITE_MODE=dev` además muestra las pestañas **Agente** y **Crear** del sidebar.
 
 ---
 
 ## Flujo principal
 
-1. **Carga inicial** → `main.tsx` hace `fetch("/colors.json")` y setea las CSS vars → renderiza `App`.
+1. **Carga inicial** → `chat/chatMain.tsx` hace `fetch("/colors.json")` y setea las CSS vars → renderiza `App`.
 2. **Setup** → si no está completado, `SetupScreen` pide las API keys de los providers.
 3. **Proveedores** → `configService` llama `GET /config/providers` → muestra proveedores disponibles.
 4. **Selección modelo** → `GET /config/models?provider=X` → lista modelos; `POST /config/models/select` → persiste en backend (SQLite `config_kv`).
@@ -188,7 +194,7 @@ Los servicios usan `VITE_MODE` para elegir entre `VITE_URL_DEV` y `VITE_URL_PROD
 ## Componentes clave
 
 ### `chat/ChatInterface.tsx`
-Chat principal. Mantiene el estado de mensajes, streaming SSE a `/api/chat`, autoscroll, adjuntos de archivos, detener generación, heartbeat y shutdown. Renderiza cada mensaje con `MessageRow` y muestra el gauge de contexto en el header. Ante el evento SSE `decision` con `action: "discarded"` muestra un aviso de que el trabajo pendiente anterior fue descartado.
+Chat principal. Mantiene el estado de mensajes, streaming SSE a `/api/chat`, autoscroll, adjuntos de archivos, detener generación, heartbeat y shutdown. Renderiza cada mensaje con `MessageRow` y muestra el gauge de contexto en el header. Ante el evento SSE `decision` con `action: "discarded"` muestra un aviso de que el trabajo pendiente anterior fue descartado; un mensaje bloqueado por el guardrail llega como un `chunk` con el aviso del bloqueo.
 
 ### `components/chatBlocks.tsx`
 Componentes compartidos entre las interfaces de chat y creación:
@@ -210,16 +216,19 @@ Página de creación de workflows (multi-page). Entrevista por chat con streamin
 Página de gestión de colecciones RAG: crear colecciones, subir archivos y agregar URLs.
 
 ### `Sidebar.tsx`
-Barra lateral con tabs: Conversaciones (`sessionsTab`), Configuración (`configTab`), Agente (`agentInfoTab`) y Crear (`createTab`).
+Barra lateral con tabs: Conversaciones (`sessionsTab`), Configuración (`configTab`), Agente (`agentInfoTab`) y Crear (`createTab`). Agente y Crear solo se muestran con `VITE_MODE=dev`.
 
 ### `configTab.tsx`
 Configuración: selector de proveedor/modelo, sección de modelo de decisión (habilitar, proveedor, modelo y ficha del catálogo), ventana de contexto, toggle verbose y gestión de archivos de contexto.
 
 ### `agentInfoTab.tsx`
-Panel de agentes con 6 sub-paneles: Tools, Skills, Agentes, MCP, RAG y Workflows (selección del flujo activo: `smart` o un workflow).
+Panel de agentes con 6 sub-paneles: Tools, Skills, Agentes, MCP (estado de cada servidor, interruptor para activarlo o desactivarlo y borrado), RAG y Workflows (selección del flujo activo: `smart` o un workflow).
 
 ### `MetricsModal.tsx`
-Dashboard de métricas con tabs: Overview, Sessions, Tools, Errors.
+Dashboard de métricas con filtro de rango de tiempo (`1h`, `6h`, `1d`, `1w`, `1m`, todo) y tarjetas de Sesiones, Mensajes, Uso de herramientas, Modelos, Gasto y Errores. Cada tarjeta muestra sus gráficos, incluida la figura de outliers que renderiza el backend, y permite descargar los datos.
+
+### `UsageTab.tsx` y `BillingTab.tsx`
+Se abren desde los botones **Usage** y **Billing** del header. Usage muestra el consumo del mes (requests, tokens y gasto) por proveedor; Billing el gasto por proveedor y modelo, con filtros, y permite configurar límites de gasto.
 
 ### `SchedulerModal.tsx`
 Panel de tareas programadas (agenda): agregar, editar horario y eliminar tareas.
@@ -271,10 +280,9 @@ Además, `usar_gradiente` (toggle) no es una variable CSS: cuando está apagado,
 
 | Comando | Descripción |
 |---------|-------------|
-| `npm run dev` | Servidor de desarrollo (HMR) |
-| `npm run build` | Build producción en `dist/` |
+| `npm run dev` | Servidor de desarrollo (HMR) en el puerto 3000 |
+| `npm run build` | Chequeo de tipos (`tsc -b`) y build de producción en `dist/` |
 | `npm run preview` | Preview del build local |
-| `npm run lint` | ESLint + TypeScript check |
 
 ---
 

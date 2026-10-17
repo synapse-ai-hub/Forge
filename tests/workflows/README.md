@@ -14,7 +14,7 @@ Tests end-to-end de los workflows deterministas: validación del esquema, guarda
 
 ## Requisitos
 
-- Python 3.11+
+- Python 3.12+
 - Paquetes: `pip install requests pyyaml`
 - El backend corriendo (`python -m uvicorn backend.main:app --reload` o `run`)
 - No requiere LLM configurado: ningún escenario depende de un modelo.

@@ -201,20 +201,19 @@ async def post_create_skill_stream(
         if iterate:
             yield _sse({"type": "skill_action", "content": {"action": "iterating"}})
 
-            try:
-                iter_template = agent.prompt("iterate_skill")
-            except FileNotFoundError:
-                logger.exception("Prompt iterate_skill.md no encontrado.")
-                yield _sse({"type": "error", "content": _FRIENDLY_ERROR})
-                return
-
             # Buscar la skill existente por nombre
             skill_carpeta = str(_SKILLS_DIR / (nombre or "skill"))
-            iter_prompt = iter_template.format(
-                nombre=nombre or "(inferir)",
-                carpeta=skill_carpeta,
-                conversacion=_formatear_mensajes(mensajes),
-            )
+            try:
+                iter_prompt = agent.prompt(
+                    "iterate_skill",
+                    nombre=nombre or "(inferir)",
+                    carpeta=skill_carpeta,
+                    conversacion=_formatear_mensajes(mensajes),
+                )
+            except FileNotFoundError:
+                logger.exception("Prompt iterate_skill.jinja no encontrado.")
+                yield _sse({"type": "error", "content": _FRIENDLY_ERROR})
+                return
 
             try:
                 tools = list(agent.tools.tools_registry(_AGENT_TOOLS_PERMS))
@@ -246,17 +245,16 @@ async def post_create_skill_stream(
         # FASE 1: INTERVIEW — stream texto + tool responder_interview
         # ════════════════════════════════════════════════════════════════
         try:
-            template = agent.prompt("interview_skill")
+            prompt = agent.prompt(
+                "interview_skill",
+                descripcion=descripcion,
+                nombre=nombre or "(inferir)",
+                mensajes=_formatear_mensajes(mensajes),
+            )
         except FileNotFoundError:
-            logger.exception("Prompt interview_skill.md no encontrado.")
+            logger.exception("Prompt interview_skill.jinja no encontrado.")
             yield _sse({"type": "error", "content": _FRIENDLY_ERROR})
             return
-
-        prompt = template.format(
-            descripcion=descripcion,
-            nombre=nombre or "(inferir)",
-            mensajes=_formatear_mensajes(mensajes),
-        )
 
         collected_content = ""
         tool_calls_data = None
@@ -338,20 +336,19 @@ async def post_create_skill_stream(
         yield _sse({"type": "skill_action", "content": {"action": "creating"}})
 
         # Build the generate prompt
-        try:
-            sys_prompt_template = agent.prompt("create_skill")
-        except FileNotFoundError:
-            logger.exception("Prompt create_skill.md no encontrado.")
-            yield _sse({"type": "error", "content": _FRIENDLY_ERROR})
-            return
-
         conversacion = _formatear_mensajes(mensajes)
         carpeta_skill = str(_SKILLS_DIR / (name or "skill"))
-        sys_prompt = sys_prompt_template.format(
-            nombre=name or "(inferir del contexto)",
-            conversacion=conversacion,
-            carpeta=carpeta_skill,
-        )
+        try:
+            sys_prompt = agent.prompt(
+                "create_skill",
+                nombre=name or "(inferir del contexto)",
+                conversacion=conversacion,
+                carpeta=carpeta_skill,
+            )
+        except FileNotFoundError:
+            logger.exception("Prompt create_skill.jinja no encontrado.")
+            yield _sse({"type": "error", "content": _FRIENDLY_ERROR})
+            return
 
         user_msg = "Ejecutá tu tarea. Creá el SKILL.md y los archivos necesarios. Cuando termines, indicame qué creaste."
 

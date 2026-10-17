@@ -8,15 +8,19 @@ export function AgentInfoTab() {
   const [tab, setTab] = useState<AgentTab>("tools");
   const [mcpServers, setMcpServers] = useState<McpServerStatus[]>([]);
   const [mcpLoading, setMcpLoading] = useState(true);
+  const [mcpError, setMcpError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
   const loadMcp = useCallback(async () => {
     try {
       setMcpLoading(true);
+      setMcpError(null);
       const data = await configService.getMcp();
-      setMcpServers(data);
+      setMcpServers(data.servers);
+      setMcpError(data.error);
     } catch (err) {
       console.error("Error cargando MCP:", err);
+      setMcpError(err instanceof Error ? err.message : "Error al cargar los servidores MCP.");
     } finally {
       setMcpLoading(false);
     }
@@ -84,7 +88,7 @@ export function AgentInfoTab() {
         {tab === "tools" && <ToolsPanel onRefresh={refreshAll} />}
         {tab === "skills" && <SkillsPanel onRefresh={refreshAll} />}
         {tab === "agents" && <AgentsPanel onRefresh={refreshAll} />}
-        {tab === "mcp" && <McpPanel servers={mcpServers} loading={mcpLoading} onRefresh={loadMcp} />}
+        {tab === "mcp" && <McpPanel servers={mcpServers} loading={mcpLoading} error={mcpError} onRefresh={loadMcp} />}
         {tab === "rag" && <RagPanel onRefresh={refreshAll} />}
         {tab === "workflows" && <WorkflowsPanel onRefresh={refreshAll} />}
       </div>
@@ -335,8 +339,26 @@ function AgentsPanel({ onRefresh }: { onRefresh: () => Promise<void> }) {
 
 // ─── MCP ──────────────────────────────────────────────────────────
 
-function McpPanel({ servers, loading, onRefresh }: { servers: McpServerStatus[]; loading: boolean; onRefresh: () => Promise<void> }) {
+function McpPanel({ servers, loading, error, onRefresh }: { servers: McpServerStatus[]; loading: boolean; error: string | null; onRefresh: () => Promise<void> }) {
   const [msg, setMsg] = useState("");
+  const [errMsg, setErrMsg] = useState("");
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const toggle = async (s: McpServerStatus) => {
+    const enable = s.status === "disabled";
+    setBusy(s.label);
+    setErrMsg("");
+    try {
+      await configService.setMcpEnabled(s.label, enable);
+      await onRefresh();
+      setMsg(`Servidor MCP «${s.label}» ${enable ? "activado" : "desactivado"}.`);
+      setTimeout(() => setMsg(""), 3000);
+    } catch (err) {
+      setErrMsg(err instanceof Error ? err.message : "No se pudo cambiar el estado del servidor.");
+    } finally {
+      setBusy(null);
+    }
+  };
 
   if (loading) return <p className="text-sm text-app-text-secondary">Cargando...</p>;
 
@@ -348,8 +370,12 @@ function McpPanel({ servers, loading, onRefresh }: { servers: McpServerStatus[];
         ahorra tokens, ya que las descripciones de sus herramientas se inyectan en el contexto.
       </p>
       {msg && <p className="text-xs text-green-600 mb-1">{msg}</p>}
+      {errMsg && <p className="text-xs text-red-600 mb-1">{errMsg}</p>}
+      {error && <p className="text-xs text-red-600 mb-1">{error}</p>}
       {servers.length === 0 ? (
-        <p className="text-sm text-app-text-secondary">No hay servidores MCP configurados.</p>
+        <p className="text-sm text-app-text-secondary">
+          {error ? "No se pudo leer la configuración MCP." : "No hay servidores MCP configurados."}
+        </p>
       ) : (
         servers.map((s) => (
           <div key={s.label} className="flex items-start justify-between rounded-lg border border-app-primary-light bg-white px-3 py-2">
@@ -369,9 +395,34 @@ function McpPanel({ servers, loading, onRefresh }: { servers: McpServerStatus[];
                   ? "bg-red-100 text-red-700"
                   : "bg-gray-100 text-gray-500"
               }`}>
-                {s.status === "connected" ? "Conectado" : s.status === "failed" ? "Error" : s.status}
+                {s.status === "connected" ? "Conectado" : s.status === "failed" ? "Error" : s.status === "disabled" ? "Desactivado" : s.status}
+                {s.transport && s.transport !== "stdio" ? ` · ${s.transport}` : ""}
               </span>
+              {s.status === "failed" && s.error && (
+                <span className="text-[11px] text-red-600 break-words">{s.error}</span>
+              )}
             </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={s.status !== "disabled"}
+              disabled={busy === s.label}
+              onClick={() => toggle(s)}
+              title={s.status === "disabled" ? "Activar servidor" : "Desactivar servidor"}
+              className="mx-2 mt-0.5 shrink-0 disabled:opacity-50"
+            >
+              <span
+                className={`relative inline-flex h-5 w-9 rounded-full border-2 border-transparent transition-colors ${
+                  s.status !== "disabled" ? "bg-app-primary" : "bg-app-bg-tertiary"
+                }`}
+              >
+                <span
+                  className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${
+                    s.status !== "disabled" ? "translate-x-4" : "translate-x-0"
+                  }`}
+                />
+              </span>
+            </button>
             <DeleteBtn
               label={s.label}
               onDelete={async () => {

@@ -1,24 +1,24 @@
-"""CLI entry point — ``synapseforge init``, ``synapseforge launch``, ``synapseforge colors``, ``synapseforge run``.
+"""CLI entry point — ``synapseForge init``, ``synapseForge launch``, ``synapseForge colors``, ``synapseForge run``.
 
 Installed via ``pyproject.toml`` entry point::
 
-    synapseforge init [target_dir]
-    synapseforge launch [-p PATH] -n NAME [--skip-frontend] [--no-embed] [-c]
-    synapseforge colors [project_dir]
-    synapseforge run [project_dir]
+    synapseForge init [target_dir]
+    synapseForge launch [-p PATH] -n NAME [--skip-frontend] [--no-embed] [-c]
+    synapseForge colors [project_dir]
+    synapseForge run [project_dir]
 
 Examples:
-    synapseforge init                    # Create project in current directory
-    synapseforge init ./mi-proyecto      # Create project in ./mi-proyecto
-    synapseforge launch -n mi-app        # Build distribution zip (current dir)
-    synapseforge launch -p ./mi-proyecto -n mi-app  # Build from specific project
-    synapseforge launch -n mi-app --skip-frontend   # Skip frontend build
-    synapseforge launch -n mi-app -c                # Compile backend to .pyc
-    synapseforge colors                  # Edit colors in current project
-    synapseforge colors ./mi-proyecto    # Edit colors in specific project
-    synapseforge update ./mi-proyecto    # Update project to latest template
-    synapseforge run                     # Start dev servers (uvicorn + npm)
-    synapseforge run ./mi-proyecto       # Start dev servers in specific project
+    synapseForge init                    # Create project in current directory
+    synapseForge init ./mi-proyecto      # Create project in ./mi-proyecto
+    synapseForge launch -n mi-app        # Build distribution zip (current dir)
+    synapseForge launch -p ./mi-proyecto -n mi-app  # Build from specific project
+    synapseForge launch -n mi-app --skip-frontend   # Skip frontend build
+    synapseForge launch -n mi-app -c                # Compile backend to .pyc
+    synapseForge colors                  # Edit colors in current project
+    synapseForge colors ./mi-proyecto    # Edit colors in specific project
+    synapseForge update ./mi-proyecto    # Update project to latest template
+    synapseForge run                     # Start dev servers (uvicorn + npm)
+    synapseForge run ./mi-proyecto       # Start dev servers in specific project
 """
 
 from __future__ import annotations
@@ -47,7 +47,7 @@ COLOR_FIELDS = [
 def main() -> None:
     """Parse arguments and dispatch to ``pipeline.init`` or ``pipeline.launch``."""
     parser = argparse.ArgumentParser(
-        prog="synapseforge",
+        prog="synapseForge",
         description="synapseForge — AI agent project scaffolding & distribution",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
@@ -61,16 +61,16 @@ def main() -> None:
         description="Create a new synapseForge project from template. Opens a GUI to collect project configuration (name, description, colors, etc.) and generates the complete project structure.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""Examples:
-  synapseforge init                    # Create project in current directory
-  synapseforge init ./mi-proyecto      # Create project in ./mi-proyecto
-  synapseforge init /ruta/absoluta     # Create project in absolute path
+  synapseForge init                    # Create project in current directory
+  synapseForge init ./mi-proyecto      # Create project in ./mi-proyecto
+  synapseForge init /ruta/absoluta     # Create project in absolute path
 
 The GUI will prompt for:
   - Project name, description, client/task names
   - Logo files (company + client)
   - Primary, secondary, text color and gradient colors for the UI
 
-Output: Complete project structure with backend/, frontend/, config/, pipeline/, .commands/""",
+Output: Complete project structure with backend/, frontend/, config/, src/ and the Docker files""",
     )
     init_p.add_argument(
         "target_dir",
@@ -83,13 +83,13 @@ Output: Complete project structure with backend/, frontend/, config/, pipeline/,
     launch_p = subparsers.add_parser(
         "launch",
         help="Build a standalone distribution zip from a project",
-        description="Build a standalone distribution zip from a synapseForge project. Packages the backend (with embedded Python), frontend (built), and creates a Windows installer/executable.",
+        description="Build a standalone distribution zip from a synapseForge project. Packages the backend (with embedded Python), frontend (built), and creates a Windows executable launcher.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""Examples:
-  synapseforge launch -n mi-app                    # Build distribution (current dir)
-  synapseforge launch -p ./mi-proyecto -n mi-app   # Build from specific project
-  synapseforge launch -n mi-app --skip-frontend    # Use existing frontend/dist
-  synapseforge launch -n mi-app --no-embed         # Use system Python (no embed)
+  synapseForge launch -n mi-app                    # Build distribution (current dir)
+  synapseForge launch -p ./mi-proyecto -n mi-app   # Build from specific project
+  synapseForge launch -n mi-app --skip-frontend    # Use existing frontend/dist
+  synapseForge launch -n mi-app --no-embed         # Use system Python (no embed)
 
 Arguments:
   -p, --path   Path to the project root (default: current directory)
@@ -100,7 +100,7 @@ Options:
   --no-embed        Use existing venv instead of downloading embedded Python
   -c, --compile     Compile backend/ to .pyc (default: ship .py sources)
 
-Output: pipeline/dist/<exe_name>.zip containing installer + portable version""",
+Output: <project>/<project>-v<version>.zip, a portable app that runs with a double click""",
     )
     launch_p.add_argument(
         "-p",
@@ -138,8 +138,8 @@ Output: pipeline/dist/<exe_name>.zip containing installer + portable version""",
         description="Open a tkinter GUI to edit the runtime colors.json file. Changes apply immediately on browser reload — no rebuild needed.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""Examples:
-  synapseforge colors                  # Edit colors in current project
-  synapseforge colors ./mi-proyecto    # Edit colors in specific project
+  synapseForge colors                  # Edit colors in current project
+  synapseForge colors ./mi-proyecto    # Edit colors in specific project
 
 The GUI allows editing:
   - Primary color (buttons, headers, bubbles)
@@ -160,23 +160,21 @@ Changes are saved to frontend/public/colors.json and take effect on browser refr
     run_p = subparsers.add_parser(
         "run",
         help="Start development servers (uvicorn + npm run dev) and open browser",
-        description="Start both backend (uvicorn with --reload) and frontend (npm run dev) development servers. First executes .commands/init.ps1 to activate the project's venv and load aliases. Opens the default browser to the frontend URL.",
+        description="Start both backend (uvicorn with --reload) and frontend (npm run dev) development servers. The project's venv must be active. The frontend opens the default browser.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""Examples:
-  synapseforge run                     # Start dev servers in current project
-  synapseforge run ./mi-proyecto       # Start dev servers in specific project
+  synapseForge run                     # Start dev servers in current project
+  synapseForge run ./mi-proyecto       # Start dev servers in specific project
 
 What it does:
-  1. Executes .commands/init.ps1 (activates venv, loads aliases from commands.json)
-  2. Starts uvicorn on port 8000 (backend/main.py:app with --reload)
-  3. Starts npm run dev (Vite) on port 5173 (frontend/)
-  4. Waits 3 seconds for servers to start
-  5. Opens default browser to http://localhost:5173
+  1. Checks that the project's venv is active (VIRTUAL_ENV)
+  2. Starts uvicorn on port 8000 (backend.main:app with --reload) and waits for /health
+  3. Starts npm run dev (Vite) on port 3000 (frontend/), which opens the browser
 
-Press Ctrl+C to stop both servers gracefully.
+Press Ctrl+C to stop both servers.
 
 Requirements:
-  - Project created with synapseforge init (has .commands/init.ps1)
+  - Project created with synapseForge init
   - Node.js + npm installed
   - Frontend dependencies installed (npm install in frontend/)""",
     )
@@ -194,8 +192,8 @@ Requirements:
         description="Update the project to the latest template version from GitHub. Before overwriting, the entire project is backed up to ~/.config/synapseForge/backup/. If the update fails, the project is automatically restored.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""Examples:
-  synapseforge update                    # Update project in current directory
-  synapseforge update ./mi-proyecto      # Update specific project
+  synapseForge update                    # Update project in current directory
+  synapseForge update ./mi-proyecto      # Update specific project
 
 What happens:
   1. Backs up the entire project to ~/.config/synapseForge/backup/
@@ -346,7 +344,7 @@ def _run(project_dir: str) -> None:
     if not os.environ.get("VIRTUAL_ENV"):
         raise RuntimeError(
             "No hay un entorno virtual activado. "
-            "Activá el venv antes de ejecutar 'synapseforge run'.\n"
+            "Activá el venv antes de ejecutar 'synapseForge run'.\n"
             "Ejemplo: .\\venv\\Scripts\\activate (Windows) o source venv/bin/activate (Linux/Mac)"
         )
 

@@ -133,6 +133,7 @@ _TEXT_EXTENSIONS = frozenset({
     ".yaml", ".yml", ".toml", ".ini", ".cfg",
     ".env", ".env.example", ".gitignore",
     ".ps1", ".bat", ".cmd", ".sh",
+    ".jinja",
 })
 
 _NOEXT_NAMES = frozenset({

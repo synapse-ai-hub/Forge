@@ -153,7 +153,7 @@ synapseForge init mi-proyecto
 # Levantar el proyecto en modo desarrollo
 synapseForge run .
 
-# Abrir el navegador en http://localhost:5173</code></pre>
+# Abrir el navegador en http://localhost:3000</code></pre>
           <p>El comando <code>init</code> abre una interfaz gráfica donde cargás tu logo, definís el nombre de la empresa, los colores y demás datos. Una vez completado, tenés un proyecto listo para correr con <code>run</code>.</p>
           <h3>Comandos principales</h3>
           <table>
@@ -186,7 +186,7 @@ synapseForge run .
           <h3>Instalación desde PyPI</h3>
           <p>La forma más rápida:</p>
           <pre><code>pip install synapseForge</code></pre>
-          <p>El paquete trae solo dos dependencias propias; el resto se resuelve a nivel de proyecto.</p>
+          <p>El paquete trae una sola dependencia propia (Pillow, para generar el favicon); el resto se resuelve a nivel de proyecto.</p>
           <h3>Instalación desde el código fuente</h3>
           <p>Si querés contribuir o usar la última versión de desarrollo:</p>
           <pre><code>git clone https://github.com/synapse-ai-hub/synapseForge.git
@@ -210,7 +210,7 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
           <p>Cuando ejecutás <code>init</code>, se abre una ventana con los siguientes pasos:</p>
           <ol>
             <li><strong>Datos del proyecto</strong> — Cargás el logo de la empresa, el logo del cliente (opcional), nombre de empresa, owner, legal, nombre del repositorio, nombre del cliente y colores hexadecimales (opcional).</li>
-            <li><strong>Extracción de la plantilla</strong> — Se toma la plantilla base (incluida en el paquete o descargada desde GitHub) y se copia al directorio destino.</li>
+            <li><strong>Extracción de la plantilla</strong> — Se descarga la plantilla base desde GitHub y se extrae en el directorio destino.</li>
             <li><strong>Entorno virtual</strong> — Se crea un <code>venv</code> aislado dentro del proyecto.</li>
             <li><strong>Dependencias de Python</strong> — Se instalan las dependencias del backend dentro del venv.</li>
             <li><strong>Dependencias de Node</strong> — Se corre <code>npm install</code> en el frontend.</li>
@@ -239,9 +239,11 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
           <pre><code>mi-proyecto/
 ├── backend/             # Backend FastAPI
 ├── frontend/            # Frontend React + Vite + TypeScript
-├── config/              # Configuración del proyecto
-├── store/               # Store de tools y skills
-├── on_boarding/         # Onboarding para desarrolladores
+├── config/              # Configuración del proyecto (replace.json)
+├── src/                 # Logo de la empresa
+├── Dockerfile
+├── docker-compose.yml
+├── requirements.txt
 ├── .env.example
 ├── .gitignore
 ├── LICENSE
@@ -273,21 +275,23 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
               <tr><td><code>config.yaml</code></td><td>(Opcional) Permisos del agente principal: tools, skills y sub-agentes a los que puede delegar</td></tr>
             </tbody>
           </table>
-          <p>Todo esto se lee en tiempo de ejecución, así que podés agregar, modificar o quitar archivos sin reinstalar nada. Solo necesitás reiniciar el backend para que los cambios tomen efecto.</p>
+          <p>Todo esto se lee en tiempo de ejecución, así que podés agregar, modificar o quitar archivos sin reinstalar nada. Las skills y los agentes se leen cada vez que se usan; las tools externas y los servidores MCP se vuelven a leer al pulsar <strong>Actualizar</strong> en el panel de agentes o al reiniciar el backend.</p>
           <h3><code>config.yaml</code> — permisos del agente principal</h3>
-          <p>El agente principal (el router) tiene <strong>siempre</strong> un conjunto base de tools de lectura y delegación: <code>task</code>, <code>help</code>, <code>search_memory</code>, <code>read</code>, <code>websearch</code> y <code>webfetch</code>. Este piso está garantizado: exista o no <code>~/.config/synapseForge/config.yaml</code>, el yaml no puede quitárselas. Si existe <code>config.yaml</code>, sus permisos se <strong>agregan</strong> encima del piso base (misma lógica que el frontmatter de los agentes):</p>
+          <p>El agente principal (el router) toma sus permisos de <code>~/.config/synapseForge/config.yaml</code>, con la misma lógica que el frontmatter de los agentes:</p>
           <pre><code>permissions:
-  tool:
+  tools:
     read: allow
-  skill:
+  skills:
     mi_skill: allow
-  task:
+  tasks:
     explorador: allow</code></pre>
+          <p>Las claves son siempre <code>tools</code>, <code>skills</code> y <code>tasks</code> (en plural). Las skills listadas se inyectan en el system prompt del router igual que en un sub-agente.</p>
           <ul>
-            <li>Si el archivo <strong>no existe</strong> → el agente principal opera solo con el piso base (<code>task</code>, <code>help</code>, <code>search_memory</code>, <code>read</code>, <code>websearch</code>, <code>webfetch</code>).</li>
-            <li>Si existe → sus permisos se <strong>agregan</strong> encima del piso base.</li>
-            <li><code>task</code> es la excepción restrictible: si el yaml lo lista con sub-agentes, solo puede delegar a esos; si no lo lista, a todos.</li>
+            <li>Si el archivo <strong>no existe</strong> → el agente principal opera con un conjunto base de tools de lectura y delegación: <code>task</code>, <code>help</code>, <code>search_memory</code>, <code>read</code>, <code>websearch</code> y <code>webfetch</code>. No tiene skills.</li>
+            <li>Si existe → usa <strong>solo</strong> los permisos que declara: no se suma ninguna tool base.</li>
+            <li><code>task</code> está disponible únicamente si el yaml la lista en <code>tools</code> o en <code>tasks</code>; <code>tasks</code> limita a qué sub-agentes puede delegar.</li>
           </ul>
+          <p>El system prompt del router incluye solo las secciones de las tools que tiene habilitadas, así que cada tool de menos son tokens de contexto que se ahorran.</p>
         </section>
 
         <section id="rag">
@@ -311,9 +315,10 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
           </ol>
           <h3>¿Cómo la usa el agente?</h3>
           <p>El agente usa la tool nativa <code>rag</code> para consultar una colección. Devuelve los <strong>5 chunks más similares</strong> a la consulta. <strong>Deny by default</strong>: un agente solo puede consultar las colecciones que declara explícitamente en su frontmatter:</p>
-          <pre><code>permission:
-  rag:
-    mi_coleccion: allow</code></pre>
+          <pre><code>permissions:
+  tools:
+    rag:
+      mi_coleccion: allow</code></pre>
           <p>Esto te permite tener muchas colecciones y darle a cada agente solo las que necesita.</p>
         </section>
 
@@ -333,7 +338,7 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
     └── SKILL.md</code></pre>
           <p>El archivo <code>SKILL.md</code> es el corazón de la skill: contiene una sección de metadatos al inicio (frontmatter YAML) y el cuerpo con las instrucciones que el modelo va a leer. Dentro del cuerpo, podés incluir una sección <code>## Reference Guide</code> para documentación de referencia.</p>
           <h3>Control de acceso</h3>
-          <p><strong>Deny by default</strong>: si un agente no declara explícitamente qué skills puede usar, <strong>no tiene ninguna skill disponible</strong>. Cada agente debe especificar en su archivo qué skills puede usar mediante el bloque <code>permission.skill:</code> en el frontmatter. Esto te permite mantener un repositorio grande de skills y darle a cada agente solo las que necesita.</p>
+          <p><strong>Deny by default</strong>: si un agente no declara explícitamente qué skills puede usar, <strong>no tiene ninguna skill disponible</strong>. Cada agente debe especificar en su archivo qué skills puede usar mediante el bloque <code>permissions.skills</code> en el frontmatter. Esto te permite mantener un repositorio grande de skills y darle a cada agente solo las que necesita.</p>
           <blockquote>
             <strong>Nota sobre contexto:</strong> tanto las skills como las tools disponibles consumen contexto de ventana. Se recomienda que cada agente declare solo las skills que realmente necesita para sus tareas específicas.
           </blockquote>
@@ -344,7 +349,7 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
             <li><strong>Manualmente</strong>: creá una subcarpeta dentro de <code>~/.config/synapseForge/skills/</code> con un nombre corto y descriptivo (en minúsculas, sin espacios), y dentro un archivo <code>SKILL.md</code> con frontmatter YAML (<code>name</code> y <code>description</code> mínimo) y el cuerpo con las instrucciones.</li>
             <li><strong>Con el LLM</strong>: desde la pestaña <strong>Crear → Crear Skill</strong> (modo dev) o por Telegram. El LLM hace una entrevista iterativa y genera el <code>SKILL.md</code> y los archivos necesarios automáticamente.</li>
           </ol>
-          <p>En el agente que va a usar la skill, declará el permiso en el frontmatter: <code>permission.skill.{nombre_skill}: allow</code>. Reiniciá el backend para que la nueva skill se cargue.</p>
+          <p>En el agente que va a usar la skill, declará el permiso en el frontmatter: <code>permissions.skills.{nombre_skill}: allow</code>.</p>
           <h3>Buenas prácticas</h3>
           <ul>
             <li>El nombre de la carpeta es el identificador: usá nombres únicos y descriptivos.</li>
@@ -386,11 +391,12 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
               <tr><td><code>task</code></td><td>Delega una tarea a un sub-agente especializado.</td></tr>
               <tr><td><code>skill</code></td><td>Carga el contenido de una skill por nombre.</td></tr>
               <tr><td><code>reference</code></td><td>Carga un archivo de referencia específico de una skill.</td></tr>
-              <tr><td><code>rag</code></td><td>Consulta una colección RAG (solo las permitidas en <code>permission.rag</code>).</td></tr>
+              <tr><td><code>rag</code></td><td>Consulta una colección RAG (solo las permitidas en <code>permissions.tools.rag</code>).</td></tr>
               <tr><td><code>search_memory</code></td><td>Busca en conversaciones anteriores y devuelve los fragmentos relevantes.</td></tr>
               <tr><td><code>check_email</code></td><td>Verifica correos no leídos en un buzón IMAP.</td></tr>
               <tr><td><code>send_email</code></td><td>Envía un email.</td></tr>
-              <tr><td><code>help</code></td><td>Documentación interna de las tools.</td></tr>
+              <tr><td><code>help</code></td><td>Documentación interna del agente.</td></tr>
+              <tr><td><code>query_model_capabilities</code></td><td>Consulta las capacidades de un modelo en el catálogo local.</td></tr>
             </tbody>
           </table>
           <h3>Características clave</h3>
@@ -412,7 +418,7 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
             <li>Si la tool necesita credenciales, se leen de un <code>.env</code> propio dentro de la carpeta <code>lib/</code>.</li>
           </ul>
           <h3>Control de acceso</h3>
-          <p><strong>Deny by default</strong>: si un agente no declara explícitamente qué tools puede usar, <strong>no tiene ninguna tool disponible</strong> (ni las externas ni las nativas). Cada agente debe especificar en su archivo qué tools puede usar mediante el bloque <code>permission:</code> en el frontmatter. Esto te permite tener un repositorio grande de tools y darle a cada agente solo las que necesita.</p>
+          <p><strong>Deny by default</strong>: si un agente no declara explícitamente qué tools puede usar, <strong>no tiene ninguna tool disponible</strong> (ni las externas ni las nativas). Cada agente debe especificar en su archivo qué tools puede usar mediante el bloque <code>permissions.tools</code> en el frontmatter. Esto te permite tener un repositorio grande de tools y darle a cada agente solo las que necesita.</p>
           <blockquote>
             <strong>Nota sobre contexto:</strong> tanto las tools como las skills disponibles consumen contexto de ventana. Se recomienda que cada agente declare solo las tools que realmente necesita para sus tareas específicas.
           </blockquote>
@@ -427,7 +433,7 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
             <li>Agregá un bloque <code>if __name__ == "__main__"</code> al final para poder probar la tool desde la línea de comandos.</li>
             <li>Si la tool necesita credenciales o configuración, creá un archivo <code>tools/lib/.env</code> con las variables necesarias.</li>
             <li>Probalo de forma independiente: <code>python tools/nombre_tool.py argumento</code>.</li>
-            <li>Reiniciá el backend para que la nueva tool se cargue en el agente.</li>
+            <li>Pulsá <strong>Actualizar</strong> en el panel de agentes (o reiniciá el backend) para que la nueva tool se cargue.</li>
           </ol>
           <h3>Sandbox de prueba</h3>
           <p>Después de crear una tool con el LLM, aparece un botón <strong>Probar</strong> que abre un panel interactivo para ejecutar la tool directamente desde la interfaz. El sistema introspea la función y genera automáticamente un formulario con los parámetros detectados (nombres, tipos, valores por defecto y campos requeridos). Completás los campos, hacés clic en <strong>Ejecutar</strong> y ves el resultado sin tener que salir de la pantalla.</p>
@@ -445,20 +451,33 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
           <h3>¿Qué es MCP?</h3>
           <p>MCP (<em>Model Context Protocol</em>) es un protocolo estándar que permite conectar el agente con servidores externos que exponen herramientas y datos. Cada servidor MCP aporta tools que el agente puede invocar igual que cualquier otra herramienta.</p>
           <h3>¿Cómo se configuran los servidores?</h3>
-          <p>Los servidores MCP se configuran en <code>~/.config/synapseForge/mcp.json</code> como un array JSON:</p>
+          <p>Los servidores MCP se configuran en <code>~/.config/synapseForge/mcp.json</code> como un array JSON. Cada servidor usa uno de tres transportes:</p>
+          <ul>
+            <li><strong>stdio</strong> — servidor local que se lanza como proceso (<code>command</code>, <code>args</code>, <code>environment</code>).</li>
+            <li><strong>http</strong> — servidor remoto por streamable HTTP (<code>server_url</code> y, si hace falta, <code>headers</code> con el token).</li>
+            <li><strong>sse</strong> — servidor remoto con el protocolo SSE (<code>server_url</code> y <code>headers</code>).</li>
+          </ul>
           <pre><code>[
   {
     "label": "nombre-servidor",
     "transport": "stdio",
     "command": ["node", "/ruta/al/servidor/index.js"]
+  },
+  {
+    "label": "servidor-remoto",
+    "transport": "http",
+    "server_url": "https://ejemplo.com/mcp",
+    "headers": { "Authorization": "Bearer tu-token" }
   }
 ]</code></pre>
-          <p><code>stdio</code> es para servidores locales; <code>http</code> (con <code>server_url</code>) para servidores remotos.</p>
+          <p>Si no indicás <code>transport</code>, se infiere: un <code>command</code> es stdio y una URL es http. Las tools de cada servidor se registran con el prefijo del servidor (<code>nombre-servidor_nombre-tool</code>) y se habilitan en los permisos de cada agente dentro de <code>permissions.tools</code>, agrupadas por servidor.</p>
+          <h3>Activar y desactivar servidores</h3>
+          <p>Cada servidor tiene un interruptor en la pestaña <strong>MCP</strong> del panel de agentes. Desactivarlo escribe <code>"disabled": true</code> en su entrada de <code>mcp.json</code>: el servidor no se levanta, sus tools no llegan a ningún agente y no se ejecuta. También podés editar el archivo a mano; los cambios se aplican al pulsar <strong>Actualizar</strong> o al reiniciar el backend.</p>
           <h3>Estado y tolerancia a fallos</h3>
           <ul>
-            <li>Las tools de cada servidor se descubren automáticamente al iniciar y se registran como tools del agente.</li>
-            <li>Cada servidor tiene su propio timeout: si falla o no responde, <strong>se aísla</strong> — se marca en rojo en la interfaz y el resto del sistema sigue funcionando normalmente.</li>
-            <li>El estado de cada servidor se muestra en la pestaña <strong>MCP</strong> del panel de agentes: <strong>Conectado</strong> (verde) o <strong>Error</strong> (rojo).</li>
+            <li>Las tools de cada servidor se descubren automáticamente al iniciar (o al pulsar <strong>Actualizar</strong>) y se registran como tools del agente.</li>
+            <li>Cada servidor tiene su propio timeout (<code>timeout</code>, 300 segundos por defecto): si falla o no responde, <strong>se aísla</strong> — se marca en rojo en la interfaz y el resto del sistema sigue funcionando normalmente.</li>
+            <li>El estado se verifica con un handshake MCP real y se muestra en la pestaña <strong>MCP</strong>: <strong>Conectado</strong> (verde), <strong>Error</strong> (rojo, con el motivo) o <strong>Desactivado</strong>. Si <code>mcp.json</code> no es un JSON válido, la pestaña lo avisa.</li>
           </ul>
         </section>
 
@@ -475,7 +494,7 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
             <li><strong>Nombre</strong> — Identificador del agente. Tiene que coincidir con el nombre del archivo (sin la extensión <code>.md</code>).</li>
             <li><strong>Descripción</strong> — Una línea que describe qué hace el agente. Se usa en listados y búsquedas.</li>
             <li><strong>Parámetros del modelo</strong> — Temperatura, top-p, modelo, semilla, etc.</li>
-            <li><strong>Permisos</strong> — Qué tools, skills y colecciones RAG puede usar este agente, y cuáles no.</li>
+            <li><strong>Permisos</strong> — Bloque <code>permissions</code> con <code>tools</code> (incluye las colecciones RAG y los servidores MCP), <code>skills</code> y <code>tasks</code> (a qué sub-agentes puede delegar).</li>
           </ul>
           <h3>Parámetros del modelo</h3>
           <p>Podés ajustar cómo se comporta el modelo cuando ejecuta este agente:</p>
@@ -513,14 +532,15 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
           <h3>Cómo crear un agente</h3>
           <ol>
             <li>Creá un archivo <code>nombre-agente.md</code> directamente en <code>~/.config/synapseForge/agents/</code>. El nombre del archivo (sin <code>.md</code>) es el identificador.</li>
-            <li>Al inicio del archivo, escribí los metadatos en frontmatter YAML: nombre (debe coincidir con el archivo), descripción, parámetros del modelo y permisos de tools/skills/rag.</li>
+            <li>Al inicio del archivo, escribí los metadatos en frontmatter YAML: nombre (debe coincidir con el archivo), descripción, parámetros del modelo y permisos (<code>permissions</code>: <code>tools</code>, <code>skills</code> y <code>tasks</code>).</li>
             <li>Debajo, escribí el cuerpo con la instrucción del agente: personalidad, reglas, formato de respuesta, etc.</li>
             <li>El agente queda disponible para ser invocado por otros agentes (incluido el principal) usando el comando de delegación de tareas.</li>
-            <li>Reiniciá el backend para que el nuevo agente se cargue en el sistema.</li>
+            <li>No hace falta reiniciar: los agentes se leen cada vez que se usan.</li>
           </ol>
           <h3>AGENT.md — comportamiento general</h3>
-          <p>El archivo <code>AGENT.md</code> (si existe en <code>~/.config/synapseForge/agents/</code>) se inyecta como sección <code>## Behavior</code> en el system prompt de <strong>todos</strong> los agentes (el principal y los sub-agentes), <strong>antes</strong> de la sección <code>## MANDATORY:</code>. No reemplaza el system prompt de nadie: el principal usa <code>system_prompt.md</code> y cada sub-agente usa su propio <code>.md</code>. Sirve para definir el comportamiento general del proyecto (compatibilidad con opencode/claude code).</p>
+          <p>El archivo <code>AGENT.md</code> (si existe en <code>~/.config/synapseForge/agents/</code>) se inyecta como sección <code>## Behavior</code> en el system prompt de <strong>todos</strong> los agentes (el principal y los sub-agentes), <strong>antes</strong> de la sección <code>## MANDATORY:</code>. No reemplaza el system prompt de nadie: el principal usa su prompt base y cada sub-agente usa su propio <code>.md</code>. Sirve para definir el comportamiento general del proyecto (compatibilidad con opencode/claude code).</p>
           <p>Además, al final del system prompt de todos los agentes se inyecta la sección <code>## MANDATORY:</code> con las reglas obligatorias de fidelidad: ejecutar el objetivo del usuario sin agregar ni inventar nada, formular preguntas si hay dudas, e iterar con tools o sub-agentes hasta cumplirlo.</p>
+          <p>A continuación se inyecta la sección <code>## Seguridad</code> con las reglas contra prompt injection, fuga de datos y comandos o SQL peligrosos; las reglas de cada tool aparecen solo si el agente la tiene. Con el modelo de decisión habilitado, el agente principal no lleva estas reglas en su prompt: las evalúa el modelo de decisión sobre el mensaje del usuario (ver la sección Checkpoints y modelo de decisión). Los sub-agentes siempre las llevan.</p>
         </section>
 
         <section id="workflows">
@@ -548,12 +568,13 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
           <p>Cada tool call que el agente despacha se registra antes de ejecutarse y se confirma cuando su resultado se guarda. Si el flujo se corta (cancelás la respuesta o el backend se cae), el siguiente turno arranca con el trabajo sin confirmar inyectado como contexto: el pedido original, las tool calls pendientes con sus argumentos completos y el último resultado registrado. El agente retoma desde ahí en vez de repetir lo ya hecho.</p>
           <p>El registro solo se borra cuando el paso cierra con una respuesta final validada. Las tool calls ya confirmadas que quedaron de un corte se limpian automáticamente pasadas 24 horas (configurable con <code>FRONTIER_TTL_HOURS</code>); las pendientes se conservan hasta que se resuelven o se descartan. Los workflows usan el mismo mecanismo: cada <code>step</code> se registra como un bloque.</p>
           <h3>Modelo de decisión (opcional)</h3>
-          <p>Un <strong>modelo de decisión</strong> (System One) devuelve respuestas tipadas con un nivel de confianza en vez de texto generado. Se habilita desde <strong>Configuración</strong>, es independiente del modelo de chat y solo hace dos validaciones:</p>
+          <p>Un <strong>modelo de decisión</strong> (System One) devuelve respuestas tipadas con un nivel de confianza en vez de texto generado. Se habilita desde <strong>Configuración</strong>, es independiente del modelo de chat y hace tres validaciones:</p>
           <ul>
+            <li><strong>Guardrail</strong>: al iniciar un turno, el modelo evalúa si tu mensaje (con sus adjuntos) intenta violar las reglas de seguridad: anular las instrucciones del sistema, obtener el system prompt o claves, enviar datos a destinos no pedidos, o ejecutar comandos o SQL destructivos. Con confianza de al menos 0.8 el mensaje se bloquea, no se llama al modelo de chat y el chat muestra el aviso. El mensaje bloqueado se guarda sin su contenido, para que no vuelva al contexto en los turnos siguientes.</li>
             <li><strong>Cierre de paso</strong>: cuando el agente da una respuesta final, el modelo evalúa si cumple lo pedido y no deja trabajo pendiente. Solo cierra el paso (y borra el registro) con confianza de al menos 0.8.</li>
             <li><strong>Continuidad</strong>: al iniciar un turno con trabajo pendiente, el modelo evalúa si tu mensaje nuevo lo continúa o pide otra cosa. Si pide otra cosa con confianza alta, el trabajo pendiente se descarta y el chat muestra un aviso.</li>
           </ul>
-          <p>Con el modelo de decisión deshabilitado, el agente acepta su propia respuesta final como cierre y conserva siempre el trabajo pendiente, sin llamadas extra. Ante cualquier error del modelo de decisión, el flujo sigue como si estuviera deshabilitado. Cada veredicto queda guardado en la sesión como un mensaje interno que nunca se envía al LLM.</p>
+          <p>Con el modelo de decisión deshabilitado, no hay guardrail (las reglas de seguridad van en el prompt del agente principal), el agente acepta su propia respuesta final como cierre y conserva siempre el trabajo pendiente, sin llamadas extra. Ante cualquier error del modelo de decisión, el flujo sigue como si estuviera deshabilitado. Cada veredicto queda guardado en la sesión como un mensaje interno que nunca se envía al LLM.</p>
         </section>
 
         <section id="interfaz-usuario">
@@ -577,7 +598,7 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
             <li><strong>Tools</strong> — Lista las tools disponibles (nativas + externas) con su descripción.</li>
             <li><strong>Skills</strong> — Lista las skills instaladas.</li>
             <li><strong>Agentes</strong> — Lista los sub-agentes configurados.</li>
-            <li><strong>MCP</strong> — Lista los servidores MCP con su estado (Conectado/Error).</li>
+            <li><strong>MCP</strong> — Lista los servidores MCP con su estado (Conectado, Error o Desactivado) y un interruptor para activar o desactivar cada uno.</li>
             <li><strong>RAG</strong> — Lista las colecciones de la base de conocimiento.</li>
             <li><strong>Workflows</strong> — Elige el flujo activo: <strong>smart</strong> o uno de los workflows guardados.</li>
           </ul>
@@ -605,6 +626,7 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
             <li><strong>Tarjetas de sub-agente</strong> — Cuando se delega a un sub-agente, se muestra el nombre y el resultado.</li>
             <li><strong>Adjuntos</strong> — Los archivos que el usuario sube aparecen como chips debajo del mensaje.</li>
             <li><strong>Aviso de trabajo descartado</strong> — Con el modelo de decisión habilitado, indica que el trabajo pendiente de un turno anterior se descartó porque el mensaje nuevo pedía otra cosa.</li>
+            <li><strong>Aviso de mensaje bloqueado</strong> — Con el modelo de decisión habilitado, indica que el guardrail bloqueó tu mensaje por las reglas de seguridad.</li>
           </ul>
           <h3>Gauge de contexto</h3>
           <p>En el header del chat hay un <strong>velocímetro</strong> que muestra el porcentaje de ventana de contexto usado por la sesión actual. Se llena de verde a rojo a medida que se acerca al límite del modelo.</p>
@@ -624,7 +646,7 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
           <h3>Historial</h3>
           <p>En el panel lateral, bajo la pestaña <strong>Conversaciones</strong>, se listan todas las sesiones de chat. Podés crear nuevas conversaciones, seleccionar sesiones anteriores y eliminar conversaciones existentes.</p>
           <h3>Métricas</h3>
-          <p>El botón <strong>Métricas</strong> del header abre el dashboard con cinco pestañas: <strong>Resumen</strong> (sesiones, mensajes, tokens, costos y actividad por día), <strong>Sesiones</strong>, <strong>Tools</strong> (llamadas y sub-agentes), <strong>Modelos</strong> y <strong>Errores</strong>.</p>
+          <p>El botón <strong>Métricas</strong> del header abre el dashboard, con un filtro de rango de tiempo (1 hora, 6 horas, 1 día, 1 semana, 1 mes o todo) y tarjetas de <strong>Sesiones</strong>, <strong>Mensajes</strong>, <strong>Uso de herramientas</strong> (llamadas y sub-agentes), <strong>Modelos</strong>, <strong>Gasto</strong> y <strong>Errores</strong>. Cada tarjeta muestra sus gráficos y permite descargar los datos.</p>
           <h3>Uso y Facturación</h3>
           <p>En el header hay dos botones: <strong>Uso</strong> y <strong>Facturación</strong>, con los datos del mes.</p>
           <p><strong>Uso</strong> muestra el consumo del mes: solicitudes, tokens totales, gasto en USD y el desglose de tokens de entrada y salida, más el detalle por proveedor y los límites configurados.</p>
@@ -727,8 +749,14 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
               <tr><td>GET</td><td><code>/api/sessions/titles</code></td><td>Listar los títulos de las sesiones.</td></tr>
               <tr><td>GET</td><td><code>/api/sessions/{id}</code></td><td>Cargar una sesión completa con todos sus mensajes.</td></tr>
               <tr><td>DELETE</td><td><code>/api/sessions/{id}</code></td><td>Eliminar una sesión y todos sus datos asociados.</td></tr>
+              <tr><td>GET</td><td><code>/api/feedback/{session_id}</code></td><td>Feedback 👍/👎 de todas las respuestas de la sesión.</td></tr>
+              <tr><td>PUT</td><td><code>/api/feedback/{session_id}/{turn_number}</code></td><td>Guardar o cambiar el feedback de una respuesta.</td></tr>
+              <tr><td>DELETE</td><td><code>/api/feedback/{session_id}/{turn_number}</code></td><td>Quitar el feedback de una respuesta.</td></tr>
+              <tr><td>GET</td><td><code>/health</code></td><td>Estado del servidor.</td></tr>
               <tr><td>POST</td><td><code>/api/heartbeat</code></td><td>Keep-alive del frontend (latido cada 10 segundos).</td></tr>
               <tr><td>GET</td><td><code>/api/config/providers</code></td><td>Listar proveedores de modelos disponibles.</td></tr>
+              <tr><td>GET</td><td><code>/api/config/providers/keys</code></td><td>Indicar qué proveedores tienen API key guardada (sin devolverla).</td></tr>
+              <tr><td>PUT/DELETE</td><td><code>/api/config/providers/{provider}/key</code></td><td>Guardar (validada y cifrada) o eliminar la API key de un proveedor.</td></tr>
               <tr><td>GET</td><td><code>/api/config/models</code></td><td>Listar modelos del proveedor seleccionado.</td></tr>
               <tr><td>POST</td><td><code>/api/config/models/select</code></td><td>Seleccionar modelo y proveedor.</td></tr>
               <tr><td>GET</td><td><code>/api/config/models/capabilities</code></td><td>Capacidades de un modelo (razonamiento, temperatura, tool calling, structured output).</td></tr>
@@ -736,12 +764,15 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
               <tr><td>POST</td><td><code>/api/config/models/decision/select</code></td><td>Seleccionar proveedor y modelo de decisión.</td></tr>
               <tr><td>POST</td><td><code>/api/config/models/decision/enabled</code></td><td>Habilitar o deshabilitar el modelo de decisión.</td></tr>
               <tr><td>GET</td><td><code>/api/config/models/decision/capabilities</code></td><td>Ficha de un modelo de decisión (límites, modalidades, costos).</td></tr>
+              <tr><td>GET</td><td><code>/api/config/parameters</code></td><td>Parámetros avanzados del modelo (temperature, top_p, reasoning, formato de salida).</td></tr>
               <tr><td>GET</td><td><code>/api/config/context-window</code></td><td>Obtener el límite de turnos en contexto.</td></tr>
               <tr><td>POST</td><td><code>/api/config/context-window</code></td><td>Configurar el límite de turnos en contexto.</td></tr>
               <tr><td>GET</td><td><code>/api/config/verbose-mode</code></td><td>Obtener el estado del modo verbose.</td></tr>
               <tr><td>POST</td><td><code>/api/config/verbose-mode</code></td><td>Activar o desactivar el modo verbose.</td></tr>
+              <tr><td>GET/POST</td><td><code>/api/config/setup-completed</code></td><td>Consultar / marcar como completada la pantalla inicial de configuración.</td></tr>
               <tr><td>GET</td><td><code>/api/config/skills</code></td><td>Listar skills disponibles.</td></tr>
               <tr><td>GET</td><td><code>/api/config/tools</code></td><td>Listar tools disponibles.</td></tr>
+              <tr><td>POST</td><td><code>/api/config/tools/refresh</code></td><td>Releer las tools externas y reconstruir el registry (incluye MCP).</td></tr>
               <tr><td>GET</td><td><code>/api/config/agents</code></td><td>Listar sub-agentes disponibles.</td></tr>
               <tr><td>GET</td><td><code>/api/config/mcp</code></td><td>Listar servidores MCP con su estado.</td></tr>
               <tr><td>GET</td><td><code>/api/config/workflows/selection</code></td><td>Workflow activo y workflows disponibles.</td></tr>
@@ -753,9 +784,13 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
               <tr><td>DELETE</td><td><code>/api/context-files/{id}</code></td><td>Eliminar un archivo de contexto.</td></tr>
               <tr><td>GET</td><td><code>/api/metrics/overview</code></td><td>Métricas agregadas (sesiones, mensajes, tools, errores).</td></tr>
               <tr><td>GET</td><td><code>/api/metrics/sessions</code></td><td>Métricas por sesión.</td></tr>
+              <tr><td>GET</td><td><code>/api/metrics/messages</code></td><td>Métricas por mensaje (pasos, tokens, tiempo y latencia).</td></tr>
               <tr><td>GET</td><td><code>/api/metrics/tools</code></td><td>Uso de tools.</td></tr>
               <tr><td>GET</td><td><code>/api/metrics/errors</code></td><td>Métricas de errores.</td></tr>
               <tr><td>GET</td><td><code>/api/metrics/models</code></td><td>Uso por modelo.</td></tr>
+              <tr><td>GET</td><td><code>/api/metrics/costs</code></td><td>Costos por proveedor y modelo.</td></tr>
+              <tr><td>GET</td><td><code>/api/metrics/{sessions|messages|tools|models|costs}/export</code></td><td>Descargar la tabla correspondiente como CSV.</td></tr>
+              <tr><td>POST</td><td><code>/api/metrics/eda/outliers-image</code></td><td>Figura de outliers de una métrica (imagen en base64).</td></tr>
               <tr><td>POST</td><td><code>/api/conversation/export</code></td><td>Exportar una conversación a Markdown.</td></tr>
               <tr><td>GET</td><td><code>/api/usage-metrics</code></td><td>Uso del mes por proveedor (solicitudes, tokens, costo) y totales.</td></tr>
               <tr><td>GET</td><td><code>/api/billing-config</code></td><td>Listar límites de gasto configurados.</td></tr>
@@ -763,6 +798,7 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
               <tr><td>GET</td><td><code>/api/billing-stats</code></td><td>Estadísticas de facturación del mes por proveedor.</td></tr>
               <tr><td>GET</td><td><code>/api/spend</code></td><td>Gasto del mes por proveedor y modelo, con tarifas del catálogo.</td></tr>
               <tr><td>GET</td><td><code>/api/rag/collections</code></td><td>Listar colecciones RAG.</td></tr>
+              <tr><td>GET</td><td><code>/api/rag/collections/embedding-compatibility</code></td><td>Clasificar las colecciones por compatibilidad del modelo de embeddings.</td></tr>
               <tr><td>POST</td><td><code>/api/rag/collections</code></td><td>Crear una colección RAG.</td></tr>
               <tr><td>DELETE</td><td><code>/api/rag/collections/{name}</code></td><td>Eliminar una colección RAG.</td></tr>
               <tr><td>POST</td><td><code>/api/rag/collections/{name}/files</code></td><td>Subir archivos a una colección (extracción + chunking).</td></tr>
@@ -775,6 +811,7 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
               <tr><td>POST</td><td><code>/api/agent/tools/{name}/test</code></td><td>Ejecutar una tool con argumentos personalizados (sandbox de prueba).</td></tr>
               <tr><td>DELETE</td><td><code>/api/agent/agents/{name}</code></td><td>Eliminar un agente.</td></tr>
               <tr><td>DELETE</td><td><code>/api/agent/mcp/{label}</code></td><td>Eliminar un servidor MCP.</td></tr>
+              <tr><td>PUT</td><td><code>/api/agent/mcp/{label}/enabled</code></td><td>Activar o desactivar un servidor MCP.</td></tr>
               <tr><td>DELETE</td><td><code>/api/agent/knowledge/{collection}</code></td><td>Eliminar una colección RAG.</td></tr>
               <tr><td>GET</td><td><code>/api/events</code></td><td>Streaming SSE del event bus (Telegram → Frontend).</td></tr>
               <tr><td>GET</td><td><code>/api/scheduler/tasks</code></td><td>Listar las tareas programadas.</td></tr>
@@ -783,6 +820,7 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
               <tr><td>PUT</td><td><code>/api/scheduler/tasks/{id}</code></td><td>Actualizar una tarea programada (hora, días o descripción).</td></tr>
               <tr><td>DELETE</td><td><code>/api/scheduler/tasks/{id}</code></td><td>Eliminar una tarea programada.</td></tr>
               <tr><td>GET</td><td><code>/api/scheduler/runs</code></td><td>Historial de ejecuciones de tareas programadas.</td></tr>
+              <tr><td>GET</td><td><code>/api/scheduler/permissions/catalog</code></td><td>Tools, skills y agentes disponibles para armar los permisos de una tarea.</td></tr>
               <tr><td>GET</td><td><code>/api/telegram/status</code></td><td>Estado del bot de Telegram.</td></tr>
               <tr><td>POST</td><td><code>/api/telegram/toggle</code></td><td>Activar/desactivar el bot de Telegram.</td></tr>
               <tr><td>GET/POST</td><td><code>/api/telegram/active-session</code></td><td>Obtener/establecer la sesión activa compartida.</td></tr>
@@ -792,15 +830,18 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
           <h3>El endpoint de chat (streaming)</h3>
           <p>El endpoint de chat devuelve los eventos en formato <strong>Server-Sent Events</strong>. Cada evento es un objeto JSON con un tipo y su contenido asociado. Los tipos principales son:</p>
           <ul>
+            <li><strong>turn</strong> — Número de turno de la respuesta, al inicio del stream. El frontend lo usa para asociar el 👍/👎 a la respuesta.</li>
             <li><strong>chunk</strong> — Fragmentos de la respuesta del modelo que se van acumulando en pantalla.</li>
+            <li><strong>reasoning</strong> — Fragmentos del razonamiento del modelo.</li>
             <li><strong>tool_call</strong> — El modelo decidió usar una tool. Incluye el nombre y los argumentos.</li>
             <li><strong>tool_result</strong> — La respuesta que devolvió la tool.</li>
-            <li><strong>subagent_event</strong> — El agente principal delegó a un sub-agente. Incluye el nombre del sub-agente y su contenido.</li>
+            <li><strong>subagent_call</strong> y <strong>subagent_result</strong> — El agente principal delegó a un sub-agente (nombre y prompt) y el resultado que devolvió.</li>
+            <li><strong>subagent_event</strong> — Avance interno de un sub-agente, para mostrarlo mientras trabaja.</li>
             <li><strong>session_title</strong> — El título generado para la sesión.</li>
-            <li><strong>decision</strong> — El modelo de decisión descartó el trabajo pendiente de un turno anterior (<code>action: "discarded"</code>).</li>
-            <li><strong>done</strong> — Marca el final del stream e incluye el ID de la sesión.</li>
-            <li><strong>error</strong> — Un error durante el procesamiento.</li>
+            <li><strong>token_counter</strong> — Uso de la ventana de contexto de la sesión.</li>
+            <li><strong>decision</strong> — Acción del modelo de decisión: descartó el trabajo pendiente de un turno anterior (<code>action: "discarded"</code>) o bloqueó el mensaje por el guardrail (<code>action: "blocked"</code>).</li>
           </ul>
+          <p>El stream termina con el marcador <code>[DONE]</code>.</p>
           <h3>Modelo de sesión</h3>
           <ul>
             <li>Cada sesión tiene un <strong>ID único</strong> que se crea al enviar el primer mensaje.</li>

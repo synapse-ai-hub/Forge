@@ -50,6 +50,18 @@ if (Test-Path ".commands") {
 
 ---
 
+## 🧰 Comandos disponibles
+
+| Alias | Qué hace |
+|-------|----------|
+| `cmds` | Lista los comandos disponibles |
+| `sync` | Sincroniza con `fetch` + `rebase` (`-b` rama, default `main`) |
+| `push` | Commit + push con rebase (`-m` mensaje, `-b` rama) |
+| `template` | Regenera `pipeline/template.zip` desde `template/` |
+| `test` | Corre los tests E2E (`--only` escenario) |
+
+---
+
 ## 📝 Agregar Comandos
 
 Editar .commands/commands.json:

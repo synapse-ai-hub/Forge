@@ -14,7 +14,7 @@ Tests del sistema de checkpoints (`step_frontier`) contra el flujo real: el mism
 
 ## Requisitos
 
-- Python 3.11+
+- Python 3.12+
 - Paquetes: `pip install requests pyyaml`
 - El backend corriendo **en esta misma máquina** (`python -m uvicorn backend.main:app --reload` o `run`), porque el runner lee su SQLite directamente
 - LLM configurado: necesario para los dos escenarios (el modelo tiene que despachar tool calls reales)

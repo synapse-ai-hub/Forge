@@ -498,19 +498,25 @@ def _ensure_scheduler_agent(task: dict) -> str | None:
     params = task.get("parameters") or {}
 
     # Build the frontmatter dict and dump it with yaml.safe_dump so strings
-    # with quotes/backslashes and nested dicts are escaped correctly. Tools go
-    # FLAT under `permission` (e.g. `read: allow`) and skills go under the
-    # nested `skill` block — the format `filter_tools` expects.
+    # with quotes/backslashes and nested dicts are escaped correctly. The
+    # `permissions` block uses the plural sub-blocks `get_tool_permissions` and
+    # `get_skill_permissions` read: `tools` (flat or grouped), `tasks` (the
+    # nested `task` permission) and `skills`.
     frontmatter: dict = {
         "name": task_name,
         "description": f"Sub-agente programado: {task_name}",
         "scheduler_task": True,
-        "permission": {},
+        "permissions": {},
     }
     if tool_perms:
-        frontmatter["permission"].update(tool_perms)
+        tools_block = {k: v for k, v in tool_perms.items() if k != "task"}
+        if tools_block:
+            frontmatter["permissions"]["tools"] = tools_block
+        tasks_block = tool_perms.get("task")
+        if isinstance(tasks_block, dict) and tasks_block:
+            frontmatter["permissions"]["tasks"] = tasks_block
     if skill_perms:
-        frontmatter["permission"]["skill"] = skill_perms
+        frontmatter["permissions"]["skills"] = skill_perms
     if params:
         frontmatter["parameters"] = params
 

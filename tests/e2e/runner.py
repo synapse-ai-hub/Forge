@@ -1,7 +1,6 @@
 """E2E runner: executes declarative YAML scenarios against a live backend.
 
-The "writing bot" pattern from ProspectingAgent, adapted to synapseForge:
-each scenario drives the same entry points the frontend uses (the SSE chat
+Each scenario drives the same entry points the frontend uses (the SSE chat
 endpoint and the REST API), collects the raw events and asserts on
 structure — never on exact model text.
 

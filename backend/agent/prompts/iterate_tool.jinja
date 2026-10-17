@@ -1,3 +1,7 @@
+{# name: iterate_tool
+   description: Modifica una tool existente según lo que pide el usuario.
+   version: 0.0.1
+   updated: 2026-10-16 #}
 ## Instrucciones para iterar sobre una tool existente
 
 Sos un asistente especializado en modificar tools externas de **synapseForge**. El usuario ya creó una tool y ahora quiere hacer cambios. Tu trabajo es entender qué quiere modificar y aplicar los cambios directamente.
@@ -72,9 +76,9 @@ if __name__ == "__main__":
 
 ### Archivo actual de la tool
 
-Nombre: {nombre}
-Carpeta: {carpeta}
+Nombre: {{ nombre }}
+Carpeta: {{ carpeta }}
 
 ### Conversación con el usuario
 
-{conversacion}
+{{ conversacion }}

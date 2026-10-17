@@ -149,19 +149,18 @@ async def post_create_tool_stream(req: CreateToolRequest):
         if req.iterate:
             yield _sse({"type": "tool_action", "content": {"action": "iterating"}})
 
+            tool_carpeta = str(_TOOLS_DIR / (nombre or "tool"))
             try:
-                iter_template = agent.prompt("iterate_tool")
+                iter_prompt = agent.prompt(
+                    "iterate_tool",
+                    nombre=nombre or "(inferir)",
+                    carpeta=tool_carpeta,
+                    conversacion=_formatear_mensajes(mensajes),
+                )
             except FileNotFoundError:
-                logger.exception("Prompt iterate_tool.md no encontrado.")
+                logger.exception("Prompt iterate_tool.jinja no encontrado.")
                 yield _sse({"type": "error", "content": _FRIENDLY_ERROR_TOOL})
                 return
-
-            tool_carpeta = str(_TOOLS_DIR / (nombre or "tool"))
-            iter_prompt = iter_template.format(
-                nombre=nombre or "(inferir)",
-                carpeta=tool_carpeta,
-                conversacion=_formatear_mensajes(mensajes),
-            )
 
             try:
                 tools = list(agent.tools.tools_registry(_AGENT_TOOLS_PERMS))
@@ -214,13 +213,6 @@ async def post_create_tool_stream(req: CreateToolRequest):
         # ════════════════════════════════════════════════════════════════
         # FASE 2: ENTREVISTA — stream texto + tool responder_interview_tool
         # ════════════════════════════════════════════════════════════════
-        try:
-            template = agent.prompt("interview_tool")
-        except FileNotFoundError:
-            logger.exception("Prompt interview_tool.md no encontrado.")
-            yield _sse({"type": "error", "content": _FRIENDLY_ERROR_TOOL})
-            return
-
         # Formatear parámetros y datos
         if parametros:
             params_lines = []
@@ -236,13 +228,19 @@ async def post_create_tool_stream(req: CreateToolRequest):
 
         datos_text = "\n".join(f"  - {d}" for d in datos) if datos else "(No se declararon datos externos. Inferir si los necesita.)"
 
-        prompt = template.format(
-            descripcion=descripcion,
-            nombre=nombre or "(inferir)",
-            parametros=parametros_text,
-            datos=datos_text,
-            mensajes=_formatear_mensajes(mensajes),
-        )
+        try:
+            prompt = agent.prompt(
+                "interview_tool",
+                descripcion=descripcion,
+                nombre=nombre or "(inferir)",
+                parametros=parametros_text,
+                datos=datos_text,
+                mensajes=_formatear_mensajes(mensajes),
+            )
+        except FileNotFoundError:
+            logger.exception("Prompt interview_tool.jinja no encontrado.")
+            yield _sse({"type": "error", "content": _FRIENDLY_ERROR_TOOL})
+            return
 
         collected_content = ""
         tool_calls_data = None
@@ -305,13 +303,6 @@ async def post_create_tool_stream(req: CreateToolRequest):
         # ════════════════════════════════════════════════════════════════
         yield _sse({"type": "tool_action", "content": {"action": "creating"}})
 
-        try:
-            sys_prompt_template = agent.prompt("create_tool")
-        except FileNotFoundError:
-            logger.exception("Prompt create_tool.md no encontrado.")
-            yield _sse({"type": "error", "content": _FRIENDLY_ERROR_TOOL})
-            return
-
         # Formatear params/datos/conversación para el prompt de generación
         if llm_parametros:
             params_lines = []
@@ -330,14 +321,20 @@ async def post_create_tool_stream(req: CreateToolRequest):
         conversacion = _formatear_mensajes(mensajes) if mensajes else f"**Usuario**: {task}"
 
         carpeta = str(_TOOLS_DIR / (name or "tool"))
-        sys_prompt = sys_prompt_template.format(
-            nombre=name or "(inferir del contexto)",
-            descripcion=task,
-            conversacion=conversacion,
-            parametros=params_text,
-            datos=datos_text,
-            carpeta=carpeta,
-        )
+        try:
+            sys_prompt = agent.prompt(
+                "create_tool",
+                nombre=name or "(inferir del contexto)",
+                descripcion=task,
+                conversacion=conversacion,
+                parametros=params_text,
+                datos=datos_text,
+                carpeta=carpeta,
+            )
+        except FileNotFoundError:
+            logger.exception("Prompt create_tool.jinja no encontrado.")
+            yield _sse({"type": "error", "content": _FRIENDLY_ERROR_TOOL})
+            return
 
         user_msg = (
             "Creá la tool. Pasos OBLIGATORIOS en orden: "

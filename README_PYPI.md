@@ -32,7 +32,9 @@
 
 The generated project includes:
 
-- **Agent Framework**: AgentLoop with native tool calling, tools registry (native + external + MCP), sessions (SQLite WAL), per-agent permissions, skills and sub-agent delegation
+- **Agent Framework**: AgentLoop with native tool calling, tools registry (native + external + MCP), sessions (SQLite WAL), per-agent permissions, skills, sub-agent delegation and deterministic workflows
+- **MCP**: servers over stdio, HTTP or SSE defined in `mcp.json`, with an on/off switch per server in the UI
+- **Decision model (optional)**: validates step closing and pending work, and acts as a security guardrail on the user message
 - **Multi-provider LLM**: Ollama (local) plus curated cloud providers — 14 OpenAI-compatible (Groq, OpenRouter, OpenAI, DeepSeek, xAI, Together AI, Fireworks AI, Cerebras, Mistral AI, Perplexity, Meta, Moonshot AI, Zhipu AI, Alibaba) + Google (Gemini models and embeddings) — cloud API keys validated live against each provider's API and stored encrypted in SQLite
 - **RAG knowledge base**: ChromaDB vector collections with Gemini embeddings (`gemini-embedding-2`) via the Google provider; upload files and web pages, cosine-similarity search
 - **LLM-assisted creation**: standalone interfaces to generate skills, tools, agents and workflows through an iterative interview (with real tools enabled), with ephemeral cloud model selection per task
@@ -72,7 +74,7 @@ Package dependencies: `Pillow` (.ico generation) — everything else is project-
 ### Create a new project
 
 ```bash
-synapseforge init my-project
+synapseForge init my-project
 cd my-project
 ```
 
@@ -81,7 +83,7 @@ Interactive GUI pipeline (project data, logos, colors).
 ### Run in development
 
 ```bash
-synapseforge run ./my-project
+synapseForge run ./my-project
 ```
 
 Requires the project venv to be activated (`VIRTUAL_ENV`). Starts backend + frontend dev servers and opens the browser. Ctrl+C stops both.
@@ -89,7 +91,7 @@ Requires the project venv to be activated (`VIRTUAL_ENV`). Starts backend + fron
 ### Build a distributable
 
 ```bash
-synapseforge launch -p ./my-project -n "MyApp"
+synapseForge launch -p ./my-project -n "MyApp"
 ```
 
 Builds the frontend, bundles embedded Python and packages everything into a self-contained desktop app / zip ready to deliver. By default the backend ships as `.py` sources; pass `-c` / `--compile` to compile it to `.pyc`. Other options: `--skip-frontend`, `--no-embed`.
@@ -99,7 +101,7 @@ Alternatively, deploy the project as a container with the bundled Docker setup (
 ### Update to latest template
 
 ```bash
-synapseforge update ./my-project
+synapseForge update ./my-project
 ```
 
 Backs up the entire project (including `agent.db` and `config/replace.json`), downloads the latest template, and restores your data. If anything fails, the project is automatically restored from the backup.
@@ -107,7 +109,7 @@ Backs up the entire project (including `agent.db` and `config/replace.json`), do
 ### Edit colors at runtime (no rebuild)
 
 ```bash
-synapseforge colors ./my-project
+synapseForge colors ./my-project
 ```
 
 GUI editor for `frontend/public/colors.json`. Refresh the browser (F5) to see changes instantly.
@@ -118,12 +120,12 @@ GUI editor for `frontend/public/colors.json`. Refresh the browser (F5) to see ch
 
 | Command | Description |
 |---------|-------------|
-| `synapseforge init [dir]` | Scaffold a project from the latest template downloaded from GitHub (GUI) |
-| `synapseforge launch -p <path> -n <exe> [--skip-frontend] [--no-embed] [-c]` | Build self-contained desktop app / distribution zip (`-c` compiles backend to `.pyc`, default ships `.py`) |
-| `synapseforge colors [dir]` | Edit `frontend/public/colors.json` via GUI (live reload) |
-| `synapseforge run [dir]` | Start uvicorn + npm dev servers, open browser (venv must be active) |
-| `synapseforge update [dir]` | Update project to latest template (preserves agent.db, config, colors) |
-| `synapseforge --help` | Show global help |
+| `synapseForge init [dir]` | Scaffold a project from the latest template downloaded from GitHub (GUI) |
+| `synapseForge launch -p <path> -n <exe> [--skip-frontend] [--no-embed] [-c]` | Build self-contained desktop app / distribution zip (`-c` compiles backend to `.pyc`, default ships `.py`) |
+| `synapseForge colors [dir]` | Edit `frontend/public/colors.json` via GUI (live reload) |
+| `synapseForge run [dir]` | Start uvicorn + npm dev servers, open browser (venv must be active) |
+| `synapseForge update [dir]` | Update project to latest template (preserves agent.db, config, colors) |
+| `synapseForge --help` | Show global help |
 
 ---
 
