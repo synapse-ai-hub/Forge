@@ -21,10 +21,19 @@ Bienvenido/a al proyecto `synapseForge`. Estos son los pasos mínimos para dejar
 
 ## 2. Instalar dependencias
 
+Requiere Python 3.12+ y Node.js 20+.
+
 ```bash
 >>> python -m venv .synapseForge
->>> .\synapseForge\Scripts\Activate.ps1
+>>> .\.synapseForge\Scripts\Activate.ps1
 >>> pip install -r requirements.txt
+>>> npm install --prefix frontend
+```
+
+Para levantar el backend y el frontend en desarrollo, con el venv activado:
+
+```bash
+>>> synapseForge run .
 ```
 
 ---
@@ -57,7 +66,7 @@ git commit -m "Feat: agregar mi nueva funcionalidad"
 git commit -m "Fix: corregir error en validación"
 ```
 
-> Formato: `Fix:`, `Feat:`, `Chore:`, `Docs:`, `Refactor:`, `Update:` + mensaje en español e imperativo. Ver detalle en [GIT_WORKFLOW.md](./OnBoarding/GIT_WORKFLOW.md).
+> Formato: `Fix:`, `Feat:`, `Chore:`, `Docs:`, `Refactor:`, `Update:` + mensaje en español e imperativo. Ver detalle en [GIT_WORKFLOW.md](./GIT_WORKFLOW.md).
 
 ---
 
@@ -78,11 +87,12 @@ https://github.com/synapse-ai-hub/synapseForge/compare/main...feature/mi-feature
 
 ## 5. Recursos y ayuda
 
-- Revisá [GIT_WORKFLOW.md](./OnBoarding/GIT_WORKFLOW.md) para el flujo de trabajo.
+- Revisá [GIT_WORKFLOW.md](./GIT_WORKFLOW.md) para el flujo de trabajo.
+- Revisá [CONTRIBUTING.md](./CONTRIBUTING.md) para las áreas donde contribuir y las normas del proyecto.
 - Si tenés dudas, abrí un issue o consultá al equipo.
 
 ---
 
 Autor: synapse.ai  
-Última actualización: 2025-10-13
+Última actualización: 2026-10-17
 

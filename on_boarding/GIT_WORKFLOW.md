@@ -404,26 +404,15 @@ Nota: estos pasos crean un historial limpio y comienzan de cero con un commit ú
 
 ---
 
-### Plantilla sugerida para Pull Request
+### Plantillas de Pull Request
 
-Usar una plantilla facilita revisiones consistentes. Crear un archivo `.github/PULL_REQUEST_TEMPLATE.md` con el siguiente contenido sugerido:
+Las plantillas viven en `.github/PULL_REQUEST_TEMPLATE/` y se eligen con el query parameter `?template=`:
 
-```
-## Descripción
-- ¿Qué cambios incluye este PR?
-- ¿Por qué son necesarios?
-
-## Cómo probar
-- Pasos para reproducir / comprobar los cambios
-
-## Checklist
-- [ ] Tests pasan
-- [ ] Linter pasa
-- [ ] Documentación actualizada si aplica
-
-## Issues relacionados
-- Closes #<número-de-issue>
-```
+| Plantilla | Cuándo usarla | Secciones |
+|---|---|---|
+| `general.md` | Cambios que no son una feature ni un fix | Descripción (qué cambia y por qué), cómo probar, checklist e issues relacionados |
+| `feature.md` | Nueva funcionalidad | Qué funcionalidad agrega, qué problema resuelve, a qué componentes impacta (API, base de datos, UI, configuración), cómo probar, checklist e issues relacionados |
+| `fix.md` | Corrección de un bug | Qué bug corrige, comportamiento incorrecto y esperado, cómo reproducirlo, cómo probar el fix, checklist e issues relacionados |
 
 Esto ayuda a la persona que mergea a tener toda la información necesaria.
 
@@ -460,4 +449,4 @@ A: Revertir el commit problemático con `git revert <sha>` y desplegar un hotfix
 ---
 
 Autor: synapse.ai  
-Última actualización: 2025-10-13
+Última actualización: 2026-10-17

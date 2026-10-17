@@ -34,7 +34,7 @@ requests>=2.31.0
 pyinstaller>=6.0.0
 
 # --- Vector DB (RAG) ---
-# Embeddings run on OpenRouter (cloud) — no local model needed.
+# Embeddings run on Gemini Embedding via the Google provider (cloud) — no local model needed.
 chromadb>=1.0.0
 
 # --- Utilities ---

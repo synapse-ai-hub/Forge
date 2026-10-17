@@ -81,19 +81,20 @@ Create agents, skills, tools and workflows through an LLM-assisted interview. sy
 The Forge turns those definitions into autonomous systems.
 
 - **Permission engine** — deny-by-default, per-agent, with wildcards and groups
+- **Security** — rules against prompt injection, data leaks and dangerous commands or SQL; they go in the router prompt or, with the decision model enabled, the decision model enforces them as a guardrail on the user message
 - **Agent loop** — iterative reasoning → tool calling → execution → continuation, with streaming SSE
 - **Workflows** — deterministic DAG execution: sequential steps, same-step nodes in parallel, with streaming SSE
 - **Memory** — persistent conversation indexing and cross-session retrieval
 - **Multi-provider LLM** — Ollama (local), curated cloud providers (OpenAI-compatible + Google)
-- **MCP integration** — connect external tool servers via the Model Context Protocol
+- **MCP integration** — connect external tool servers via the Model Context Protocol (stdio, HTTP or SSE), with an on/off switch per server
 - **Scheduler** — run prompts on a schedule, notify via UI and Telegram
 
 ### You ship
 
 ```bash
-synapseforge init my-project      # scaffold with GUI
-synapseforge run .                # develop locally
-synapseforge launch -n my-app     # build a desktop app / portable zip
+synapseForge init my-project      # scaffold with GUI
+synapseForge run .                # develop locally
+synapseForge launch -n my-app     # build a desktop app / portable zip
 docker compose up --build -d      # or deploy with Docker
 ```
 
@@ -109,11 +110,11 @@ The result is a self-contained application distribution. Choose the modality tha
 pip install synapseForge
 
 # Create a project (interactive GUI)
-synapseforge init my-project
+synapseForge init my-project
 cd my-project
 
 # Start in development mode
-synapseforge run .
+synapseForge run .
 ```
 
 On first launch, configure an API key from any curated cloud provider (all offer free tiers) and press **Apply**. Ollama is optional. The knowledge base requires a Google key, and voice notes require a Groq key.
@@ -124,20 +125,20 @@ On first launch, configure an API key from any curated cloud provider (all offer
 
 | Command | What it does |
 |---------|-------------|
-| `synapseforge init [dir]` | Create a project with interactive GUI |
-| `synapseforge launch -p <path> -n <name>` | Build a desktop app / portable distribution zip |
-| `synapseforge colors [dir]` | Edit project colors live |
-| `synapseforge run [dir]` | Start development servers |
-| `synapseforge update [dir]` | Update project to latest template (preserves data) |
+| `synapseForge init [dir]` | Create a project with interactive GUI |
+| `synapseForge launch -p <path> -n <name>` | Build a desktop app / portable distribution zip |
+| `synapseForge colors [dir]` | Edit project colors live |
+| `synapseForge run [dir]` | Start development servers |
+| `synapseForge update [dir]` | Update project to latest template (preserves data) |
 
 ```mermaid
 flowchart LR
-    A["pip install synapseForge"] --> B["synapseforge init"]
+    A["pip install synapseForge"] --> B["synapseForge init"]
     B --> C["GUI: name, logo, colors"]
     C --> D["Template + venv + deps"]
     D --> E["Project ready"]
-    E --> F["synapseforge run"]
-    E --> G["synapseforge launch"]
+    E --> F["synapseForge run"]
+    E --> G["synapseForge launch"]
     E --> I["docker compose up"]
     G --> H["Desktop app / portable zip"]
     I --> J["Docker container"]
@@ -151,7 +152,7 @@ flowchart LR
 
 FastAPI application with REST/SSE routers. The agent framework lives in `backend/agent/`: AgentLoop with native tool calling, tools registry (native + external + MCP), SQLite sessions, per-agent permissions, skills, RAG (ChromaDB) and long-term memory.
 
-**Native tools**: `read`, `write`, `edit`, `glob`, `grep`, `list_dir`, `webfetch`, `websearch`, `shell`, `task` (sub-agent delegation), `skill`, `reference`, `rag`, `search_memory`, `check_email`, `send_email`, `help`.
+**Native tools**: `read`, `write`, `edit`, `glob`, `grep`, `list_dir`, `webfetch`, `websearch`, `shell`, `task` (sub-agent delegation), `skill`, `reference`, `rag`, `search_memory`, `check_email`, `send_email`, `query_model_capabilities`, `help`.
 
 ### Workflows
 
@@ -163,11 +164,11 @@ The chat runs in **smart** mode (the agent decides) or with one deterministic wo
 
 Every tool call the agent dispatches is recorded in SQLite before it runs and confirmed when its result commits. If a flow is cut (cancellation, crash), the next turn starts with the unconfirmed work injected as context, so the agent resumes instead of repeating what was already done. The record is deleted only when the step closes with a validated final answer.
 
-An optional **decision model** (System One) can be enabled in **Config**, independent of the chat model. It returns typed answers with a confidence level instead of text, and validates two points: whether a final answer really closes the step, and whether a new user message continues the pending work or asks for something else (in which case the pending work is discarded). Models come from the models.dev decision catalog, synced at most once every 24 hours, and the provider's API key must be saved. With the decision model disabled, the agent accepts its own final answer and always keeps the pending work, with no extra calls.
+An optional **decision model** (System One) can be enabled in **Config**, independent of the chat model. It returns typed answers with a confidence level instead of text, and makes three checks: whether the user message tries to violate the security rules (guardrail: it is blocked before the chat model runs), whether a final answer really closes the step, and whether a new user message continues the pending work or asks for something else (in which case the pending work is discarded). Models come from the models.dev decision catalog, synced at most once every 24 hours, and the provider's API key must be saved. With the decision model disabled, there is no guardrail check (the security rules go in the router prompt), the agent accepts its own final answer and always keeps the pending work, with no extra calls.
 
 ### Frontend
 
-React/Vite/TypeScript SPA with Tailwind v4 and shadcn/ui. Multi-page: chat, skill creation, workflow creation, RAG management, docs. SSE streaming, tool call visualization, context window gauge, scheduled tasks, usage and billing, metrics dashboard, Telegram toggle.
+React/Vite/TypeScript SPA with Tailwind v4 and shadcn/ui. Multi-page: chat, skill, tool, agent and workflow creation, RAG management, docs. SSE streaming, tool call visualization, context window gauge, scheduled tasks, usage and billing, metrics dashboard, Telegram toggle.
 
 ### Providers
 
@@ -214,13 +215,16 @@ synapseForge/
 │  ├─ routes/                 #   API endpoints, one module per topic
 │  └─ telegram/               #   Telegram bot (polling, dispatch, commands)
 ├─ frontend/                  # React/Vite/TypeScript SPA
+├─ config/                    # Project placeholder values (replace.json)
+├─ src/                       # Template assets (company logo, project README template)
+├─ store/                     # Skills and tools store
 ├─ .commands/                 # Local dev commands (sync, push, template, test)
 ├─ on_boarding/               # Contributor guides and Git workflow
 ├─ tests/                     # Declarative E2E suites (YAML) and unit tests
 └─ pyproject.toml             # Package config
 ```
 
-`pipeline/template.zip` is the project template that `synapseforge init` and `synapseforge update` download. It is regenerated from `backend/` and `frontend/` (without `node_modules`, `__pycache__` or the local database) with the `template` quick command.
+`pipeline/template.zip` is the project template that `synapseForge init` and `synapseForge update` download. It is regenerated from `backend/` and `frontend/` (without `node_modules`, `__pycache__` or the local database) with the `template` quick command.
 
 ---
 
@@ -234,7 +238,8 @@ synapseForge/
 ├─ workflows/         # Deterministic workflows (<name>.yaml)
 ├─ knowledge/         # RAG collections (ChromaDB)
 ├─ mcp.json           # MCP servers
-└─ config.yaml        # Router permissions (optional)
+├─ config.yaml        # Router permissions (optional)
+└─ .secret_key        # Key that encrypts the stored API keys (generated)
 ```
 
 ---
@@ -254,6 +259,9 @@ Other suites:
 python -m tests.workflows.runner          # workflow validation and execution (running backend)
 python -m tests.checkpoints.runner        # checkpoints against the real agent.db (running backend + LLM)
 pytest tests/frontier                     # checkpoint unit tests
+pytest tests/prompts                      # Jinja prompts, permission format and security rules
+pytest tests/mcp                          # MCP servers over stdio, HTTP and SSE, and the on/off switch
+pytest tests/loop                         # early exits of the agent loop
 python -m tests.decisor.decision_cli      # decision model, manual run
 ```
 

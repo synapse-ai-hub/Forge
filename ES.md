@@ -81,19 +81,20 @@ Creá agentes, skills, tools y workflows a través de una entrevista asistida po
 La fábrica transforma esas definiciones en sistemas autónomos.
 
 - **Motor de permisos** — deny-by-default, por agente, con wildcards y grupos
+- **Seguridad** — reglas contra prompt injection, fuga de datos y comandos o SQL peligrosos; van en el prompt del router o, con el modelo de decisión habilitado, las aplica el modelo de decisión como guardrail sobre el mensaje del usuario
 - **Agent loop** — razonamiento iterativo → tool calling → ejecución → continuación, con streaming SSE
 - **Workflows** — ejecución determinista de DAGs: steps secuenciales, nodos del mismo step en paralelo, con streaming SSE
 - **Memoria** — indexación persistente de conversaciones y recuperación cross-sesión
 - **LLM multi-proveedor** — Ollama (local), providers cloud curados (OpenAI-compatibles + Google)
-- **Integración MCP** — conectá servidores de herramientas externos vía Model Context Protocol
+- **Integración MCP** — conectá servidores de herramientas externos vía Model Context Protocol (stdio, HTTP o SSE), con un interruptor por servidor
 - **Scheduler** — ejecutá prompts en un schedule, notificá vía UI y Telegram
 
 ### Vos distribuís
 
 ```bash
-synapseforge init my-project      # scaffolding con GUI
-synapseforge run .                # desarrollo local
-synapseforge launch -n my-app     # app de escritorio / zip portable
+synapseForge init my-project      # scaffolding con GUI
+synapseForge run .                # desarrollo local
+synapseForge launch -n my-app     # app de escritorio / zip portable
 docker compose up --build -d      # o desplegá con Docker
 ```
 
@@ -109,11 +110,11 @@ El resultado es una distribución de aplicación autónoma. Elegí la modalidad 
 pip install synapseForge
 
 # Crear un proyecto (GUI interactiva)
-synapseforge init my-project
+synapseForge init my-project
 cd my-project
 
 # Iniciar en modo desarrollo
-synapseforge run .
+synapseForge run .
 ```
 
 En el primer inicio, configurá una API key de cualquier proveedor cloud curado (todos con free tier) y presioná **Apply**. Ollama es opcional. La base de conocimiento requiere una key de Google, y las notas de voz requieren una key de Groq.
@@ -124,20 +125,20 @@ En el primer inicio, configurá una API key de cualquier proveedor cloud curado 
 
 | Comando | Qué hace |
 |---------|----------|
-| `synapseforge init [dir]` | Crear un proyecto con GUI interactiva |
-| `synapseforge launch -p <path> -n <name>` | Construir una app de escritorio / zip de distribución portable |
-| `synapseforge colors [dir]` | Editar colores del proyecto en vivo |
-| `synapseforge run [dir]` | Iniciar servidores de desarrollo |
-| `synapseforge update [dir]` | Actualizar el proyecto al último template (preserva datos) |
+| `synapseForge init [dir]` | Crear un proyecto con GUI interactiva |
+| `synapseForge launch -p <path> -n <name>` | Construir una app de escritorio / zip de distribución portable |
+| `synapseForge colors [dir]` | Editar colores del proyecto en vivo |
+| `synapseForge run [dir]` | Iniciar servidores de desarrollo |
+| `synapseForge update [dir]` | Actualizar el proyecto al último template (preserva datos) |
 
 ```mermaid
 flowchart LR
-    A["pip install synapseForge"] --> B["synapseforge init"]
+    A["pip install synapseForge"] --> B["synapseForge init"]
     B --> C["GUI: nombre, logo, colores"]
     C --> D["Template + venv + deps"]
     D --> E["Proyecto listo"]
-    E --> F["synapseforge run"]
-    E --> G["synapseforge launch"]
+    E --> F["synapseForge run"]
+    E --> G["synapseForge launch"]
     E --> I["docker compose up"]
     G --> H["App de escritorio / zip portable"]
     I --> J["Contenedor Docker"]
@@ -151,7 +152,7 @@ flowchart LR
 
 Aplicación FastAPI con routers REST/SSE. El framework de agentes vive en `backend/agent/`: AgentLoop con tool calling nativo, registro de tools (nativos + externos + MCP), sesiones SQLite, permisos por agente, skills, RAG (ChromaDB) y memoria de largo plazo.
 
-**Tools nativos**: `read`, `write`, `edit`, `glob`, `grep`, `list_dir`, `webfetch`, `websearch`, `shell`, `task` (delegación a sub-agentes), `skill`, `reference`, `rag`, `search_memory`, `check_email`, `send_email`, `help`.
+**Tools nativos**: `read`, `write`, `edit`, `glob`, `grep`, `list_dir`, `webfetch`, `websearch`, `shell`, `task` (delegación a sub-agentes), `skill`, `reference`, `rag`, `search_memory`, `check_email`, `send_email`, `query_model_capabilities`, `help`.
 
 ### Workflows
 
@@ -163,11 +164,11 @@ El chat corre en modo **smart** (el agente decide) o con un workflow determinist
 
 Cada tool call que el agente despacha se registra en SQLite antes de ejecutarse y se confirma cuando su resultado se guarda. Si un flujo se corta (cancelación, caída), el turno siguiente arranca con el trabajo sin confirmar inyectado como contexto, y el agente retoma en vez de repetir lo ya hecho. El registro se borra solo cuando el paso cierra con una respuesta final validada.
 
-Un **modelo de decisión** opcional (System One) se puede habilitar en **Config**, independiente del modelo de chat. Devuelve respuestas tipadas con nivel de confianza en vez de texto, y valida dos puntos: si una respuesta final realmente cierra el paso, y si un mensaje nuevo del usuario continúa el trabajo pendiente o pide otra cosa (en cuyo caso el trabajo pendiente se descarta). Los modelos salen del catálogo de decisión de models.dev, sincronizado como máximo una vez cada 24 horas, y hay que tener guardada la API key del proveedor. Con el modelo de decisión deshabilitado, el agente acepta su propia respuesta final y conserva siempre el trabajo pendiente, sin llamadas extra.
+Un **modelo de decisión** opcional (System One) se puede habilitar en **Config**, independiente del modelo de chat. Devuelve respuestas tipadas con nivel de confianza en vez de texto, y hace tres controles: si el mensaje del usuario intenta violar las reglas de seguridad (guardrail: se bloquea antes de que corra el modelo de chat), si una respuesta final realmente cierra el paso, y si un mensaje nuevo del usuario continúa el trabajo pendiente o pide otra cosa (en cuyo caso el trabajo pendiente se descarta). Los modelos salen del catálogo de decisión de models.dev, sincronizado como máximo una vez cada 24 horas, y hay que tener guardada la API key del proveedor. Con el modelo de decisión deshabilitado, no hay guardrail (las reglas de seguridad van en el prompt del router), el agente acepta su propia respuesta final y conserva siempre el trabajo pendiente, sin llamadas extra.
 
 ### Frontend
 
-SPA React/Vite/TypeScript con Tailwind v4 y shadcn/ui. Multi-página: chat, creación de skills, creación de workflows, gestión de RAG, documentación. Streaming SSE, visualización de tool calls, indicador de contexto, tareas programadas, uso y facturación, dashboard de métricas, toggle de Telegram.
+SPA React/Vite/TypeScript con Tailwind v4 y shadcn/ui. Multi-página: chat, creación de skills, tools, agentes y workflows, gestión de RAG, documentación. Streaming SSE, visualización de tool calls, indicador de contexto, tareas programadas, uso y facturación, dashboard de métricas, toggle de Telegram.
 
 ### Proveedores
 
@@ -214,13 +215,16 @@ synapseForge/
 │  ├─ routes/                 #   Endpoints API, un módulo por tema
 │  └─ telegram/               #   Bot de Telegram (polling, dispatch, comandos)
 ├─ frontend/                  # SPA React/Vite/TypeScript
+├─ config/                    # Valores de los placeholders del proyecto (replace.json)
+├─ src/                       # Assets del template (logo de la empresa, README del proyecto)
+├─ store/                     # Store de skills y tools
 ├─ .commands/                 # Comandos de desarrollo (sync, push, template, test)
 ├─ on_boarding/               # Guías para contribuir y flujo de Git
 ├─ tests/                     # Suites E2E declarativas (YAML) y tests unitarios
 └─ pyproject.toml             # Config del paquete
 ```
 
-`pipeline/template.zip` es el template de proyecto que descargan `synapseforge init` y `synapseforge update`. Se regenera desde `backend/` y `frontend/` (sin `node_modules`, `__pycache__` ni la base de datos local) con el comando rápido `template`.
+`pipeline/template.zip` es el template de proyecto que descargan `synapseForge init` y `synapseForge update`. Se regenera desde `backend/` y `frontend/` (sin `node_modules`, `__pycache__` ni la base de datos local) con el comando rápido `template`.
 
 ---
 
@@ -234,7 +238,8 @@ synapseForge/
 ├─ workflows/         # Workflows deterministas (<nombre>.yaml)
 ├─ knowledge/         # Colecciones RAG (ChromaDB)
 ├─ mcp.json           # Servidores MCP
-└─ config.yaml        # Permisos del router (opcional)
+├─ config.yaml        # Permisos del router (opcional)
+└─ .secret_key        # Clave que cifra las API keys guardadas (se genera sola)
 ```
 
 ---
@@ -254,6 +259,9 @@ Otras suites:
 python -m tests.workflows.runner          # validación y ejecución de workflows (backend corriendo)
 python -m tests.checkpoints.runner        # checkpoints contra la agent.db real (backend + LLM)
 pytest tests/frontier                     # tests unitarios de checkpoints
+pytest tests/prompts                      # prompts Jinja, formato de permisos y reglas de seguridad
+pytest tests/mcp                          # servidores MCP por stdio, HTTP y SSE, e interruptor de servidores
+pytest tests/loop                         # salidas tempranas del loop del agente
 python -m tests.decisor.decision_cli      # modelo de decisión, corrida manual
 ```
 

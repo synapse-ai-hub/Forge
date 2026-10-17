@@ -14,7 +14,7 @@ Tests unitarios de la frontera de tool calls (`step_frontier`) y de los gates de
 
 ## Requisitos
 
-- Python 3.11+
+- Python 3.12+
 - `pytest`
 - No requiere backend, LLM ni API keys.
 

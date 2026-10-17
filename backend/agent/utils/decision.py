@@ -1,15 +1,19 @@
-"""Validated step-close decision with optional decision model.
+"""Decision-model gates: step close, pending-work continuity and message guardrail.
 
-When the agent loop emits a final answer with no tool calls (the LLM done
-signal), this module decides whether the step frontier is deleted. Without
-a decision model enabled the LLM signal is accepted as-is (current
-behavior, zero extra cost). With the decision section enabled and a
-provider + model selected, ``Agent.decision`` validates the close: only a
-``done`` verdict with enough confidence deletes the frontier, anything
-else (or any failure) leaves the rows behind for the next turn.
+Without a decision model enabled every gate is a no-op: the LLM done signal
+is accepted, the pending work is kept and the user message is not checked
+(zero extra cost). With the decision section enabled and a provider + model
+selected, ``Agent.decision`` backs three gates:
 
-Every function manages its own failures and never raises: frontier tracking
-must never break the agent loop. On any doubt the step closes (fail-open).
+- ``should_close_step``: only a ``done`` verdict with enough confidence
+  deletes the step frontier; anything else leaves the rows for the next turn.
+- ``should_keep_pending``: a confident topic change discards the pending work.
+- ``is_message_blocked``: a confident attack verdict blocks the user message
+  before the LLM runs.
+
+Every function manages its own failures and never raises: the gates must
+never break the agent loop. On any doubt the step closes, the pending work is
+kept and the message goes through (fail-open).
 """
 
 from __future__ import annotations

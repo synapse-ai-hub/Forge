@@ -2,7 +2,7 @@
 
 Builds the parent-agent (router) system prompt through the real code
 path (``build_system_prompt(None)`` plus the temp-dir suffix, exactly
-as ``backend/agent/loop.py`` does), appends the real tools array and
+as ``backend/agent/loop/agent_loop.py`` does), appends the real tools array and
 the skills catalog, and prints the complete state text. Independent
 from the decision probe: its output can be fed to
 ``tests/decisor/decision_cli.py -p`` for benchmark runs.

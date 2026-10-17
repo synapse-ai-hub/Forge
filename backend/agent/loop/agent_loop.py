@@ -2,18 +2,22 @@
 
 Pattern
 -------
-1. Create/recover session in SQLite.
-2. Load conversation history from SQLite.
-3. Resolve tools from ``agent.tools.tools_registry``.
-4. Build system prompt (base + skills); the router prompt only includes
-   the sections of the tools it has.
-5. ``while True``:
-   a. Call LLM with ``messages`` + ``tools`` (no streaming).
-   b. If response has ``tool_calls`` → execute each tool,
-      append results as ``role: "tool"`` messages, continue.
+1. Resolve the model and its parameters.
+2. Create/recover session in SQLite.
+3. Resolve tools from ``agent.tools.tools_registry`` (before the prompt: the
+   router prompt only includes the sections of the tools it has).
+4. Build the system prompt and load the conversation history from SQLite.
+5. With the decision model enabled, the router's user message goes through
+   the guardrail; a blocked message ends the turn without calling the LLM.
+   Unsettled work from earlier turns is resumed or discarded.
+6. ``while True`` (up to ``MAX_ITERATIONS``):
+   a. Call LLM with ``messages`` + ``tools`` (streaming).
+   b. If response has ``tool_calls`` → execute them (the calls of one
+      response run in parallel), append results as ``role: "tool"``
+      messages, continue.
    c. If no ``tool_calls`` → yield content as chunk and break (an empty
       response is retried up to ``MAX_EMPTY_RESPONSE_RETRIES`` times).
-6. Persist every message in SQLite.
+7. Persist every message in SQLite.
 
 All OpenAI-compatible providers (``client.chat.completions.create``) and Ollama
 (``ollama.chat``) support the ``tools`` parameter with JSON Schema
@@ -180,10 +184,16 @@ class AgentLoop:
         Yields:
             SSE events (raw ``"data: {...}\\n\\n"`` strings):
             - ``{"type": "chunk", "content": str}`` — text fragment.
+            - ``{"type": "reasoning", "content": str}`` — reasoning fragment.
             - ``{"type": "tool_call", "content": {"name", "args"}}`` — tool.
             - ``{"type": "tool_result", "content": {"name", "result"}}``.
             - ``{"type": "subagent_call", "content": {"agent_name", "prompt"}}``.
             - ``{"type": "subagent_result", "content": {"agent_name", "result"}}``.
+            - ``{"type": "subagent_event", "content": ...}`` — progress of a sub-agent.
+            - ``{"type": "session_title", "content": str}`` — generated title.
+            - ``{"type": "token_counter", "content": {...}}`` — context-window usage.
+            - ``{"type": "decision", "content": {"action", "reason"}}`` — the
+              decision model discarded pending work or blocked the message.
             - ``"data: [DONE]\\n\\n"`` — stream end.
 
             On error, the stream yields a chunk SSE event followed by

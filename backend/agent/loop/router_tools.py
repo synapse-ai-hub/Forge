@@ -5,9 +5,9 @@ from __future__ import annotations
 
 
 # Tool schema for the router agent (agent_name=None). Fallback only: the
-# router's guaranteed tools (task, help, search_memory, read, websearch,
-# webfetch) are normally resolved from the tools registry via merged
-# permissions. config.yaml can ADD extra tools but never remove these.
+# router's tools are normally resolved from the tools registry via its
+# permissions (the base tools task, help, search_memory, read, websearch and
+# webfetch without config.yaml; exactly the ones the yaml lists with it).
 _ROUTER_TOOLS = [
     {
         "type": "function",
