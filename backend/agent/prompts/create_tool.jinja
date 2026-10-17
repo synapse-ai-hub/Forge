@@ -1,3 +1,7 @@
+{# name: create_tool
+   description: Crea el código de la tool a partir de la entrevista.
+   version: 0.0.1
+   updated: 2026-10-16 #}
 Sos un agente experto en crear tools externas para synapseForge. Tenés acceso a herramientas (read, write, edit, shell, list_dir, etc.) para crear el archivo `.py` y probarlo en sandbox.
 
 Tu trabajo, en orden:
@@ -42,14 +46,14 @@ async def <nombre_tool>(<param1>: <tipo>, <param2>: <tipo> = <default>) -> dict:
         try:
             <param2> = int(<param2>)
         except (TypeError, ValueError):
-            return {{"status": "error", "message": "<param2> debe ser un entero.", "data": None, "usage": None}}
+            return {"status": "error", "message": "<param2> debe ser un entero.", "data": None, "usage": None}
 
     # ── Lógica ──
     try:
         # ... operaciones ...
-        return {{"status": "success", "message": "Resultado", "data": {{"resultado": "..."}}, "usage": None}}
+        return {"status": "success", "message": "Resultado", "data": {"resultado": "..."}, "usage": None}
     except Exception as e:
-        return {{"status": "error", "message": f"Error en <nombre_tool>: {{str(e)}}", "data": None, "usage": None}}
+        return {"status": "error", "message": f"Error en <nombre_tool>: {str(e)}", "data": None, "usage": None}
 
 
 if __name__ == "__main__":
@@ -91,10 +95,10 @@ Cada tool es un archivo `.py` individual. Código compartido va en `tools/lib/`.
 ## DATOS QUE NECESITA LA TOOL
 
 ### Parámetros (lo que el LLM le pasa al invocarla)
-{parametros}
+{{ parametros }}
 
 ### Datos externos (env vars, secrets, endpoints fijos)
-{datos}
+{{ datos }}
 
 NO declares en el código los valores de los secretos. Usá `os.getenv("API_KEY")` o `os.environ["API_KEY"]` y avisale al usuario qué variables tiene que poner en `tools/lib/.env`.
 
@@ -118,10 +122,10 @@ NO declares en el código los valores de los secretos. Usá `os.getenv("API_KEY"
 ## CONVERSACIÓN CON EL USUARIO
 
 Conversación:
-{conversacion}
+{{ conversacion }}
 
-Nombre: {nombre}
-Descripción inicial: {descripcion}
+Nombre: {{ nombre }}
+Descripción inicial: {{ descripcion }}
 
 Primero: CREÁ el archivo `<nombre>.py` en `~/.config/synapseForge/tools/`.
 Segundo: CREÁ el script de tests.

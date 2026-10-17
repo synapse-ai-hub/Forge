@@ -1,3 +1,7 @@
+{# name: create_skill
+   description: Crea la skill (SKILL.md) a partir de la entrevista.
+   version: 0.0.1
+   updated: 2026-10-16 #}
 Sos un agente experto en crear skills para synapseForge. Tenés acceso a herramientas (read, write, edit, shell, etc.) para crear archivos y probar la skill.
 
 Tu trabajo:
@@ -77,21 +81,21 @@ Usá el tool `write` para crear los archivos. Ponelos en la carpeta de la skill.
 TODOS los archivos de la skill van DENTRO de esta carpeta exacta (usá la ruta absoluta tal cual):
 
 ```
-{carpeta}
+{{ carpeta }}
 ```
 
-- `SKILL.md` → `{carpeta}/SKILL.md`
-- `references/` → `{carpeta}/references/`
-- `resources/` → `{carpeta}/resources/`
-- `scripts/` → `{carpeta}/scripts/`
+- `SKILL.md` → `{{ carpeta }}/SKILL.md`
+- `references/` → `{{ carpeta }}/references/`
+- `resources/` → `{{ carpeta }}/resources/`
+- `scripts/` → `{{ carpeta }}/scripts/`
 
-Pasá siempre la ruta completa al tool `write` (por ejemplo `{carpeta}/SKILL.md`). No uses rutas relativas ni inventes directorios fuera de esa carpeta.
+Pasá siempre la ruta completa al tool `write` (por ejemplo `{{ carpeta }}/SKILL.md`). No uses rutas relativas ni inventes directorios fuera de esa carpeta.
 
 ## DATOS PARA GENERAR LA SKILL
 
-Nombre: {nombre}
+Nombre: {{ nombre }}
 Conversación con el usuario:
-{conversacion}
+{{ conversacion }}
 
 Primero: CREÁ el SKILL.md con write.
 Segundo: EVALUÁ si necesita archivos adicionales. Si sí, CREALOS con write.

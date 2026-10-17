@@ -142,13 +142,6 @@ async def post_create_agent_stream(req: CreateAgentRequest):
         if req.iterate:
             yield _sse({"type": "agent_action", "content": {"action": "iterating"}})
 
-            try:
-                iter_template = agent.prompt("iterate_agent")
-            except FileNotFoundError:
-                logger.exception("Prompt iterate_agent.md no encontrado.")
-                yield _sse({"type": "error", "content": _FRIENDLY_ERROR_AGENT})
-                return
-
             # Obtener tools, skills, subagentes, MCPs y RAG disponibles
             try:
                 available_tools = _listar_tools_locales()
@@ -173,16 +166,22 @@ async def post_create_agent_stream(req: CreateAgentRequest):
             rag_list_text = "\n".join(f"- {r}" for r in available_rag) if available_rag else "(ninguna)"
 
             agent_carpeta = str(_AGENTS_DIR)
-            iter_prompt = iter_template.format(
-                nombre=nombre or "(inferir)",
-                carpeta=agent_carpeta,
-                conversacion=_formatear_mensajes(mensajes),
-                tools_disponibles=tools_list_text,
-                skills_disponibles=skills_list_text,
-                subagentes_disponibles=subagents_list_text,
-                mcp_disponibles=mcp_list_text,
-                rag_disponibles=rag_list_text,
-            )
+            try:
+                iter_prompt = agent.prompt(
+                    "iterate_agent",
+                    nombre=nombre or "(inferir)",
+                    carpeta=agent_carpeta,
+                    conversacion=_formatear_mensajes(mensajes),
+                    tools_disponibles=tools_list_text,
+                    skills_disponibles=skills_list_text,
+                    subagentes_disponibles=subagents_list_text,
+                    mcp_disponibles=mcp_list_text,
+                    rag_disponibles=rag_list_text,
+                )
+            except FileNotFoundError:
+                logger.exception("Prompt iterate_agent.jinja no encontrado.")
+                yield _sse({"type": "error", "content": _FRIENDLY_ERROR_AGENT})
+                return
 
             try:
                 tools = list(agent.tools.tools_registry(_AGENT_TOOLS_PERMS))
@@ -232,17 +231,16 @@ async def post_create_agent_stream(req: CreateAgentRequest):
         # FASE 2: ENTREVISTA — stream texto + tool responder_interview
         # ════════════════════════════════════════════════════════════════
         try:
-            template = agent.prompt("interview_agent")
+            prompt = agent.prompt(
+                "interview_agent",
+                descripcion=descripcion,
+                nombre=nombre or "(inferir)",
+                mensajes=_formatear_mensajes(mensajes),
+            )
         except FileNotFoundError:
-            logger.exception("Prompt interview_agent.md no encontrado.")
+            logger.exception("Prompt interview_agent.jinja no encontrado.")
             yield _sse({"type": "error", "content": _FRIENDLY_ERROR_AGENT})
             return
-
-        prompt = template.format(
-            descripcion=descripcion,
-            nombre=nombre or "(inferir)",
-            mensajes=_formatear_mensajes(mensajes),
-        )
 
         collected_content = ""
         tool_calls_data = None
@@ -307,13 +305,6 @@ async def post_create_agent_stream(req: CreateAgentRequest):
         # ════════════════════════════════════════════════════════════════
         yield _sse({"type": "agent_action", "content": {"action": "creating"}})
 
-        try:
-            sys_prompt_template = agent.prompt("create_agent")
-        except FileNotFoundError:
-            logger.exception("Prompt create_agent.md no encontrado.")
-            yield _sse({"type": "error", "content": _FRIENDLY_ERROR_AGENT})
-            return
-
         # Obtener listas disponibles para el prompt de generación
         try:
             available_tools = _listar_tools_locales()
@@ -341,18 +332,24 @@ async def post_create_agent_stream(req: CreateAgentRequest):
         carpeta = str(_AGENTS_DIR)
         tools_text = "\n".join(f"- {t}" for t in llm_tools) if llm_tools else "(ninguna declarada por el usuario, inferir las mínimas)"
         skills_text = "\n".join(f"- {s}" for s in llm_skills) if llm_skills else "(ninguna declarada por el usuario, inferir las mínimas)"
-        sys_prompt = sys_prompt_template.format(
-            nombre=name or "(inferir del contexto)",
-            conversacion=conversacion,
-            carpeta=carpeta,
-            tools_seleccionadas=tools_text,
-            skills_seleccionadas=skills_text,
-            tools_disponibles=tools_list_text,
-            skills_disponibles=skills_list_text,
-            subagentes_disponibles=subagents_list_text,
-            mcp_disponibles=mcp_list_text,
-            rag_disponibles=rag_list_text,
-        )
+        try:
+            sys_prompt = agent.prompt(
+                "create_agent",
+                nombre=name or "(inferir del contexto)",
+                conversacion=conversacion,
+                carpeta=carpeta,
+                tools_seleccionadas=tools_text,
+                skills_seleccionadas=skills_text,
+                tools_disponibles=tools_list_text,
+                skills_disponibles=skills_list_text,
+                subagentes_disponibles=subagents_list_text,
+                mcp_disponibles=mcp_list_text,
+                rag_disponibles=rag_list_text,
+            )
+        except FileNotFoundError:
+            logger.exception("Prompt create_agent.jinja no encontrado.")
+            yield _sse({"type": "error", "content": _FRIENDLY_ERROR_AGENT})
+            return
 
         user_msg = (
             "Creá el agente. Pasos OBLIGATORIOS en orden: "

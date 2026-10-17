@@ -154,23 +154,23 @@ async def post_create_workflow_stream(req: CreateWorkflowRequest):
 
         if req.iterate:
             yield _sse({"type": "workflow_action", "content": {"action": "iterating"}})
-            try:
-                iter_template = agent.prompt("iterate_workflow")
-            except FileNotFoundError:
-                logger.exception("Prompt iterate_workflow.md no encontrado.")
-                yield _sse({"type": "error", "content": _FRIENDLY_ERROR_WORKFLOW})
-                return
             valid_iter_name = _validar_nombre_workflow(nombre)
             if nombre and not valid_iter_name:
                 yield _sse({"type": "error", "content": "Nombre inválido. Minúsculas, números, guiones."})
                 return
             try:
                 workflow_archivo = str(_workflow_file_path(valid_iter_name or "workflow"))
-                iter_prompt = iter_template.format(
-                    nombre=valid_iter_name or "(inferir)",
-                    archivo=workflow_archivo,
-                    conversacion=_formatear_mensajes(mensajes),
-                )
+                try:
+                    iter_prompt = agent.prompt(
+                        "iterate_workflow",
+                        nombre=valid_iter_name or "(inferir)",
+                        archivo=workflow_archivo,
+                        conversacion=_formatear_mensajes(mensajes),
+                    )
+                except FileNotFoundError:
+                    logger.exception("Prompt iterate_workflow.jinja no encontrado.")
+                    yield _sse({"type": "error", "content": _FRIENDLY_ERROR_WORKFLOW})
+                    return
             except Exception as exc:
                 log_error(str(exc), source="create.py:workflow(iterate_format)")
                 yield _sse({"type": "error", "content": _FRIENDLY_ERROR_WORKFLOW})
@@ -242,18 +242,17 @@ async def post_create_workflow_stream(req: CreateWorkflowRequest):
             logger.exception("Error en evaluación inicial: %s", exc)
 
         try:
-            template = agent.prompt("interview_workflow")
-        except FileNotFoundError:
-            logger.exception("Prompt interview_workflow.md no encontrado.")
-            yield _sse({"type": "error", "content": _FRIENDLY_ERROR_WORKFLOW})
-            return
-
-        try:
-            prompt = template.format(
-                descripcion=descripcion,
-                nombre=nombre or "(inferir)",
-                mensajes=_formatear_mensajes(mensajes),
-            )
+            try:
+                prompt = agent.prompt(
+                    "interview_workflow",
+                    descripcion=descripcion,
+                    nombre=nombre or "(inferir)",
+                    mensajes=_formatear_mensajes(mensajes),
+                )
+            except FileNotFoundError:
+                logger.exception("Prompt interview_workflow.jinja no encontrado.")
+                yield _sse({"type": "error", "content": _FRIENDLY_ERROR_WORKFLOW})
+                return
         except Exception as exc:
             log_error(str(exc), source="create.py:workflow(interview_format)")
             yield _sse({"type": "error", "content": _FRIENDLY_ERROR_WORKFLOW})
@@ -311,21 +310,20 @@ async def post_create_workflow_stream(req: CreateWorkflowRequest):
         yield _sse({"type": "workflow_action", "content": {"action": "creating"}})
 
         try:
-            sys_prompt_template = agent.prompt("create_workflow")
-        except FileNotFoundError:
-            logger.exception("Prompt create_workflow.md no encontrado.")
-            yield _sse({"type": "error", "content": _FRIENDLY_ERROR_WORKFLOW})
-            return
-
-        try:
             conversacion = _formatear_mensajes(mensajes) if mensajes else f"**Usuario**: {task}"
             archivo = str(_workflow_file_path(name or "workflow"))
-            sys_prompt = sys_prompt_template.format(
-                nombre=name or "(inferir del contexto)",
-                descripcion=task,
-                conversacion=conversacion,
-                archivo=archivo,
-            )
+            try:
+                sys_prompt = agent.prompt(
+                    "create_workflow",
+                    nombre=name or "(inferir del contexto)",
+                    descripcion=task,
+                    conversacion=conversacion,
+                    archivo=archivo,
+                )
+            except FileNotFoundError:
+                logger.exception("Prompt create_workflow.jinja no encontrado.")
+                yield _sse({"type": "error", "content": _FRIENDLY_ERROR_WORKFLOW})
+                return
         except Exception as exc:
             log_error(str(exc), source="create.py:workflow(create_format)")
             yield _sse({"type": "error", "content": _FRIENDLY_ERROR_WORKFLOW})

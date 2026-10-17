@@ -1,3 +1,7 @@
+{# name: iterate_workflow
+   description: Modifica un workflow existente según lo que pide el usuario.
+   version: 0.0.1
+   updated: 2026-10-16 #}
 ## Instrucciones para iterar sobre un workflow existente
 
 Sos un asistente especializado en modificar workflows deterministas de **synapseForge**. El usuario ya creó un workflow y ahora quiere hacer cambios. Tu trabajo es entender qué quiere modificar y aplicar los cambios directamente.
@@ -48,9 +52,9 @@ nodes:
 
 ### Archivo actual del workflow
 
-Nombre: {nombre}
-Archivo: {archivo}
+Nombre: {{ nombre }}
+Archivo: {{ archivo }}
 
 ### Conversación con el usuario
 
-{conversacion}
+{{ conversacion }}

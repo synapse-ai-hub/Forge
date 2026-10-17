@@ -6,6 +6,7 @@ import logging
 from typing import Any, Dict
 
 from dotenv import load_dotenv
+from jinja2 import Environment, FileSystemLoader, StrictUndefined, TemplateError, TemplateNotFound
 from google import genai
 from openai import AsyncOpenAI
 
@@ -192,16 +193,16 @@ class Agent(
 
         self.usage = None
 
-        # Cache de prompts cargados desde archivos (evita lecturas repetitivas)
-        self._prompt_cache: Dict[str, str] = {}
-        # Ruta al directorio de prompts.
-        # En desarrollo: intelligence/prompts/ relativo a la raiz del proyecto.
-        # En compilado (PyInstaller): se toma de sys._MEIPASS (embebido con --add-data).
-        if getattr(sys, 'frozen', False):
-            _base = getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
-        else:
-            _project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-            _base = _project_root
+        # Prompts: templates Jinja de prompts/ (ver ``prompt``). Un error de
+        # variable faltante o de sintaxis nunca corta el chat (ver ``prompt``).
+        self._prompt_env = Environment(
+            loader=FileSystemLoader(f'{current_dir}/prompts'),
+            undefined=StrictUndefined,
+            trim_blocks=True,
+            lstrip_blocks=True,
+            keep_trailing_newline=True,
+            autoescape=False,
+        )
 
         self.tools = Tools()
 
@@ -381,25 +382,33 @@ class Agent(
         text = text.replace('\u200b', '')       
         return text
 
-    def prompt(self, prompt_name: str) -> str:
-        """Load a prompt file from the ``prompts/`` directory.
+    def prompt(self, prompt_name: str, **context: Any) -> str:
+        """Render a prompt template from the ``prompts/`` directory.
 
-        Reads ``{current_dir}/prompts/{prompt_name}.md`` where
-        ``current_dir`` is the directory of this file (``backend/agent/``).
+        Reads ``{current_dir}/prompts/{prompt_name}.jinja`` where
+        ``current_dir`` is the directory of this file (``backend/agent/``)
+        and renders it with *context*. If the template has a syntax error or
+        uses a variable missing from *context*, the error is logged and the
+        raw file text is returned, so a bad edit never stops the chat.
 
         Args:
-            prompt_name: Prompt file name (without ``.md`` extension).
+            prompt_name: Template name (without the ``.jinja`` extension).
+            **context: Template variables (e.g. ``tools`` = enabled tool names).
 
         Returns:
-            The file content as a string.
+            The rendered prompt as a string.
 
         Raises:
-            FileNotFoundError: If the prompt file does not exist.
+            FileNotFoundError: If the template file does not exist.
         """
-        with open(f'{current_dir}/prompts/{prompt_name}.md', 'r', encoding='utf-8') as f:
-            prompt = f.read()
-
-        return prompt
+        try:
+            return self._prompt_env.get_template(f'{prompt_name}.jinja').render(**context)
+        except TemplateNotFound as exc:
+            raise FileNotFoundError(f'{current_dir}/prompts/{prompt_name}.jinja') from exc
+        except TemplateError as exc:
+            log_error(str(exc), source=f'agent.py:prompt({prompt_name})')
+            with open(f'{current_dir}/prompts/{prompt_name}.jinja', 'r', encoding='utf-8') as f:
+                return f.read()
 
 
 if __name__ == '__main__': 
