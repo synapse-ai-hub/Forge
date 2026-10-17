@@ -28,6 +28,7 @@ Documentación de los endpoints HTTP expuestos por `backend/routes`.
 
 - **`chat`**: conversación streaming vía Server-Sent Events (SSE).
 - **`sessions`**: listado, obtención y eliminación de sesiones de chat.
+- **`feedback`**: pulgar arriba o abajo sobre las respuestas del asistente.
 - **`config`**: gestión de proveedores, modelos de chat y de decisión, workflows, contexto, verbose mode y MCP.
 - **`context_files`**: gestión de archivos de contexto (instrucciones y documentos).
 - **`metrics`**: métricas de uso, tools, errores y modelos.
@@ -90,6 +91,32 @@ Devuelve el historial completo de mensajes de una sesión.
 Elimina una sesión y todos sus mensajes.
 
 **Respuesta:** `JSONResponse` `{status, message}`.
+
+---
+
+### 2b. Feedback (`backend/routes/feedback.py`)
+
+Pulgar arriba o abajo sobre una respuesta del asistente, guardado en `agent.db` (`message_feedback`). Una respuesta se identifica con `(session_id, turn_number)`, el mismo número que trae el mensaje `turn-N` de la historia y el evento SSE `turn` del chat.
+
+#### `GET /api/feedback/{session_id}`
+
+Devuelve el feedback de todas las respuestas de la sesión.
+
+**Respuesta:** `{status, data: {"<turn_number>": "up" | "down"}}`.
+
+#### `PUT /api/feedback/{session_id}/{turn_number}`
+
+Guarda el feedback de una respuesta, o lo cambia si ya tenía. También guarda el modelo y el proveedor que la generaron.
+
+**Body:** `{feedback_type: "up" | "down"}`.
+
+**Respuesta:** `{status, message}`. `status: "error"` si el tipo es inválido, la sesión no existe o el turno no tiene respuesta.
+
+#### `DELETE /api/feedback/{session_id}/{turn_number}`
+
+Quita el feedback de una respuesta (no pasa nada si no tenía).
+
+**Respuesta:** `{status, message}`.
 
 ---
 

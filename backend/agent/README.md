@@ -61,7 +61,7 @@ Implementa el `while(true)` orquestador:
 5. Itera: llama al LLM → si hay `tool_calls` las ejecuta → si hay contenido lo emite como SSE y termina.
 6. Persiste cada mensaje en SQLite.
 
-Expone el método `run(session_id, message)` que retorna un `AsyncGenerator` de eventos SSE (`chunk`, `tool_call`, `tool_result`, `session_title`, `done`).
+Expone el método `run(session_id, message)` que retorna un `AsyncGenerator` de eventos SSE (`turn`, `chunk`, `tool_call`, `tool_result`, `session_title`, `done`).
 
 El paquete se reparte así: `agent_loop.py` (clase `AgentLoop`), `constants.py` (límites de iteraciones y reintentos), `router_tools.py` (schema de tools de respaldo del router) y `helpers.py` (tipo de API de las tools, permisos del router y overrides de parámetros). `__init__.py` re-exporta `AgentLoop`, así que `from backend.agent.loop import AgentLoop` sigue valiendo.
 
@@ -164,6 +164,7 @@ Directorio que contiene el archivo `agent.db` con las tablas:
 - `config_kv` — Configuración persistente (modelo, proveedor, turnos de contexto, modelo de decisión, workflow activo).
 - `error_log` — Registro de excepciones del backend (session_id, turn_number, exception, source, created_at).
 - `step_frontier` — Tool calls despachadas del paso en curso (`open` / `done`).
+- `message_feedback` — Pulgar arriba o abajo del usuario sobre una respuesta, una fila por `(session_id, turn_number)`. Guarda también el modelo y el proveedor que respondió, y se borra con la sesión.
 - `decision_catalog` — Modelos de decisión disponibles por proveedor, con límites, modalidades y tarifas.
 
 El esquema se crea de forma idempotente en `ddl_setup.py` (`CREATE TABLE IF NOT EXISTS`).
@@ -560,7 +561,7 @@ El agente sigue un ciclo iterativo:
    e. Si el LLM devuelve contenido sin tool_calls → se emite como `chunk` SSE y se cierra el loop.
 7. **Persistencia**: Cada mensaje se guarda en SQLite.
 8. **Checkpoints**: Antes de ejecutar cada bloque de tool calls se registran en `step_frontier`; al confirmar cada resultado la fila pasa a `done`. Al iniciar un turno, el trabajo sin confirmar de turnos anteriores se inyecta como mensaje de sistema efímero (si hay modelo de decisión habilitado, `should_keep_pending` decide antes si el mensaje nuevo lo continúa). Al cerrar el paso con respuesta final, `should_close_step` valida el cierre y `clear_turn` borra la frontera del turno.
-9. **Eventos SSE**: `chunk`, `tool_call`, `tool_result`, `subagent_call`, `subagent_result`, `session_title`, `decision`, `done`.
+9. **Eventos SSE**: `turn` (número de turno de la respuesta, al inicio; solo el loop raíz), `chunk`, `tool_call`, `tool_result`, `subagent_call`, `subagent_result`, `session_title`, `decision`, `done`.
 
 ---
 
