@@ -42,7 +42,14 @@ export interface AgentInfo {
 export interface McpServerStatus {
   label: string;
   status: "connected" | "failed" | "disabled" | "not_configured";
+  transport?: "stdio" | "http" | "sse";
   error?: string;
+}
+
+export interface McpListing {
+  servers: McpServerStatus[];
+  /** Set when mcp.json is not a valid array (the list is empty because of the file). */
+  error: string | null;
 }
 
 export interface ProviderKeyStatus {
@@ -367,7 +374,7 @@ export const configService = {
   },
 
   /** List MCP servers with connection status. */
-  async getMcp(): Promise<McpServerStatus[]> {
+  async getMcp(): Promise<McpListing> {
     const response = await fetch(`${API_BASE_URL}/api/config/mcp`, {
       method: "GET",
     });
@@ -375,7 +382,23 @@ export const configService = {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
     const data = await response.json();
-    return data.servers || [];
+    return { servers: data.servers || [], error: data.error || null };
+  },
+
+  /** Switch an MCP server on or off (writes mcp.json and rebuilds the tools registry). */
+  async setMcpEnabled(label: string, enabled: boolean): Promise<void> {
+    const response = await fetch(
+      `${API_BASE_URL}/api/agent/mcp/${encodeURIComponent(label)}/enabled`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled }),
+      }
+    );
+    if (!response.ok) {
+      const data = await response.json();
+      throw new Error(data.message || `HTTP ${response.status}`);
+    }
   },
 
   // ── Delete endpoints ─────────────────────────────────────────────
