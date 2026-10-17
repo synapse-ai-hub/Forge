@@ -1,9 +1,8 @@
 """End-to-end tests for synapseForge (declarative YAML scenarios).
 
-Methodology ported from ProspectingAgent's E2E suite: a bot that writes
-messages into the real chat flow (SSE) plus declarative scenario files,
-asserting on contract structure and event sequences rather than exact
-model text.
+A bot writes messages into the real chat flow (SSE) and runs declarative
+scenario files, asserting on contract structure and event sequences rather
+than exact model text.
 
 Usage::
 
