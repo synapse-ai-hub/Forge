@@ -13,7 +13,7 @@ import logging
 import os
 import sqlite3
 import sys
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any
 
 # ---------------------------------------------------------------------------
@@ -93,7 +93,7 @@ def sync_catalog() -> dict:
         log_error(str(e), source="decision_catalog.py:sync_catalog(fetch)")
         return {"status": "error", "message": f"Could not fetch models.dev: {e}"}
 
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now().isoformat()
     rows: list[dict[str, Any]] = []
     try:
         for provider_id, provider_data in (catalog or {}).items():
