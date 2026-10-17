@@ -130,7 +130,7 @@ Devuelve las sesiones de chat raíz (sin las de sub-agentes), ordenadas por acti
 
 #### `GET /api/sessions/{session_id}`
 
-Devuelve el historial completo de mensajes de una sesión. Cada turno aporta un mensaje del usuario (`id: "msg-<id>"`) y uno del asistente (`id: "turn-<n>"`) con sus bloques (texto, razonamiento y tools) en el orden en que ocurrieron.
+Devuelve el historial completo de mensajes de una sesión. Cada turno aporta un mensaje del usuario (`id: "msg-<id>"`) y uno del asistente (`id: "turn-<n>"`) con sus bloques (texto, razonamiento y tools) en el orden en que ocurrieron. El mensaje del usuario que bloqueó el guardrail trae `blocked: true` y el texto fijo `Mensaje bloqueado por el guardrail de seguridad.`.
 
 **Respuesta:** contrato con `data: {session_id, messages[], context}`. `context` trae `context_window`, `prompt_tokens`, `total_tokens` y `percent`.
 

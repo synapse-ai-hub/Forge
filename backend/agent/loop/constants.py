@@ -29,3 +29,7 @@ back-off waits of 2s, 4s, 8s, 16s and 32s (62s total).
 LLM_BACKOFF_BASE_SECONDS = 2.0
 
 """Base delay (seconds) for the exponential back-off between LLM retries."""
+
+BLOCKED_USER_TEXT = "Mensaje bloqueado por el guardrail de seguridad."
+
+"""Text stored (and shown) in place of a user message the guardrail blocked."""

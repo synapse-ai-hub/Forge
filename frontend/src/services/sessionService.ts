@@ -43,6 +43,8 @@ export interface SessionMessage {
   blocks?: ContentBlock[] | null;
   /** Attached files for user messages (shown as chips) */
   files?: Array<{ name: string; size?: number }> | null;
+  /** User message the guardrail blocked (its content is the fixed blocked text). */
+  blocked?: boolean;
 }
 
 export interface SessionContext {

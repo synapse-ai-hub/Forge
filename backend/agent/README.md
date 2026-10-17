@@ -222,7 +222,7 @@ Con la sección habilitada hay tres gates, todos de tipo `noul`:
 
 Los tres fallan abiertos: ante cualquier error o respuesta inválida el mensaje pasa, el paso cierra y el trabajo pendiente se conserva. Cada veredicto se guarda como mensaje de rol `decisor` (`{question, type, verdict, threshold, blocked | kept | closed}`).
 
-**Guardrail.** `is_message_blocked` recibe las reglas de `seguridad.jinja` y el mensaje del usuario (con sus adjuntos) como estado. Si bloquea, el loop emite el evento SSE `decision` con `{"action": "blocked", "reason": "guardrail"}`, responde con un aviso sin llamar al LLM y guarda el mensaje del usuario como `[Mensaje bloqueado por el guardrail de seguridad]`, para que no vuelva al contexto en los turnos siguientes. Con el modelo de decisión habilitado, el system prompt del router no incluye las reglas de seguridad. Los sub-agentes las mantienen en su system prompt porque el guardrail revisa solo el mensaje del usuario al router.
+**Guardrail.** `is_message_blocked` recibe las reglas de `seguridad.jinja` y el mensaje del usuario (con sus adjuntos) como estado. Si bloquea, el loop emite el evento SSE `decision` con `{"action": "blocked", "reason": "guardrail"}`, responde con un aviso sin llamar al LLM y guarda el mensaje del usuario como `Mensaje bloqueado por el guardrail de seguridad.`, para que no vuelva al contexto en los turnos siguientes. Con el modelo de decisión habilitado, el system prompt del router no incluye las reglas de seguridad. Los sub-agentes las mantienen en su system prompt porque el guardrail revisa solo el mensaje del usuario al router.
 
 **Continuidad.** Al descartar el pendiente, el loop emite el evento SSE `decision` con `{"action": "discarded", "reason": "unrelated"}`.
 

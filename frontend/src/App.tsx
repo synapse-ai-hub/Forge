@@ -60,6 +60,8 @@ export interface Message {
   subagentEvents?: Record<string, SubagentEvent>;
   /** Turn of the session this answer belongs to (ties it to its feedback). */
   turn?: number;
+  /** User message the guardrail blocked (rendered in red). */
+  blocked?: boolean;
 }
 
 /** Generate a unique ID with safe fallback when crypto is unavailable. */
@@ -79,6 +81,7 @@ function mapSessionMessages(raw: SessionMessage[]): Message[] {
     content: m.type === "user" ? m.content : "",
     reasoning: m.reasoning ?? undefined,
     files: m.files ?? undefined,
+    blocked: m.blocked ?? undefined,
     blocks: m.blocks ?? (
       // Fallback for old sessions without blocks: build from toolCalls + toolResults
       m.type === "assistant" && (m.toolCalls || m.content)

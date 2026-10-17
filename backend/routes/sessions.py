@@ -29,6 +29,7 @@ _project_root = os.path.dirname(os.path.dirname(_current_dir))
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
+from backend.agent.loop.constants import BLOCKED_USER_TEXT
 from backend.instances import session_manager
 from backend.agent.utils.contract import (
     make_error_response,
@@ -235,11 +236,19 @@ async def get_session(session_id: str):
             user_msgs = [m for m in turn_msgs if m.get("role") == "user"]
             non_user = [m for m in turn_msgs if m.get("role") != "user"]
 
+            # The loop marks the answer to a guardrail-blocked message with
+            # ``message="blocked"``; its user message is shown as the fixed text.
+            blocked = any(
+                m.get("role") == "assistant" and m.get("message") == "blocked"
+                for m in non_user
+            )
+
             for um in user_msgs:
                 mapped.append({
                     "id": f"msg-{um.get('id')}",
                     "type": "user",
-                    "content": um.get("content") or "",
+                    "content": BLOCKED_USER_TEXT if blocked else (um.get("content") or ""),
+                    "blocked": blocked,
                     "turn_number": tn,
                     "files": [{"name": fname} for fname in attachments.get(tn, [])],
                 })

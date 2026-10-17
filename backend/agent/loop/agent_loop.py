@@ -94,6 +94,7 @@ from backend.agent.utils.frontier_helpers import (
 from backend.agent.utils.spend_handler import check_spend_limit
 from backend.agent.utils.rate_limit_handler import classify_error_category, get_retry_delay
 from backend.agent.loop.constants import (
+    BLOCKED_USER_TEXT,
     LLM_BACKOFF_BASE_SECONDS,
     MAX_EMPTY_RESPONSE_RETRIES,
     MAX_ITERATIONS,
@@ -110,7 +111,6 @@ from backend.agent.loop.helpers import (
 
 logger = logging.getLogger(__name__)
 
-_BLOCKED_USER_TEXT = "[Mensaje bloqueado por el guardrail de seguridad]"
 _BLOCKED_REPLY = "*No puedo procesar este mensaje: el guardrail de seguridad lo bloqueó.*"
 
 class AgentLoop:
@@ -500,7 +500,7 @@ class AgentLoop:
             # --- 5-bis. Save user message to DB (after building messages so history is clean) ---
             session_manager.save_message(
                 session_id, "user",
-                content=_BLOCKED_USER_TEXT if blocked else user_message,
+                content=BLOCKED_USER_TEXT if blocked else user_message,
                 turn_number=turn_number,
             )
             if blocked:

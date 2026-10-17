@@ -780,6 +780,15 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
               setDecisionNotice(
                 "Trabajo anterior descartado: tu mensaje pedía otra cosa."
               );
+            } else if (action === "blocked") {
+              // Same text and look the message has after reloading the session.
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === userMessage.id
+                    ? { ...m, content: "Mensaje bloqueado por el guardrail de seguridad.", blocked: true }
+                    : m
+                )
+              );
             }
             break;
           }
