@@ -66,6 +66,38 @@ def _load_router_permissions() -> dict | None:
     perms = data.get("permissions")
     return perms if isinstance(perms, dict) else None
 
+
+def _router_tool_permissions(router_perms: dict | None) -> dict:
+    """Resolve the router's tool permissions.
+
+    If ``config.yaml`` defines permissions they are used exclusively (no
+    floor): ``tools`` become flat permissions and ``tasks`` the nested
+    ``task`` permission. Without ``config.yaml`` the guaranteed floor tools
+    are used.
+
+    Args:
+        router_perms: Result of :func:`_load_router_permissions`.
+
+    Returns:
+        The tool permission dict for ``tools_registry``.
+    """
+    if router_perms is None:
+        return {
+            "task": "allow",
+            "help": "allow",
+            "search_memory": "allow",
+            "read": "allow",
+            "websearch": "allow",
+            "webfetch": "allow",
+        }
+    tool_permissions: dict = {}
+    for name, action in (router_perms.get("tools") or {}).items():
+        tool_permissions[name] = action
+    tasks_perms = router_perms.get("tasks")
+    if isinstance(tasks_perms, dict) and tasks_perms:
+        tool_permissions["task"] = tasks_perms
+    return tool_permissions
+
 def _read_param_override(key: str) -> Any:
     """Read a global advanced-parameter override from ``config_kv``.
 

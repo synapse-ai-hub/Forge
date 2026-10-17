@@ -29,6 +29,66 @@ Conservative initial value: below it the frontier is kept for the next
 turn. Tune manually after testing decision models.
 """
 
+DECISION_GUARD_THRESHOLD = 0.8
+"""Minimum ``noul`` confidence (that the message is an attack) to block it.
+
+Conservative: only a confident verdict blocks. Tune manually.
+"""
+
+
+async def is_message_blocked(session_id: str, turn_number: int,
+                             message: str, tools: list[str]) -> bool:
+    """Ask the decision model whether the user message is an attack.
+
+    Input guardrail, called at turn start before the LLM runs. Without the
+    decision model enabled it makes no call (zero cost): the rules go in
+    the router prompt instead. Otherwise the message is sent as the
+    decision state with a single ``noul`` question whose instructions are
+    ``prompts/seguridad.jinja`` rendered with ``decision=True`` (the same
+    rules); only a confident ``yes`` blocks.
+    Any failure lets the message through (fail-open). The verdict is
+    persisted as a ``"decisor"`` message.
+
+    Args:
+        session_id: Session receiving the message.
+        turn_number: Turn of the message.
+        message: User message (with attachments, if any).
+        tools: Names of the tools enabled for the router (the rules that
+            apply depend on them).
+
+    Returns:
+        True when the message must be blocked. Never raises.
+    """
+    try:
+        from backend.instances import agent
+
+        if not agent.decision_ready:
+            return False
+        try:
+            instructions = agent.prompt("seguridad", tools=tools, decision=True)
+        except Exception as exc:
+            log_error(str(exc), source="decision.py:is_message_blocked(prompt)")
+            return False
+        questions: dict[str, Any] = {
+            "guard": {"type": "noul", "instructions": instructions}
+        }
+        response = await agent.decision({"user_message": message}, questions)
+        data = (response or {}).get("data") or {}
+        if not data.get("available"):
+            return False
+        answers = data.get("answers") or {}
+        verdict = (answers.get("guard") or {}).get("noul")
+        if not isinstance(verdict, (int, float)) or isinstance(verdict, bool):
+            return False
+        blocked = float(verdict) >= DECISION_GUARD_THRESHOLD
+        _save_decisor_row(session_id, turn_number, None, data,
+                          (response or {}).get("usage"),
+                          float(verdict), blocked, question="guard")
+        return blocked
+    except Exception as exc:
+        log_error(str(exc), source="decision.py:is_message_blocked")
+        return False
+
 
 async def should_close_step(session_id: str, turn_number: int,
                             final_text: str,
@@ -114,7 +174,7 @@ async def should_keep_pending(session_id: str, new_message: str) -> bool:
     injected. Without a decision model enabled/selected the pending work
     is always kept (current behavior, zero extra cost). Otherwise the
     pending rows and the new message are sent as the decision state with
-    a single ``noul`` question loaded from ``prompts/decision_continue.md``.
+    a single ``noul`` question loaded from ``prompts/decision_continue.jinja``.
 
     Only a confident ``no`` discards: the verdict is the probability of
     "continues", so values below ``1 - DECISION_CLOSE_THRESHOLD`` mean a
@@ -205,15 +265,16 @@ def _save_decisor_row(session_id: str, turn_number: int,
         data: ``Agent.decision`` response data (model, provider).
         usage: Token / time report from the decision call.
         verdict: ``noul`` probability returned by the model.
-        outcome: Gate result — True means closed (close gate) or kept (continue gate).
-        question: Question name (``"close"`` or ``"continue"``).
+        outcome: Gate result — True means closed (close gate), kept
+            (continue gate) or blocked (guard gate).
+        question: Question name (``"close"``, ``"continue"`` or ``"guard"``).
     """
     try:
         from backend.instances import session_manager
 
         if session_manager is None:
             return
-        result_key = "closed" if question == "close" else "kept"
+        result_key = {"close": "closed", "continue": "kept", "guard": "blocked"}[question]
         session_manager.save_message(
             session_id=session_id,
             role="decisor",
@@ -221,7 +282,8 @@ def _save_decisor_row(session_id: str, turn_number: int,
                 "question": question,
                 "type": "noul",
                 "verdict": verdict,
-                "threshold": DECISION_CLOSE_THRESHOLD,
+                "threshold": (DECISION_GUARD_THRESHOLD if question == "guard"
+                              else DECISION_CLOSE_THRESHOLD),
                 result_key: outcome,
             }),
             status="success",

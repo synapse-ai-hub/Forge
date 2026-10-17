@@ -4,8 +4,9 @@ Pattern
 -------
 1. Create/recover session in SQLite.
 2. Load conversation history from SQLite.
-3. Build system prompt (base + skills).
-4. Resolve tools from ``agent.tools.tools_registry``.
+3. Resolve tools from ``agent.tools.tools_registry``.
+4. Build system prompt (base + skills); the router prompt only includes
+   the sections of the tools it has.
 5. ``while True``:
    a. Call LLM with ``messages`` + ``tools`` (no streaming).
    b. If response has ``tool_calls`` → execute each tool,
@@ -71,7 +72,11 @@ from backend.agent.utils.model_resolver import (
     get_vram_gb,
     ollama_default_context,
 )
-from backend.agent.utils.decision import should_close_step, should_keep_pending
+from backend.agent.utils.decision import (
+    is_message_blocked,
+    should_close_step,
+    should_keep_pending,
+)
 from backend.agent.utils.frontier_helpers import (
     build_resume_message,
     clear_session,
@@ -96,9 +101,13 @@ from backend.agent.loop.helpers import (
     _load_router_permissions,
     _read_param_override,
     _resolve_tool_api_type,
+    _router_tool_permissions,
 )
 
 logger = logging.getLogger(__name__)
+
+_BLOCKED_USER_TEXT = "[Mensaje bloqueado por el guardrail de seguridad]"
+_BLOCKED_REPLY = "*No puedo procesar este mensaje: el guardrail de seguridad lo bloqueó.*"
 
 class AgentLoop:
     """Agent loop with native tool calling.
@@ -363,13 +372,41 @@ class AgentLoop:
             temp_path = str(temp_dir)
             
 
-            # --- 2. Build system prompt ---
-            if system_prompt is None:
-                system_prompt = build_system_prompt(agent_name)
-
-            # Router permissions (config.yaml) are read once: step 2 injects
-            # their skills and step 3 resolves their tools and tasks.
+            # Router permissions (config.yaml) are read once: tools and tasks are
+            # resolved below, skills are injected into the system prompt.
             router_perms = _load_router_permissions() if agent_name is None else None
+
+            # --- 2. Resolve tools (before the prompt: the router prompt depends on them) ---
+            if agent_name is None:
+                # Router: config.yaml permissions replace the floor tools.
+                tool_permissions = _router_tool_permissions(router_perms)
+                try:
+                    tools = list(agent.tools.tools_registry(tool_permissions))
+                except AttributeError as e:
+                    log_error(str(e), source="loop.py:run(tools)")
+                    tools = _ROUTER_TOOLS
+            else:
+                try:
+                    tools = list(agent.tools.tools_registry(tool_permissions))
+                except AttributeError as e:
+                    log_error(str(e), source="loop.py:run(tools)")
+                    tools = []
+            logger.info("Tools available: %d", len(tools))
+
+            # Expose the effective permissions to the execution layer so
+            # execute_tool can enforce them (deny by default) on every call.
+            agent.tools._current_tool_permissions = tool_permissions or {}
+
+            # --- 3. Build system prompt ---
+            if system_prompt is None:
+                system_prompt = build_system_prompt(
+                    agent_name,
+                    tools=(
+                        [t["function"]["name"] for t in tools]
+                        if agent_name is None
+                        else None
+                    ),
+                )
 
             # Sub-agents get their skills/agents appended (the router lists its
             # agents in build_system_prompt; its skills come from config.yaml).
@@ -406,48 +443,6 @@ class AgentLoop:
             # Append temp directory path to system prompt (concatenation, no .format)
             system_prompt = f"{system_prompt}\n\n## Directorio temporal\n{temp_path}"
             
-            # --- 3. Resolve tools ---
-            if agent_name is None:
-                # Router: if config.yaml defines permissions, use them as
-                # the complete set (no floor). If config.yaml has no
-                # permissions, fall back to the guaranteed floor tools.
-                if router_perms is not None:
-                    # config.yaml defines permissions — use them exclusively.
-                    tool_permissions = {}
-                    for name, action in (router_perms.get("tools") or {}).items():
-                        tool_permissions[name] = action
-                    tasks_perms = router_perms.get("tasks")
-                    if isinstance(tasks_perms, dict) and tasks_perms:
-                        tool_permissions["task"] = tasks_perms
-                else:
-                    # No config.yaml — use the guaranteed floor.
-                    tool_permissions = {
-                        "task": "allow",
-                        "help": "allow",
-                        "search_memory": "allow",
-                        "read": "allow",
-                        "websearch": "allow",
-                        "webfetch": "allow",
-                    }
-                try:
-                    tools = list(agent.tools.tools_registry(tool_permissions))
-                except AttributeError as e:
-                    log_error(str(e), source="loop.py:run(tools)")
-                    tools = _ROUTER_TOOLS
-            else:
-                try:
-                    tools = list(agent.tools.tools_registry(tool_permissions))
-                except AttributeError as e:
-                    log_error(str(e), source="loop.py:run(tools)")
-                    tools = []
-            logger.info("Tools available: %d", len(tools))
-
-            # Expose the effective permissions to the execution layer so
-            # execute_tool can enforce them (deny by default) on every call.
-            agent.tools._current_tool_permissions = tool_permissions or {}
-
-          
-
             # --- 4. Build initial messages array (history does NOT include current message) ---
             # Append attached files (if any) to the user message
             effective_message = user_message
@@ -474,10 +469,34 @@ class AgentLoop:
                 max_turns=await asyncio.to_thread(fetch_context_window_turns),
             )
             
-            # --- 5. Save user message to DB (after building messages so history is clean) ---
-            session_manager.save_message(
-                session_id, "user", content=user_message, turn_number=turn_number,
+            # --- 5. Input guardrail (router only) ---
+            # With the decision model enabled the security rules go to it (the
+            # router prompt has no "Seguridad" block), and an attack is stopped
+            # before the LLM runs. The blocked text is not kept in the
+            # history, so later turns never send it to the LLM.
+            blocked = agent_name is None and await is_message_blocked(
+                session_id, turn_number, effective_message,
+                [t["function"]["name"] for t in tools],
             )
+
+            # --- 5-bis. Save user message to DB (after building messages so history is clean) ---
+            session_manager.save_message(
+                session_id, "user",
+                content=_BLOCKED_USER_TEXT if blocked else user_message,
+                turn_number=turn_number,
+            )
+            if blocked:
+                session_manager.save_message(
+                    session_id, "assistant", content=_BLOCKED_REPLY,
+                    model=model, provider=effective_provider,
+                    turn_number=turn_number, step=0,
+                    status="success", message="blocked",
+                )
+                yield f"data: {json.dumps({'type': 'decision', 'content': {'action': 'blocked', 'reason': 'guardrail'}}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'type': 'chunk', 'content': _BLOCKED_REPLY}, ensure_ascii=False)}\n\n"
+                yield "data: [DONE]\n\n"
+                _schedule_latency()
+                return
 
             # --- 5a. Resume unsettled frontier (read-first) ---
             # A cut flow leaves open rows behind (they are only deleted on
@@ -535,7 +554,8 @@ class AgentLoop:
                         )
                     else:
                         titles_formatted = "Sin restricciones (primera conversación)"
-                    title_prompt = agent.prompt("title").format(
+                    title_prompt = agent.prompt(
+                        "title",
                         message=user_message,
                         titles=titles_formatted,
                     )
