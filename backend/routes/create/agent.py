@@ -149,6 +149,7 @@ async def post_create_agent_stream(req: CreateAgentRequest):
                 available_subagents = _listar_agentes_locales()
                 from backend.agent.utils.agent_helpers import get_mcp_list
                 available_mcps = await get_mcp_list()
+                available_mcps = [m for m in available_mcps if m.get("status") != "disabled"]
                 from backend.agent.utils.rag_helpers import list_collections
                 available_rag = list_collections()
             except Exception as e:
@@ -312,6 +313,7 @@ async def post_create_agent_stream(req: CreateAgentRequest):
             available_subagents = _listar_agentes_locales()
             from backend.agent.utils.agent_helpers import get_mcp_list
             available_mcps = await get_mcp_list()
+            available_mcps = [m for m in available_mcps if m.get("status") != "disabled"]
             from backend.agent.utils.rag_helpers import list_collections
             available_rag = list_collections()
         except Exception as e:

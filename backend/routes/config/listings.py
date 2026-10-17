@@ -6,6 +6,7 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
 from backend.instances import agent
+from backend.agent.utils.config_dir import mcp_config_error
 from backend.agent.utils.error_logger import log_error
 from backend.agent.utils.agent_helpers import (
     get_skills_list,
@@ -92,12 +93,16 @@ async def list_agents() -> JSONResponse:
 
 @router.get("/mcp")
 async def list_mcp_servers() -> JSONResponse:
-    """List MCP servers with connection status."""
+    """List MCP servers with connection status.
+
+    ``error`` is set when ``mcp.json`` is not a valid array (the list is then
+    empty because of the file, not because nothing is configured).
+    """
     try:
         servers = await get_mcp_list()
         return JSONResponse(
             status_code=200,
-            content={"status": "success", "servers": servers},
+            content={"status": "success", "servers": servers, "error": mcp_config_error()},
         )
     except Exception as exc:
         log_error(str(exc), source="backend/routes/config.py:list_mcp_servers")

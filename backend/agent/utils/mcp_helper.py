@@ -24,10 +24,13 @@ import os
 import sys
 import threading
 import time
-from typing import Any
+from contextlib import AsyncExitStack, asynccontextmanager
+from typing import Any, AsyncIterator
 
 from mcp import ClientSession, StdioServerParameters
+from mcp.client.sse import sse_client
 from mcp.client.stdio import stdio_client
+from mcp.client.streamable_http import create_mcp_http_client, streamable_http_client
 
 _current_dir = os.path.dirname(os.path.abspath(__file__))
 _project_root = os.path.dirname(os.path.dirname(_current_dir))
@@ -46,9 +49,10 @@ logger = logging.getLogger(__name__)
 McpServerConfig = dict[str, Any]
 """Structure of a single MCP server entry from ``mcp.json`` (array).
 
-Keys: ``label``, ``transport`` (``"stdio"`` or ``"http"``),
-``command`` (string or list), ``args``, ``env``/``environment``,
-``description``, ``server_url``, ``headers``,
+Keys: ``label``, ``transport`` (``"stdio"``, ``"http"`` for streamable HTTP,
+or ``"sse"``; inferred when absent: ``command`` means stdio, a URL means
+streamable HTTP), ``command`` (string or list), ``args``, ``env``/``environment``,
+``description``, ``server_url`` (or ``url``), ``headers``,
 ``oauth``, ``disabled``, ``timeout``.
 """
 
@@ -87,8 +91,104 @@ def _build_stdio_params(config: McpServerConfig) -> StdioServerParameters:
         cmd = cmd_raw
     else:
         cmd = [cmd_raw] + config.get("args", [])
+    if not cmd or not cmd[0]:
+        raise ValueError("stdio MCP server without 'command'")
     env = {**os.environ, **config.get("environment", config.get("env", {}))}
     return StdioServerParameters(command=cmd[0], args=cmd[1:], env=env)
+
+
+def is_server_enabled(config: McpServerConfig) -> bool:
+    """Return ``False`` when the server is switched off in ``mcp.json``.
+
+    A server is off with ``"disabled": true`` (what the UI writes) or
+    ``"enabled": false``; anything else leaves it on.
+
+    Args:
+        config: MCP server config dict.
+
+    Returns:
+        ``True`` when the server is enabled.
+    """
+    if config.get("disabled"):
+        return False
+    return config.get("enabled") is not False
+
+
+_HTTP_TRANSPORTS = {"http", "streamable_http", "streamable-http", "streamablehttp"}
+
+
+def _transport_kind(config: McpServerConfig) -> str:
+    """Return how to talk to the server: ``"stdio"``, ``"http"`` or ``"sse"``.
+
+    Uses ``transport`` when it is declared. Otherwise a ``command`` means
+    stdio and an ``http(s)`` URL means streamable HTTP.
+
+    Args:
+        config: MCP server config dict.
+
+    Returns:
+        The transport kind.
+    """
+    declared = str(config.get("transport") or "").strip().lower()
+    if declared == "sse":
+        return "sse"
+    if declared in _HTTP_TRANSPORTS:
+        return "http"
+    if declared == "stdio":
+        return "stdio"
+    if config.get("command"):
+        return "stdio"
+    if _server_has_http_url(config):
+        return "http"
+    return "stdio"
+
+
+@asynccontextmanager
+async def _open_session(
+    config: McpServerConfig, timeout: float
+) -> AsyncIterator[ClientSession]:
+    """Open an initialized MCP session over the server's transport.
+
+    The only place that knows the transports: stdio, streamable HTTP and
+    SSE all yield the same ``ClientSession``, so discovery, calls and the
+    health check work the same for every kind of server.
+
+    Args:
+        config: MCP server config dict.
+        timeout: Seconds allowed for the ``initialize`` handshake.
+
+    Yields:
+        An initialized ``ClientSession``.
+
+    Raises:
+        ValueError: If a remote server has no URL (or a stdio one no command).
+        asyncio.TimeoutError: If the handshake takes longer than *timeout*.
+    """
+    kind = _transport_kind(config)
+    headers = config.get("headers") or None
+    async with AsyncExitStack() as stack:
+        if kind == "stdio":
+            streams = await stack.enter_async_context(
+                stdio_client(_build_stdio_params(config))
+            )
+        else:
+            url = config.get("server_url") or config.get("url")
+            if not url:
+                raise ValueError(f"{kind} MCP server without 'server_url'")
+            if kind == "sse":
+                streams = await stack.enter_async_context(
+                    sse_client(url, headers=headers, sse_read_timeout=timeout)
+                )
+            else:
+                http_client = await stack.enter_async_context(
+                    create_mcp_http_client(headers=headers)
+                )
+                streams = await stack.enter_async_context(
+                    streamable_http_client(url, http_client=http_client)
+                )
+        session = await stack.enter_async_context(ClientSession(streams[0], streams[1]))
+        await asyncio.wait_for(session.initialize(), timeout=timeout)
+        yield session
 
 
 def _server_timeout(config: McpServerConfig, default: float = 300.0) -> float:
@@ -115,7 +215,7 @@ def _server_timeout(config: McpServerConfig, default: float = 300.0) -> float:
 async def _discover_server_tools(
     config: McpServerConfig, retries: int = 3, backoff: float = 1.0
 ) -> list[Any]:
-    """Discover tools from a single stdio MCP server using the official SDK.
+    """Discover tools from a single MCP server using the official SDK.
 
     Retries with a short backoff so a transient failure (e.g. the server
     being momentarily busy, or a lingering instance holding a shared
@@ -133,17 +233,14 @@ async def _discover_server_tools(
         asyncio.TimeoutError: If the server does not respond in time.
     """
     timeout = _server_timeout(config)
-    params = _build_stdio_params(config)
     last_exc: Exception | None = None
     for attempt in range(1, retries + 1):
         try:
-            async with stdio_client(params) as (read, write):
-                async with ClientSession(read, write) as session:
-                    await asyncio.wait_for(session.initialize(), timeout=timeout)
-                    result = await asyncio.wait_for(
-                        session.list_tools(), timeout=timeout
-                    )
-                    return result.tools
+            async with _open_session(config, timeout) as session:
+                result = await asyncio.wait_for(
+                    session.list_tools(), timeout=timeout
+                )
+                return result.tools
         except Exception as exc:  # noqa: BLE001 - retry any transient failure
             last_exc = exc
             if attempt < retries:
@@ -162,7 +259,7 @@ async def _discover_server_tools(
 async def _call_server_tool(
     config: McpServerConfig, name: str, arguments: dict[str, Any]
 ) -> Any:
-    """Call a tool on a single stdio MCP server using the official SDK.
+    """Call a tool on a single MCP server using the official SDK.
 
     Args:
         config: The MCP server config dict.
@@ -176,13 +273,10 @@ async def _call_server_tool(
         asyncio.TimeoutError: If the server does not respond in time.
     """
     timeout = _server_timeout(config)
-    params = _build_stdio_params(config)
-    async with stdio_client(params) as (read, write):
-        async with ClientSession(read, write) as session:
-            await asyncio.wait_for(session.initialize(), timeout=timeout)
-            return await asyncio.wait_for(
-                session.call_tool(name, arguments), timeout=timeout
-            )
+    async with _open_session(config, timeout) as session:
+        return await asyncio.wait_for(
+            session.call_tool(name, arguments), timeout=timeout
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -253,7 +347,10 @@ def _server_has_http_url(server: McpServerConfig) -> bool:
 
 
 async def _discover_all(servers: list[McpServerConfig]) -> list[dict[str, Any]]:
-    """Discover tools from every configured server and populate the mapping.
+    """Discover tools from every enabled server and populate the mapping.
+
+    Servers switched off in ``mcp.json`` are skipped: no process is started
+    and none of their tools reach the registry.
 
     Args:
         servers: MCP server configs loaded from mcp.json.
@@ -264,6 +361,9 @@ async def _discover_all(servers: list[McpServerConfig]) -> list[dict[str, Any]]:
     function_tools: list[dict[str, Any]] = []
     for server in servers:
         label = server.get("label", "unknown")
+        if not is_server_enabled(server):
+            logger.info("MCP '%s' — disabled, skipping discovery", label)
+            continue
         try:
             tools = await _discover_server_tools(server)
             for tool in tools:
@@ -375,12 +475,42 @@ def get_mcp_tools() -> list[dict[str, Any]]:
 
 
 def mcp_servers_configured() -> bool:
-    """Return ``True`` if at least one MCP server is configured in mcp.json.
+    """Return ``True`` if at least one enabled MCP server is in mcp.json.
+
+    Disabled servers do not count: they never produce tools, so counting
+    them would make the registry look incomplete and trigger useless
+    re-discoveries.
 
     Returns:
-        ``True`` when there is at least one MCP server entry.
+        ``True`` when there is at least one enabled MCP server entry.
     """
-    return bool(load_mcp_config())
+    return any(is_server_enabled(server) for server in load_mcp_config())
+
+
+def set_mcp_server_enabled(label: str, enabled: bool) -> bool | None:
+    """Switch a server on or off in ``mcp.json`` (the single source of truth).
+
+    Writes the ``disabled`` key (removed when enabling) and drops a legacy
+    ``enabled`` key so the file keeps one way of saying it.
+
+    Args:
+        label: Server label.
+        enabled: ``True`` to enable, ``False`` to disable.
+
+    Returns:
+        ``None`` if no server has that label, otherwise whether the file was saved.
+    """
+    servers = load_mcp_servers()
+    for server in servers:
+        if server.get("label") != label:
+            continue
+        server.pop("enabled", None)
+        if enabled:
+            server.pop("disabled", None)
+        else:
+            server["disabled"] = True
+        return save_mcp_servers(servers)
+    return None
 
 
 def mcp_tools_discovered() -> bool:
@@ -495,6 +625,8 @@ async def execute_mcp_tool(tool_name: str, arguments: dict[str, Any]) -> Any:
         raise ValueError(
             f"MCP server '{label}' (for tool '{tool_name}') not found in config"
         )
+    if not is_server_enabled(config):
+        raise ValueError(f"MCP server '{label}' is disabled")
 
     result = await _call_server_tool(config, original_name, arguments)
     return _mcp_content_to_serializable(result.content)
@@ -537,78 +669,34 @@ async def check_mcp_server_health(label: str, timeout: float = 10.0) -> dict[str
     config_with_label = dict(config)
     config_with_label["label"] = label
 
-    if config_with_label.get("disabled") or config_with_label.get("enabled") is False:
+    if not is_server_enabled(config_with_label):
         return {
             "label": label,
             "status": McpServerStatus.DISABLED,
             "tools_count": 0,
         }
 
-    # Check if HTTP/SSE server
-    if _server_has_http_url(config_with_label):
-        return await _check_http_server_health(config_with_label, timeout)
-
-    # STDIO server
-    return await _check_stdio_server_health(config_with_label, timeout)
+    return await _check_server_health(config_with_label, timeout)
 
 
-async def _check_stdio_server_health(
+async def _check_server_health(
     config: McpServerConfig, timeout: float
 ) -> dict[str, Any]:
-    """Check health of a stdio-based MCP server using the official SDK."""
+    """Check a server with a real MCP handshake, whatever its transport."""
     label = config.get("label", "unknown")
     try:
-        params = _build_stdio_params(config)
-        async with stdio_client(params) as (read, write):
-            async with ClientSession(read, write) as session:
-                await asyncio.wait_for(session.initialize(), timeout=timeout)
+        async with _open_session(config, timeout):
+            pass
         return {
             "label": label,
             "status": McpServerStatus.CONNECTED,
+            "transport": _transport_kind(config),
         }
     except Exception as exc:
         return {
             "label": label,
             "status": McpServerStatus.FAILED,
-            "error": str(exc),
-        }
-
-
-async def _check_http_server_health(
-    config: McpServerConfig, timeout: float
-) -> dict[str, Any]:
-    """Check health of an HTTP/SSE-based MCP server."""
-    label = config.get("label", "unknown")
-    url = config.get("server_url") or config.get("url")
-    if not url:
-        return {
-            "label": label,
-            "status": McpServerStatus.FAILED,
-            "error": "No server_url configured",
-        }
-
-    try:
-        import httpx
-
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.get(url)
-            if response.status_code < 500:
-                return {
-                    "label": label,
-                    "status": McpServerStatus.CONNECTED,
-                    "tools_count": 0,
-                    "note": "HTTP endpoint reachable (full MCP handshake not performed)",
-                }
-            else:
-                return {
-                    "label": label,
-                    "status": McpServerStatus.FAILED,
-                    "error": f"HTTP {response.status_code}",
-                }
-    except Exception as exc:
-        return {
-            "label": label,
-            "status": McpServerStatus.FAILED,
+            "transport": _transport_kind(config),
             "error": str(exc),
         }
 

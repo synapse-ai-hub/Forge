@@ -47,7 +47,7 @@ cryptography>=42.0.0
 pytest>=9.0.0
 
 # --- MCP (Model Context Protocol) ---
-mcp>=1.0.0
+mcp>=2.0.0
 
 # --- EDA (brings pandas, matplotlib, seaborn, scikit-learn) ---
 synapseTools[eda]>=0.1.32
