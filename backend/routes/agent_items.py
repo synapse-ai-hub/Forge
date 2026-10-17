@@ -6,6 +6,7 @@ Endpoints:
 - ``DELETE /api/tools/{name}`` — Delete an external tool (.py).
 - ``DELETE /api/agents/{name}`` — Delete an agent (.md).
 - ``DELETE /api/mcp/{label}`` — Delete an MCP server from the config.
+- ``PUT /api/mcp/{label}/enabled`` — Switch an MCP server on or off in the config.
 - ``DELETE /api/knowledge/{collection}`` — Delete a vector collection.
 """
 
@@ -42,6 +43,7 @@ from backend.agent.utils.config_dir import (
     save_mcp_servers,
 )
 from backend.agent.utils.error_logger import log_error
+from backend.agent.utils.mcp_helper import set_mcp_server_enabled
 from backend.agent.utils.vector_db import VectorDB, get_vector_db
 
 logger = logging.getLogger(__name__)
@@ -237,6 +239,52 @@ async def delete_mcp_server(label: str) -> JSONResponse:
 
     logger.info("Servidor MCP eliminado: %s", label)
     return _make_response("success", f"Servidor MCP '{label}' eliminado.")
+
+
+# ---------------------------------------------------------------------------
+# PUT /agent/mcp/{label}/enabled
+# ---------------------------------------------------------------------------
+
+
+@router.put("/mcp/{label:path}/enabled")
+async def set_mcp_enabled(label: str, data: dict[str, Any] = Body(...)) -> JSONResponse:
+    """Switch an MCP server on or off in mcp.json and rebuild the tools registry.
+
+    The registry is rebuilt so a server turned off stops contributing tools
+    (and one turned on starts) without waiting for the refresh button.
+
+    Args:
+        label: Server label.
+        data: Body ``{"enabled": bool}``.
+
+    Returns:
+        A JSONResponse with the operation result.
+    """
+    enabled = data.get("enabled")
+    if not label or not isinstance(enabled, bool):
+        return _make_response("error", "Se requiere 'enabled' (true/false).", 400)
+
+    saved = set_mcp_server_enabled(label, enabled)
+    if saved is None:
+        return _make_response("error", f"Servidor MCP '{label}' no encontrado.", 404)
+    if not saved:
+        return _make_response("error", f"No se pudo guardar mcp.json para '{label}'.", 500)
+
+    try:
+        from backend.instances import agent
+
+        agent.tools._tools_registry = await asyncio.to_thread(
+            agent.tools._build_tools_registry
+        )
+    except Exception as exc:
+        log_error(str(exc), source="agent_items.py:set_mcp_enabled")
+        return _make_response(
+            "error", "mcp.json se actualizó pero falló la reconstrucción de tools.", 500
+        )
+
+    state = "activado" if enabled else "desactivado"
+    logger.info("Servidor MCP %s: %s", state, label)
+    return _make_response("success", f"Servidor MCP '{label}' {state}.")
 
 
 # ---------------------------------------------------------------------------

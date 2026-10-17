@@ -14,7 +14,7 @@ Prueba manual por CLI del modelo de decisión (`Agent.decision`), manejada por Y
 
 ## Requisitos
 
-- Python 3.11+
+- Python 3.12+
 - Paquetes: `typesafe-sdk` (ya incluido en el venv del proyecto)
 - API Key de OpenRouter guardada en la app (**Configuración → Providers**). Sin ella, la llamada devuelve `available: false` y el reporte lo registra igual.
 - No requiere backend corriendo (usa el código directo, no HTTP).
@@ -63,7 +63,7 @@ file: prueba1
 
 ## Prompt del agente padre (`parent_state.py`)
 
-Recrea el prompt del agente padre con el código real (system vía `build_system_prompt(None)` más sección de directorio temporal, array real de tools según permisos y catálogo de skills) y lo imprime por stdout. Independiente del test: su salida sirve para alimentar `-p` en corridas de benchmark.
+Recrea el prompt del agente padre con el código real (system vía `build_system_prompt(None)`, con las secciones de todas las tools, más sección de directorio temporal, array real de tools según permisos y catálogo de skills) y lo imprime por stdout. Independiente del test: su salida sirve para alimentar `-p` en corridas de benchmark.
 
 ```bash
 python tests/decisor/parent_state.py -p "mensaje del usuario"

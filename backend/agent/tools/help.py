@@ -1,7 +1,6 @@
 """HelpMixin — native tool help."""
 
 import logging
-import os
 
 from backend.agent.utils.contract import make_error_response, make_success_response, zero_usage
 from backend.agent.utils.error_logger import log_error
@@ -16,7 +15,7 @@ class HelpMixin:
             Use this tool when the user asks for help with how the agent works,
             or asks you to explain how to create tools, sub-agents, etc.
 
-            Returns the content of the ``help.md`` file, which explains how to
+            Returns the content of the ``help.jinja`` prompt, which explains how to
             create tools, skills, agents, change models, configure the context
             window, verbose mode, etc.
 
@@ -24,18 +23,15 @@ class HelpMixin:
                 dict with ``{status, message, data, usage}``.
             """
             try:
-                help_path = os.path.join(
-                    os.path.dirname(os.path.abspath(__file__)),
-                    "prompts",
-                    "help.md",
-                )
-                if not os.path.isfile(help_path):
+                from backend.instances import agent
+
+                try:
+                    content = agent.prompt("help")
+                except FileNotFoundError:
                     return make_error_response(
-                        message="No se encontró el archivo de documentación interna (help.md).",
+                        message="No se encontró el archivo de documentación interna (help.jinja).",
                         usage=zero_usage(),
                     )
-                with open(help_path, "r", encoding="utf-8") as f:
-                    content = f.read()
                 return make_success_response(
                     message="Documentación interna cargada.",
                     data=content,

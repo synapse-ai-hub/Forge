@@ -14,13 +14,13 @@ Tests end-to-end declarativos basados en escenarios YAML. Cada escenario ejecuta
 
 ## Requisitos
 
-- Python 3.11+
+- Python 3.12+
 - Paquetes: `pip install requests pyyaml`
 - El backend corriendo (`python -m uvicorn backend.main:app --reload` o `run`)
 
 ### Por grupo de escenarios
 
-| Grupo | Backend | API Key OpenRouter | LLM configurado |
+| Grupo | Backend | API Key Google | LLM configurado |
 |-------|:-------:|:------------------:|:---------------:|
 | **scheduler** (3) | ✅ | — | — |
 | **creators** (5) | ✅ | — | solo `creators-chat-delegates-to-agent` |
@@ -28,7 +28,7 @@ Tests end-to-end declarativos basados en escenarios YAML. Cada escenario ejecuta
 | **rag** (3) | ✅ | ✅ | solo `rag-chat-search-memory-available` |
 | **parallel** (2) | ✅ | — | ✅ (los dos escenarios) |
 
-- **API Key de OpenRouter**: necesaria para los tests de RAG. Se carga desde **Configuración → Providers** en la UI. Sin ella, los endpoints RAG devuelven error al intentar instanciar ChromaDB.
+- **API Key de Google**: necesaria para los tests de RAG (los embeddings usan Gemini). Se carga desde **Configuración → Providers** en la UI. Sin ella, los endpoints RAG devuelven error al intentar instanciar ChromaDB.
 - **LLM configurado**: necesario para los escenarios de chat que hacen streaming SSE.
 
 ---

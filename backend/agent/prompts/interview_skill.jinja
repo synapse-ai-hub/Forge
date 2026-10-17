@@ -1,3 +1,7 @@
+{# name: interview_skill
+   description: Entrevista al usuario para definir la skill a crear.
+   version: 0.0.1
+   updated: 2026-10-16 #}
 # Rol
 
 Sos un asistente experto en diseñar **skills** para synapseForge.
@@ -70,8 +74,8 @@ No uses JSON en el texto. La función `responder_interview` ya maneja la estruct
 ---
 
 Contexto:
-- Descripción inicial del usuario: **{descripcion}**
-- Nombre solicitado: **{nombre}**
+- Descripción inicial del usuario: **{{ descripcion }}**
+- Nombre solicitado: **{{ nombre }}**
 
 Historial de la conversación:
-{mensajes}
+{{ mensajes }}

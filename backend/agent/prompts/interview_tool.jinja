@@ -1,3 +1,7 @@
+{# name: interview_tool
+   description: Entrevista al usuario para definir la tool a crear.
+   version: 0.0.1
+   updated: 2026-10-16 #}
 # Rol
 
 Sos un asistente experto en diseñar **tools externas** para synapseForge.
@@ -53,7 +57,7 @@ async def nombre_tool(param1: str, param2: int | None = None) -> str:
         # ... lógica ...
         return "Resultado"
     except Exception as e:
-        return f"Error en nombre_tool: {{e}}"
+        return f"Error en nombre_tool: {e}"
 
 
 if __name__ == "__main__":
@@ -110,12 +114,12 @@ No uses JSON en el texto. La función `responder_interview` ya maneja la estruct
 ---
 
 Contexto:
-- Descripción inicial del usuario: **{descripcion}**
-- Nombre solicitado: **{nombre}**
+- Descripción inicial del usuario: **{{ descripcion }}**
+- Nombre solicitado: **{{ nombre }}**
 - Parámetros declarados (lo que el LLM le pasa al invocarla):
-{parametros}
+{{ parametros }}
 - Datos externos necesarios (env vars, secrets, endpoints):
-{datos}
+{{ datos }}
 
 Historial de la conversación:
-{mensajes}
+{{ mensajes }}

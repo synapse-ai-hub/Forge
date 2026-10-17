@@ -2,8 +2,8 @@
 Script para sincronizar repositorio con fetch + rebase.
 
 Uso:
-    python .github/quick_sync.py           # Sync con main
-    python .github/quick_sync.py -b develop # Sync con develop
+    python .commands/commands/quick_sync.py           # Sync con main
+    python .commands/commands/quick_sync.py -b develop # Sync con develop
     
 Parámetros:
     -b : Rama con la que sincronizar (opcional, default: main)
@@ -52,8 +52,8 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Ejemplos:
-  python .github/quick_sync.py              # Sync con main
-  python .github/quick_sync.py -b develop   # Sync con develop
+  python .commands/commands/quick_sync.py              # Sync con main
+  python .commands/commands/quick_sync.py -b develop   # Sync con develop
         """
     )
     

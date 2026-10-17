@@ -121,19 +121,17 @@ async def _evaluar_si_existe(
         logger.warning("Sin modelo configurado.")
         return None
 
-    try:
-        template = agent.prompt("evaluate_skills")
-    except FileNotFoundError:
-        logger.warning("Prompt evaluate_skills.md no encontrado.")
-        return None
-
     if skills_locales:
         lines = [f"- **{s['name']}**: {s['description'][:200]}" for s in skills_locales]
         skills_text = "\n".join(lines)
     else:
         skills_text = "(No hay skills creadas todavía.)"
 
-    prompt = template.format(tarea=tarea, skills=skills_text)
+    try:
+        prompt = agent.prompt("evaluate_skills", tarea=tarea, skills=skills_text)
+    except FileNotFoundError:
+        logger.warning("Prompt evaluate_skills.jinja no encontrado.")
+        return None
 
     # print("=" * 60)
     # print(">>> EVALUAR SKILLS - PROMPT AL LLM:")
@@ -218,12 +216,10 @@ async def _explain_skill(
     contenido = md_path.read_text(encoding="utf-8")
 
     try:
-        template = agent.prompt("explain_skill")
+        prompt = agent.prompt("explain_skill", tarea=tarea, contenido=contenido)
     except FileNotFoundError:
-        logger.warning("Prompt explain_skill.md no encontrado.")
+        logger.warning("Prompt explain_skill.jinja no encontrado.")
         return None
-
-    prompt = template.format(tarea=tarea, contenido=contenido)
 
     result = await agent.llm_process(
         model=eval_model,
@@ -291,14 +287,13 @@ async def _create_skill(
         raise RuntimeError("No hay modelo configurado. Seleccioná un modelo en Configuración.")
 
     try:
-        template = agent.prompt("create_skill")
+        prompt = agent.prompt(
+            "create_skill",
+            nombre=nombre or "(inferir del contexto)",
+            conversacion=conversacion,
+        )
     except FileNotFoundError:
-        raise RuntimeError("Prompt create_skill.md no encontrado.")
-
-    prompt = template.format(
-        nombre=nombre or "(inferir del contexto)",
-        conversacion=conversacion,
-    )
+        raise RuntimeError("Prompt create_skill.jinja no encontrado.")
 
     logger.info("Generando skill con LLM (%s)...", eval_model)
 

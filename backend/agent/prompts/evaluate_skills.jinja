@@ -1,12 +1,16 @@
+{# name: evaluate_skills
+   description: Evalúa qué skills sirven para la tarea del usuario.
+   version: 0.0.1
+   updated: 2026-10-16 #}
 Evaluá si alguna de las skills listadas abajo sirve para la tarea del usuario.
 
 ## Tarea del usuario
 
-{tarea}
+{{ tarea }}
 
 ## Skills existentes
 
-{skills}
+{{ skills }}
 
 ## Instrucciones
 
@@ -17,10 +21,10 @@ Evaluá si alguna de las skills listadas abajo sirve para la tarea del usuario.
 
 SOLO devolvé el JSON, sin texto antes ni después:
 
-{{"exist": "Sí", "skill": "<nombre_exacto>"}}
+{"exist": "Sí", "skill": "<nombre_exacto>"}
 
 o
 
-{{"exist": "No", "skill": null}}
+{"exist": "No", "skill": null}
 
 Nada más. Sin explicaciones, sin comentarios, sin texto adicional.

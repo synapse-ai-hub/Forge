@@ -182,8 +182,33 @@ def load_mcp_servers() -> list[dict[str, Any]]:
         return []
 
 
+def mcp_config_error() -> str | None:
+    """Return why ``mcp.json`` cannot be used, or ``None`` when it is fine.
+
+    ``load_mcp_servers`` answers ``[]`` for a broken file, which looks like
+    "no servers"; this tells the two cases apart (missing file is fine).
+
+    Returns:
+        A short error message, or ``None`` if the file is absent or a valid array.
+    """
+    path = _mcp_path()
+    if not path.is_file():
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        return f"mcp.json no es un JSON válido: {e}"
+    if not isinstance(data, list):
+        return "mcp.json debe ser un array de servidores."
+    return None
+
+
 def save_mcp_servers(servers: list[dict[str, Any]]) -> bool:
     """Save MCP servers to mcp.json.
+
+    Writes to a temporary file in the same folder and replaces mcp.json in
+    one step, so a crash mid-write never leaves a half-written file.
 
     Args:
         servers: List of MCP server config dicts.
@@ -192,9 +217,11 @@ def save_mcp_servers(servers: list[dict[str, Any]]) -> bool:
         True on success.
     """
     path = _mcp_path()
+    tmp_path = path.with_name(path.name + ".tmp")
     try:
-        with open(path, "w", encoding="utf-8") as f:
+        with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(servers, f, indent=2, ensure_ascii=False)
+        os.replace(tmp_path, path)
         logger.info("Saved %d MCP server(s) to mcp.json", len(servers))
         return True
     except OSError as e:

@@ -17,7 +17,7 @@ import sys
 import time
 import urllib.request
 from datetime import datetime
-from typing import Any
+from typing import Any, Iterable
 
 # ---------------------------------------------------------------------------
 # Ensure the project root is in sys.path so absolute imports (backend.*)
@@ -29,7 +29,12 @@ _project_root = os.path.dirname(os.path.dirname(os.path.dirname(_current_dir)))
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
-from backend.agent.permissions import get_agent_prompt, is_tool_allowed, list_agents
+from backend.agent.permissions import (
+    get_agent_prompt,
+    get_tool_permissions,
+    is_tool_allowed,
+    list_agents,
+)
 from backend.agent.utils.error_logger import log_error
 from backend.agent.utils.db import db_transaction, get_connection
 from backend.agent.utils.queries import load_query
@@ -58,17 +63,57 @@ are used, exactly as before.
 _CONFIG_BASE_URL = os.getenv("CONFIG_BASE_URL", "http://127.0.0.1:8000/api/config")
 
 
-def _mandatory_block() -> str:
-    """Load the MANDATORY rules block from ``prompts/mandatory.md``.
+def _mandatory_block(tools: Iterable[str]) -> str:
+    """Load the MANDATORY rules block from ``prompts/mandatory.jinja``.
+
+    Args:
+        tools: Names of the tools enabled for the agent.
 
     Returns:
         The block content, or ``""`` if the prompt file is missing.
     """
     try:
-        return agent.prompt("mandatory")
+        return agent.prompt("mandatory", tools=tools)
     except FileNotFoundError:
-        logger.warning("Prompt mandatory.md no encontrado; no se inyecta MANDATORY.")
+        logger.warning("Prompt mandatory.jinja no encontrado; no se inyecta MANDATORY.")
         return ""
+
+
+def _security_block(tools: Iterable[str], decision: bool = False) -> str:
+    """Load the security rules from ``prompts/seguridad.jinja``.
+
+    Args:
+        tools: Names of the tools enabled for the agent.
+        decision: True when the decision model is enabled; the rules go to
+            it (see ``is_message_blocked``) instead of the prompt, so the
+            block is left out.
+
+    Returns:
+        The rendered rules, or ``""`` if the prompt file is missing.
+    """
+    if decision:
+        return ""
+    try:
+        return agent.prompt("seguridad", tools=tools, decision=False).strip()
+    except FileNotFoundError:
+        logger.warning("Prompt seguridad.jinja no encontrado; no se inyecta Seguridad.")
+        return ""
+
+
+def _all_tool_names() -> list[str]:
+    """Names of every tool in the registry (what an unrestricted agent gets)."""
+    return [t["function"]["name"] for t in agent.tools.tools_registry({"*": "allow"})]
+
+
+def _agent_tool_names(agent_name: str) -> list[str]:
+    """Names of the tools a sub-agent gets (same filter as the agent loop)."""
+    try:
+        result = get_tool_permissions(agent_name)
+        perms = json.loads(result["data"]) if result.get("status") == "success" else {}
+        return [t["function"]["name"] for t in agent.tools.tools_registry(perms)]
+    except Exception as exc:
+        log_error(str(exc), source="loop_helpers.py:_agent_tool_names")
+        return []
 
 
 def load_context_text() -> str:
@@ -115,10 +160,13 @@ def fetch_context_window_turns() -> int:
         return -1
 
 
-def build_system_prompt(agent_name: str | None = None) -> str:
+def build_system_prompt(
+    agent_name: str | None = None,
+    tools: Iterable[str] | None = None,
+) -> str:
     """Build the system prompt for an agent.
 
-    - If *agent_name* is ``None`` (router): ``system_prompt.md`` is always the
+    - If *agent_name* is ``None`` (router): ``system_prompt.jinja`` is always the
       base prompt. If ``AGENT.md`` exists in the agents config directory, it is
       injected as a ``## Behavior`` section before ``## MANDATORY:``.
       In both cases, append the current date and the list of available
@@ -128,6 +176,10 @@ def build_system_prompt(agent_name: str | None = None) -> str:
 
     Args:
         agent_name: Optional sub-agent name. ``None`` means the router.
+        tools: Names of the tools enabled for the agent. The prompt only
+            includes the sections of the tools it can use. ``None`` means
+            all tools for the router and the agent's own tools for a
+            sub-agent.
 
     Returns:
         The system prompt string.
@@ -141,7 +193,10 @@ def build_system_prompt(agent_name: str | None = None) -> str:
         result = get_agent_prompt(agent_name)
         if result.get("status") == "success":
             base = result.get("data", "") or ""
-            mandatory = _mandatory_block()
+            if tools is None:
+                tools = _agent_tool_names(agent_name)
+            mandatory = _mandatory_block(tools)
+            seguridad = _security_block(tools)
 
             # AGENT.md (comportamiento general) se inyecta antes de MANDATORY
             behavior_text = ""
@@ -160,19 +215,25 @@ def build_system_prompt(agent_name: str | None = None) -> str:
                     parts.append(f"## Behavior\n{behavior_text}")
                 if mandatory:
                     parts.append(f"## MANDATORY:\n{mandatory}")
+                if seguridad:
+                    parts.append(f"## Seguridad\n{seguridad}")
                 parts.append(f"## Fecha\n{fecha}")
                 system_prompt = "\n\n---\n\n".join(parts)
                 # print(f'\n\n\n{"#"*80}\nSystem prompt:\n\n{system_prompt}\n{"#"*80}\n\n\n')
                 return system_prompt
 
             # print(f'\n\n\n{"#"*80}\nSystem prompt:\n\n{base}\n{"#"*80}\n\n\n')
+            if seguridad:
+                return "\n\n---\n\n".join(p for p in (base, f"## Seguridad\n{seguridad}") if p)
             return base
         logger.warning(
             "Agent '%s' no encontrado; usando system prompt del router.", agent_name
         )
 
-# Router: system_prompt.md es SIEMPRE la base; AGENT.md se inyecta como ## Behavior.
-    base_prompt = agent.prompt("system_prompt")
+# Router: system_prompt.jinja es SIEMPRE la base; AGENT.md se inyecta como ## Behavior.
+    if tools is None:
+        tools = _all_tool_names()
+    base_prompt = agent.prompt("system_prompt", tools=tools)
 
     
 
@@ -202,7 +263,7 @@ def build_system_prompt(agent_name: str | None = None) -> str:
     # Fase 6: el router decide cuándo paralelizar. Llamadas independientes
     # en el mismo bloque corren en paralelo con gather y barrera.
     try:
-        paralelizacion = agent.prompt("paralelizacion")
+        paralelizacion = agent.prompt("paralelizacion") if tools else ""
     except FileNotFoundError:
         logger.warning("Prompt paralelizacion.md no encontrado; no se inyecta Paralelización.")
         paralelizacion = ""
@@ -226,9 +287,15 @@ def build_system_prompt(agent_name: str | None = None) -> str:
             log_error(str(exc), source="loop_helpers.py:build_system_prompt")
 
     # Reglas obligatorias inyectadas al final del prompt de todos los agentes
-    mandatory = _mandatory_block()
+    mandatory = _mandatory_block(tools)
     if mandatory:
         parts.append(f"## MANDATORY:\n{mandatory}")
+
+    # Reglas de seguridad al final (después de lo que viene del usuario/admin).
+    # Con el modelo de decisión habilitado las reglas van a él, no al prompt.
+    seguridad = _security_block(tools, decision=agent.decision_ready)
+    if seguridad:
+        parts.append(f"## Seguridad\n{seguridad}")
 
     parts.append(f"## Fecha\n{fecha}")
 

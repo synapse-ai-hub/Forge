@@ -2,8 +2,8 @@
 Script para hacer push rápido con rebase automático.
 
 Uso:
-    python .github/quick_push.py -m "mensaje del commit" -b main
-    python .github/quick_push.py -m "fix bug" -b develop
+    python .commands/commands/quick_push.py -m "mensaje del commit" -b main
+    python .commands/commands/quick_push.py -m "fix bug" -b develop
     
 Parámetros:
     -m : Mensaje del commit (requerido)
@@ -53,8 +53,8 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Ejemplos:
-  python .github/quick_push.py -m "fix: corregir bug en scoring"
-  python .github/quick_push.py -m "feat: agregar query_context" -b develop
+  python .commands/commands/quick_push.py -m "fix: corregir bug en scoring"
+  python .commands/commands/quick_push.py -m "feat: agregar query_context" -b develop
         """
     )
     

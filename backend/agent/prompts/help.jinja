@@ -1,3 +1,7 @@
+{# name: help
+   description: Documentación interna del sistema que devuelve la tool help.
+   version: 0.0.1
+   updated: 2026-10-16 #}
 # Ayuda del sistema
 
 Ésta es la documentación de referencia del sistema. Acá se explica cómo configurar agentes, tools, skills y las opciones disponibles. Si tenés dudas sobre cómo usar o configurar el sistema, preguntale directamente al agente. El agente tiene acceso a herramientas internas para leer archivos, buscar en la web, ejecutar comandos, etc. Para más detalles sobre las herramientas disponibles, indicar que se consulte la documentación del agente.
@@ -14,10 +18,10 @@ Los sub-agentes son agentes especializados que se definen externamente al códig
 
    - **`name`**: Nombre legible del agente.
    - **`description`**: Descripción breve que explica qué hace y cuándo debe ser usado.
-   - **`permission`**: Define las tools y sub-agentes a los que tiene acceso. Si una tool no está listada, no estará disponible. Los valores posibles son `allow` (permitido) y `deny` (denegado).
-     - Para tools planas: `read: allow`
-     - Para `task` (delegación a sub-agentes): `task: { nombre_agente: allow }`
-   - **`skill`**: Define qué skills puede cargar. Misma sintaxis que `permission`.
+   - **`permissions`**: Define lo que el agente puede usar. Si algo no está listado, no estará disponible. Los valores posibles son `allow` (permitido) y `deny` (denegado). Sus sub-bloques van siempre en plural:
+     - `tools`: tools del agente. Planas: `read: allow`. Con opciones por grupo: `rag: { mi_coleccion: allow }`.
+     - `tasks`: sub-agentes a los que puede delegar mediante `task`: `tasks: { nombre_agente: allow }`.
+     - `skills`: skills que puede cargar: `mi_skill: allow`.
    - **`parameters`**: Configuración del modelo para este agente: `temperature`, `top_p`, `model`, `provider`, `max_tokens`, `seed`, `reasoning`, `response_format`. `model`, `provider`, `max_tokens` y `seed` son opcionales y normalmente se omiten (el agente usa los valores globales), salvo que necesite un modelo específico para su tarea. `reasoning` y `response_format` solo se incluyen si el modelo los soporta.
 
 4. Debajo del frontmatter va el cuerpo del prompt del agente: su rol, instrucciones específicas, reglas de comportamiento.
@@ -27,8 +31,8 @@ Los sub-agentes son agentes especializados que se definen externamente al códig
 Cuando el agente principal delega una tarea a un sub-agente mediante `task`, el sistema:
 1. Lee el archivo `.md` del sub-agente.
 2. Extrae el frontmatter.
-3. Filtra las tools según `permission`: solo las marcadas como `allow` estarán disponibles.
-4. Filtra las skills según `skill`.
+3. Filtra las tools según `permissions.tools` y los sub-agentes según `permissions.tasks`: solo las marcadas como `allow` estarán disponibles.
+4. Filtra las skills según `permissions.skills`.
 5. Usa el cuerpo del markdown como system prompt del sub-agente.
 
 Esto significa que un sub-agente solo puede usar lo que su archivo de definición le permite. No tiene acceso a tools no declaradas.
@@ -40,24 +44,24 @@ El archivo `AGENT.md` (si existe en `~/.config/synapseForge/agents/`) se inyecta
 
 ### Permisos del agente principal (`config.yaml`)
 
-El agente principal tiene **siempre** un conjunto base de tools de lectura y delegación: `task`, `help`, `search_memory`, `read`, `websearch` y `webfetch`. Este piso está garantizado: existe o no `~/.config/synapseForge/config.yaml`, el yaml no puede quitárselas.
-
-Si existe `config.yaml`, sus permisos se **agregan** encima del piso base:
+El agente principal toma sus permisos de `~/.config/synapseForge/config.yaml`, con las claves `tools`, `skills` y `tasks` (siempre en plural):
 
 ```yaml
 permissions:
-  tool:
-    write: allow
-  skill:
+  tools:
+    read: allow
+    websearch: allow
+  skills:
     mi_skill: allow
-  task:
+  tasks:
     explorador: allow
 ```
 
-- Tools base (`task`, `help`, `search_memory`, `read`, `websearch`, `webfetch`): **siempre disponibles**, el yaml no las niega.
-- Otras tools (ej. `write`): solo si el yaml las lista con `allow`.
-- `task` es la excepción restrictible: si el yaml lo lista con sub-agentes, solo puede delegar a esos; si no lo lista, a todos.
-- Si el archivo **no existe** — el agente principal opera solo con el piso base.
+- Si el archivo **no existe**, el agente principal usa el conjunto base: `task`, `help`, `search_memory`, `read`, `websearch` y `webfetch`, sin skills.
+- Si el archivo **existe**, sus permisos reemplazan al conjunto base: el agente principal tiene solo lo que el yaml lista con `allow`.
+- `task` está disponible si el yaml lo lista en `tools` (puede delegar a todos los sub-agentes) o en `tasks` (solo a los indicados).
+- Las skills de `skills` se agregan al system prompt del agente principal.
+- El system prompt se adapta a las tools habilitadas: solo trae las instrucciones de las tools que el agente tiene. Incluye una sección `## Seguridad` con reglas contra prompt injection y fuga de datos; con el modelo de decisión habilitado esas reglas las evalúa el modelo de decisión sobre el mensaje del usuario y el prompt no las lleva.
 
 ---
 
@@ -71,7 +75,7 @@ Además de las tools internas del sistema, se pueden crear herramientas personal
 2. El nombre del archivo (sin `.py`) debe coincidir con el nombre de la herramienta y con el de la función que contiene.
 3. La primera línea del docstring del módulo es la descripción que el LLM usará para decidir si invocar la tool.
 4. La función debe ser `async` y debe devolver el contrato `{status, message, data, usage}`.
-5. Una vez creada, se puede habilitar para cualquier agente agregándola en su `permission`.
+5. Una vez creada, se puede habilitar para cualquier agente agregándola en su `permissions.tools`.
 
 ### Sandbox de prueba
 
@@ -97,10 +101,11 @@ Además de las tools externas, el sistema incluye **tools nativas** incorporadas
 | `skill` | Carga el contenido de una skill por nombre. |
 | `reference` | Carga un archivo de referencia específico de una skill. |
 | `help` | Muestra esta documentación de ayuda. |
+| `query_model_capabilities` | Consulta las capacidades de un modelo (razonamiento, salida estructurada, tool calling) en el catálogo local. |
 | `check_email` | Verifica correos no leídos en un buzón IMAP, con filtro de antigüedad (`1h`-`23h`, días, meses, años, `all`; por defecto `1h`). Con `mark_read: false` solo los muestra sin marcarlos como leídos. |
 | `send_email` | Envía un email vía SMTP. |
 | `list_dir` | Lista el contenido de un directorio. |
-| `rag` | Consulta una colección RAG (solo las permitidas en `permission.rag`). |
+| `rag` | Consulta una colección RAG (solo las permitidas en `permissions.tools.rag`). |
 | `search_memory` | Busca en conversaciones anteriores y devuelve los fragmentos relevantes. |
 
 ---
@@ -115,6 +120,7 @@ Las skills son conjuntos de instrucciones y material de referencia que se cargan
 2. Dentro de esa carpeta, crear `SKILL.md` con frontmatter YAML:
    - `name`: nombre de la skill.
    - `description`: descripción breve.
+   - `triggers` (opcional): palabras clave que indican cuándo usarla.
 3. El cuerpo de `SKILL.md` es el contenido que se inyecta como contexto cuando el agente carga la skill.
 4. Opcionalmente, crear una subcarpeta `references/` con archivos adicionales (catálogos, manuales, guías) que pueden cargarse individualmente con la herramienta `reference`.
 
@@ -193,18 +199,19 @@ Cada tool call que el agente despacha se registra antes de ejecutarse y se confi
 
 Un modelo de decisión (System One) devuelve respuestas tipadas con un nivel de confianza en vez de texto. Se habilita desde el panel de Configuración, sección **Modelo de decisión**: se activa el interruptor, se elige proveedor y modelo y se pulsa **Aplicar**. Es independiente del modelo de chat y requiere la API key del proveedor cargada en la sección **Providers**. Los modelos salen del catálogo de decisión de models.dev, que se sincroniza como máximo una vez cada 24 horas.
 
-Con el modelo habilitado hace dos validaciones:
+Con el modelo habilitado hace tres validaciones:
 
+- **Guardrail**: al iniciar un turno, evalúa si el mensaje del usuario (con sus adjuntos) intenta violar las reglas de seguridad: anular las instrucciones del sistema, obtener el system prompt o claves, enviar datos a destinos no pedidos, o ejecutar comandos o SQL destructivos. Con confianza de al menos 0.8 el mensaje se bloquea y no se llama al modelo de chat.
 - **Cierre de paso**: cuando el agente da una respuesta final, evalúa si cumple lo pedido y no deja trabajo pendiente. Solo cierra el paso con confianza de al menos 0.8.
 - **Continuidad**: al iniciar un turno con trabajo pendiente, evalúa si el mensaje nuevo lo continúa o pide otra cosa. Si pide otra cosa con confianza alta, el trabajo pendiente se descarta y el chat muestra un aviso.
 
-Con el modelo deshabilitado, el agente acepta su propia respuesta final como cierre y conserva siempre el trabajo pendiente, sin llamadas extra. Ante cualquier error del modelo de decisión, el flujo sigue como si estuviera deshabilitado.
+Con el modelo deshabilitado no hay guardrail (las reglas de seguridad van en el prompt del agente principal), el agente acepta su propia respuesta final como cierre y conserva siempre el trabajo pendiente, sin llamadas extra. Ante cualquier error del modelo de decisión, el flujo sigue como si estuviera deshabilitado.
 
 ---
 
 ## Métricas
 
-El botón **Métricas** del header abre el dashboard con cinco pestañas: **Resumen** (sesiones, mensajes, tokens, costos y actividad por día), **Sesiones**, **Tools** (llamadas y sub-agentes), **Modelos** y **Errores**.
+El botón **Métricas** del header abre el dashboard, con un filtro de rango de tiempo (1 hora, 6 horas, 1 día, 1 semana, 1 mes o todo) y tarjetas de **Sesiones**, **Mensajes**, **Uso de herramientas**, **Modelos**, **Gasto** y **Errores**, cada una con sus gráficos y descarga de datos.
 
 ---
 
@@ -260,10 +267,11 @@ Los servidores MCP se configuran en `~/.config/synapseForge/mcp.json` como un ar
 ]
 ```
 
-- `stdio` para servidores locales, `http` (con `server_url`) para remotos.
-- Sus tools se descubren automáticamente al iniciar y se exponen como tools del agente.
+- `stdio` para servidores locales (`command`), `http` (streamable HTTP, con `server_url` y `headers` si piden token) o `sse` para remotos. Si no se indica `transport`, se infiere: `command` es stdio y una URL es `http`.
+- Sus tools se descubren automáticamente al iniciar (o al tocar **Actualizar**) y se exponen como tools del agente con el prefijo `<label>_`.
+- Para apagar un servidor sin borrarlo: el interruptor de la pestaña **MCP**, o `"disabled": true` en su entrada del JSON (se aplica al tocar **Actualizar**).
 - Cada servidor tiene un timeout propio: si falla o no responde, se aísla (se marca en rojo en la interfaz) y el resto del sistema sigue funcionando.
-- El estado de cada servidor se ve en la pestaña **MCP** de la configuración: `connected` (verde) o `failed` (rojo).
+- El estado de cada servidor se ve en la pestaña **MCP** de la configuración: `connected` (verde), `failed` (rojo) o `disabled` (desactivado).
 
 ---
 

@@ -20,6 +20,7 @@ from backend.agent.loop.helpers import (
     _load_router_permissions,
     _read_param_override,
     _resolve_tool_api_type,
+    _router_tool_permissions,
 )
 from backend.agent.loop.router_tools import _ROUTER_TOOLS
 
@@ -34,4 +35,5 @@ __all__ = [
     "_load_router_permissions",
     "_read_param_override",
     "_resolve_tool_api_type",
+    "_router_tool_permissions",
 ]

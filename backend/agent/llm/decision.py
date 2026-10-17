@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import time
 from typing import Any
 
@@ -17,6 +18,26 @@ from backend.agent.utils.contract import (
 
 class DecisionMixin:
     """System One decision calls."""
+
+    @property
+    def decision_ready(self) -> bool:
+        """True when ``decision`` would make a real call.
+
+        Same conditions as ``decision``: enabled, provider and model
+        selected, API key stored and ``typesafe-sdk`` installed.
+        """
+        try:
+            provider_id = (self.decision_provider or '').strip().lower()
+            if not self.decision_enabled or not (self.decision_model or '').strip():
+                return False
+            if provider_keys.get_decision_provider(provider_id) is None:
+                return False
+            if not provider_keys.get_decision_key(provider_id):
+                return False
+            return importlib.util.find_spec('typesafe_sdk') is not None
+        except Exception as e:
+            log_error(str(e), source='decision.py:decision_ready')
+            return False
 
     async def decision(self, state: str | dict[str, Any],
                        questions: dict[str, Any],
