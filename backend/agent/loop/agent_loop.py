@@ -192,6 +192,11 @@ class AgentLoop:
             parent_id=parent_id,
         )
 
+        # Defined before the try: the finally block reads them, and the early
+        # exits (depth guard, session error, blocked message) skip step 5b.
+        title_queue: asyncio.Queue | None = None
+        title_task: asyncio.Task | None = None
+
         try:
             # --- Recursion guard for sub-agent delegation ---
             if depth >= MAX_SUBAGENT_DEPTH:
@@ -334,6 +339,9 @@ class AgentLoop:
 
             # --- 1b. Get turn_number for this message ---
             turn_number = session_manager.get_last_turn_number(session_id) + 1
+            if depth == 0:
+                # Lets the frontend tie this answer to its turn (feedback buttons).
+                yield f"data: {json.dumps({'type': 'turn', 'content': turn_number})}\n\n"
 
             def _schedule_latency() -> None:
                 """Persist this turn's latency in the background (non-blocking)."""
@@ -511,8 +519,6 @@ class AgentLoop:
             # the loop. For root sessions the title is generated in a background
             # task so it doesn't block the response stream; the result is pushed
             # to a queue that the loop drains to emit the session_title event.
-            title_queue: asyncio.Queue | None = None
-            title_task: asyncio.Task | None = None
             if turn_number == 1 and depth == 0:
                 try:
                     existing_titles = session_manager.get_all_titles()

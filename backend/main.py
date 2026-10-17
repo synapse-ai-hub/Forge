@@ -129,6 +129,13 @@ except ImportError as e:
     billing_router = None
     logging.warning("backend.routes.billing could not be imported.")
 
+try:
+    from backend.routes.feedback import router as feedback_router
+except ImportError as e:
+    log_error(str(e), source="main.py:feedback_import")
+    feedback_router = None
+    logging.warning("backend.routes.feedback could not be imported.")
+
 # ---------------------------------------------------------------------------
 # Logging configuration
 # ---------------------------------------------------------------------------
@@ -317,6 +324,9 @@ if chat_router is not None:
 
 if sessions_router is not None:
     app.include_router(sessions_router, prefix="/api")
+
+if feedback_router is not None:
+    app.include_router(feedback_router, prefix="/api")
 
 if config_router is not None:
     app.include_router(config_router, prefix="/api")

@@ -36,6 +36,7 @@ _DDL_SCRIPTS: tuple[str, ...] = (
     "ddl/external_usage.sql",
     "ddl/creator_calls.sql",
     "ddl/step_frontier.sql",
+    "ddl/message_feedback.sql",
 )
 
 
