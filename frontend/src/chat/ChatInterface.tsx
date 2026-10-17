@@ -31,6 +31,7 @@ import type { SchedulerNotification } from "../services/schedulerService";
 import { Button } from "../components/ui/button";
 import { FileChip, FileWarningBanner, MessageRow } from "../components/chatBlocks";
 import { ContextGauge } from "../components/ContextGauge";
+import { useSessionFeedback } from "./useSessionFeedback";
 import type { Message, SubagentEvent, SubagentStep, ContentBlock } from "../App";
 
 /* ------------------------------------------------------------------ */
@@ -167,6 +168,7 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
   const [showNotifications, setShowNotifications] = useState(false);
 
   /* ---- refs ---- */
+  const { feedback, vote } = useSessionFeedback(sessionId);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -754,6 +756,15 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
             break;
           }
 
+          case "turn":
+            if (typeof event.content === "number") {
+              const turn = event.content;
+              setMessages((prev) =>
+                prev.map((m) => (m.id === assistantId ? { ...m, turn } : m)),
+              );
+            }
+            break;
+
           case "session_title":
             if (activeSessionId && typeof event.content === "string") {
               onSessionTitleUpdate?.(activeSessionId, event.content);
@@ -1192,7 +1203,13 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
         >
           <div className="relative max-w-full sm:max-w-3xl lg:max-w-4xl mx-auto space-y-4 sm:space-y-6">
             {messages.map((msg) => (
-              <MessageRow key={msg.id} message={msg} verboseMode={verboseMode} />
+              <MessageRow
+                key={msg.id}
+                message={msg}
+                verboseMode={verboseMode}
+                feedback={msg.turn != null ? feedback[msg.turn] ?? null : null}
+                onFeedback={vote}
+              />
             ))}
 
             <div ref={messagesEndRef} />

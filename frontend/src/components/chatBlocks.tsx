@@ -11,6 +11,8 @@ import {
   Brain,
   User,
   Copy,
+  ThumbsUp,
+  ThumbsDown,
   ChevronDown,
   Loader2,
   X,
@@ -19,6 +21,7 @@ import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { renderMermaid } from "../utils/mermaid";
 import type { Message, SubagentEvent, SubagentStep } from "../App";
+import type { FeedbackType } from "../services/feedbackService";
 
 /* ------------------------------------------------------------------ */
 /*  TypingIndicator                                                   */
@@ -540,10 +543,16 @@ function MessageRow({
   message,
   verboseMode,
   showCopyButton = true,
+  feedback = null,
+  onFeedback,
 }: {
   message: Message;
   verboseMode: boolean;
   showCopyButton?: boolean;
+  /** Thumb the user gave to this answer, if any. */
+  feedback?: FeedbackType | null;
+  /** Called when a thumb is clicked; without it the thumbs are not shown. */
+  onFeedback?: (turn: number, type: FeedbackType) => void;
 }) {
   const isAssistant = message.type === "assistant";
 
@@ -654,19 +663,47 @@ function MessageRow({
           {/* Copy button (only when there's actual text content) — opcional (skill lo desactiva) */}
           {showCopyButton && message.type === "assistant" && !message.isStreaming && message.id !== "welcome" && (
             (message.content || (message.blocks && message.blocks.some((b) => b.type === "text"))) && (
-              <button
-                type="button"
-                onClick={() => {
-                  const text = message.blocks
-                    ? message.blocks.filter((b) => b.type === "text").map((b) => (b as any).content).join("\n\n")
-                    : message.content || "";
-                  navigator.clipboard?.writeText(text);
-                }}
-                className="mt-2 inline-flex items-center gap-1 rounded-full border border-app-primary/20 bg-app-primary/10 px-2 py-1 text-[11px] text-app-primary transition-colors hover:bg-app-primary/15"
-              >
-                <Copy size={12} />
-                Copiar
-              </button>
+              <div className="mt-2 flex items-stretch gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const text = message.blocks
+                      ? message.blocks.filter((b) => b.type === "text").map((b) => (b as any).content).join("\n\n")
+                      : message.content || "";
+                    navigator.clipboard?.writeText(text);
+                  }}
+                  className="inline-flex items-center gap-1 rounded-full border border-app-primary/20 bg-app-primary/10 px-2 py-1 text-[11px] text-app-primary transition-colors hover:bg-app-primary/15"
+                >
+                  <Copy size={12} />
+                  Copiar
+                </button>
+                {onFeedback && message.turn != null && (
+                  <>
+                    {(["up", "down"] as const).map((type) => {
+                      const selected = feedback === type;
+                      const label = type === "up" ? "Buena respuesta" : "Mala respuesta";
+                      const Icon = type === "up" ? ThumbsUp : ThumbsDown;
+                      return (
+                        <button
+                          key={type}
+                          type="button"
+                          onClick={() => onFeedback(message.turn as number, type)}
+                          aria-label={label}
+                          aria-pressed={selected}
+                          title={label}
+                          className={`inline-flex items-center rounded-full border px-2 py-1 text-[11px] transition-colors ${
+                            selected
+                              ? "border-app-primary bg-app-primary text-app-primary-text hover:bg-app-primary/90"
+                              : "border-app-primary/20 bg-app-primary/10 text-app-primary hover:bg-app-primary/15"
+                          }`}
+                        >
+                          <Icon size={12} />
+                        </button>
+                      );
+                    })}
+                  </>
+                )}
+              </div>
             )
           )}
 

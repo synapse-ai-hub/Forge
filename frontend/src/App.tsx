@@ -58,6 +58,8 @@ export interface Message {
   toolCalls?: Array<{ tool: string; parameters: Record<string, any> }>;
   toolResults?: Array<{ tool: string; result: any }>;
   subagentEvents?: Record<string, SubagentEvent>;
+  /** Turn of the session this answer belongs to (ties it to its feedback). */
+  turn?: number;
 }
 
 /** Generate a unique ID with safe fallback when crypto is unavailable. */
@@ -73,6 +75,7 @@ function mapSessionMessages(raw: SessionMessage[]): Message[] {
   return raw.map((m) => ({
     id: m.id,
     type: m.type,
+    turn: m.turn_number ?? undefined,
     content: m.type === "user" ? m.content : "",
     reasoning: m.reasoning ?? undefined,
     files: m.files ?? undefined,
