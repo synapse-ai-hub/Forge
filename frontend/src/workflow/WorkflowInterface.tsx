@@ -670,7 +670,7 @@ export function WorkflowInterface() {
             >
               <div className="relative max-w-full sm:max-w-3xl lg:max-w-4xl mx-auto space-y-4 sm:space-y-6">
                 {messages.map((msg) => (
-                  <MessageRow key={msg.id} message={msg} verboseMode={true} showCopyButton={false} />
+                  <MessageRow key={msg.id} message={msg} verboseMode={true} showCopyButton={false} autoCloseBlocks />
                 ))}
               </div>
             </div>

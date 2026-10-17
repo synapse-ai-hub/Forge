@@ -545,10 +545,14 @@ function MessageRow({
   showCopyButton = true,
   feedback = null,
   onFeedback,
+  autoCloseBlocks = false,
 }: {
   message: Message;
   verboseMode: boolean;
   showCopyButton?: boolean;
+  /** Each tool block closes as soon as it has its result and each reasoning block
+   *  as soon as another block follows, instead of all closing at the end of the message. */
+  autoCloseBlocks?: boolean;
   /** Thumb the user gave to this answer, if any. */
   feedback?: FeedbackType | null;
   /** Called when a thumb is clicked; without it the thumbs are not shown. */
@@ -607,7 +611,7 @@ function MessageRow({
               {message.blocks.map((block, i) => {
                 if (block.type === "reasoning") {
                   if (!verboseMode) return null;
-                  return <ReasoningBlock key={i} content={block.content} defaultOpen={message.isStreaming} isStreaming={message.isStreaming} />;
+                  return <ReasoningBlock key={i} content={block.content} defaultOpen={message.isStreaming} isStreaming={autoCloseBlocks ? message.isStreaming && i === (message.blocks?.length ?? 0) - 1 : message.isStreaming} />;
                 }
                 if (block.type === "text") {
                   return (
@@ -628,7 +632,7 @@ function MessageRow({
                       key={i}
                       toolCall={{ tool: block.name, parameters: block.args }}
                       result={block.result !== undefined ? { tool: block.name, result: block.result } : undefined}
-                      isStreaming={message.isStreaming}
+                      isStreaming={autoCloseBlocks ? message.isStreaming && block.result === undefined : message.isStreaming}
                       waitingForChunk={waitingForChunk}
                       subagentEvents={message.subagentEvents}
                       isLatestTool={i === (message.blocks?.length ?? 0) - 1}
@@ -683,6 +687,13 @@ function MessageRow({
                       const selected = feedback === type;
                       const label = type === "up" ? "Buena respuesta" : "Mala respuesta";
                       const Icon = type === "up" ? ThumbsUp : ThumbsDown;
+                      // Fixed colors (soft yellow icon on green / red), independent of the theme.
+                      // Only the hover is shared with the Copy button; the one given stays
+                      // at full strength with a filled icon, the other is dimmed.
+                      const tone =
+                        type === "up"
+                          ? "border-green-600 bg-green-600 hover:bg-green-700"
+                          : "border-red-600 bg-red-600 hover:bg-red-700";
                       return (
                         <button
                           key={type}
@@ -691,13 +702,13 @@ function MessageRow({
                           aria-label={label}
                           aria-pressed={selected}
                           title={label}
-                          className={`inline-flex items-center rounded-full border px-2 py-1 text-[11px] transition-colors ${
+                          className={`inline-flex items-center rounded-full border px-2 py-1 text-[11px] text-[#F2D077] transition-all ${tone} ${
                             selected
-                              ? "border-app-primary bg-app-primary text-app-primary-text hover:bg-app-primary/90"
-                              : "border-app-primary/20 bg-app-primary/10 text-app-primary hover:bg-app-primary/15"
+                              ? "opacity-100"
+                              : "opacity-60 hover:opacity-100"
                           }`}
                         >
-                          <Icon size={12} />
+                          <Icon size={12} fill={selected ? "currentColor" : "none"} />
                         </button>
                       );
                     })}
@@ -725,11 +736,17 @@ function MessageRow({
     <div className="flex gap-3 items-start justify-end">
       {/* Bubble */}
       <div
-        className="rounded-2xl border border-app-border
-                   bg-white
-                   px-4 py-3 max-w-[85%] sm:max-w-[75%] shadow-sm"
+        className={`rounded-2xl border px-4 py-3 max-w-[85%] sm:max-w-[75%] shadow-sm ${
+          message.blocked
+            ? "border-[#403F3F] bg-[#403F3F] text-red-400"
+            : "border-app-border bg-white"
+        }`}
       >
-        <MarkdownRenderer content={message.content} />
+        {message.blocked ? (
+          <p className="text-sm font-medium">{message.content}</p>
+        ) : (
+          <MarkdownRenderer content={message.content} />
+        )}
       </div>
 
       {/* Avatar gradient */}
