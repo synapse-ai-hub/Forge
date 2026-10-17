@@ -249,9 +249,9 @@ Lista los agentes disponibles.
 
 #### `GET /api/config/mcp`
 
-Lista los servidores MCP configurados.
+Lista los servidores MCP configurados con su estado (`connected`, `failed` o `disabled`) y el transporte. Cada servidor activo se verifica con un handshake MCP real. `error` viene cargado cuando `mcp.json` no es un array JSON válido.
 
-**Respuesta:** `JSONResponse` `{status, data: McpServer[]}`.
+**Respuesta:** `JSONResponse` `{status, servers: McpServer[], error: string | null}`.
 
 #### `GET /api/config/workflows/selection`
 
@@ -577,6 +577,14 @@ Elimina un agente (archivo `.md`).
 Elimina un servidor MCP de la configuración.
 
 **Respuesta:** `JSONResponse` `{status, message}`.
+
+#### `PUT /api/agent/mcp/{label}/enabled`
+
+Activa o desactiva un servidor MCP. Escribe `disabled` en `mcp.json` y reconstruye el registry de tools, así un servidor desactivado deja de aportar tools de inmediato.
+
+**Body:** `{enabled: bool}`.
+
+**Respuesta:** `JSONResponse` `{status, message}`. `400` si falta `enabled`, `404` si el servidor no existe.
 
 #### `DELETE /api/agent/knowledge/{collection}`
 

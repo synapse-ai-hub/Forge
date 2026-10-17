@@ -223,7 +223,7 @@ El agente utiliza **dos fuentes de configuración** separadas:
 
 En Windows: `%USERPROFILE%\.config\synapseForge\mcp.json`
 
-Este archivo almacena **exclusivamente** la configuración de servidores MCP (Model Context Protocol) como un **array** directo. Se gestiona mediante `backend/agent/config_dir.py` (funciones `load_mcp_servers()` / `save_mcp_servers()`). La conexión se realiza con el SDK oficial `mcp` (`mcp_helper.py`), con timeout por servidor y health check: si un servidor falla, se aísla y el resto del sistema sigue funcionando.
+Este archivo almacena **exclusivamente** la configuración de servidores MCP (Model Context Protocol) como un **array** directo. Se gestiona mediante `backend/agent/config_dir.py` (funciones `load_mcp_servers()` / `save_mcp_servers()`; el guardado es atómico). La conexión se realiza con el SDK oficial `mcp` (`mcp_helper.py`) sobre tres transportes: stdio (proceso local), streamable HTTP y SSE (remotos). El `mcp.json` es la única fuente de verdad: lo que cambia el usuario a mano se aplica al refrescar las tools (botón **Actualizar**) o al reiniciar. Cada servidor tiene timeout propio y health check con un handshake MCP real: si un servidor falla, se aísla y el resto del sistema sigue funcionando.
 
 #### Estructura de `mcp.json`
 
@@ -245,13 +245,14 @@ Este archivo almacena **exclusivamente** la configuración de servidores MCP (Mo
 | Campo | Tipo | Descripción | Default |
 |-------|------|-------------|---------|
 | `label` | string | Identificador único del servidor | — |
-| `transport` | string | `"stdio"` (local) o `"http"` (remoto) | `"stdio"` |
+| `transport` | string | `"stdio"` (local), `"http"` (streamable HTTP, remoto) o `"sse"` (remoto). Si falta: `command` implica stdio y una URL implica `http` | inferido |
 | `command` | string o list | Comando o lista de comandos para ejecutar | — |
 | `args` | list | Argumentos adicionales (solo si command es string) | `[]` |
 | `environment` | object | Variables de entorno para el subproceso | `{}` |
-| `server_url` | string | URL del servidor HTTP/SSE | — |
+| `server_url` | string | URL del servidor HTTP/SSE (también se acepta `url`) | — |
 | `headers` | object | Cabeceras HTTP para servidores remotos | `{}` |
-| `disabled` | bool | `true` para deshabilitar sin borrar | `false` |
+| `disabled` | bool | `true` para desactivar sin borrar (no se levanta, no aporta tools y no se ejecuta). También se respeta `enabled: false`. El toggle de la pestaña MCP escribe esta clave | `false` |
+| `timeout` | number | Segundos para el handshake y cada llamada | `300` |
 
 #### Ejemplos
 
@@ -283,7 +284,7 @@ Este archivo almacena **exclusivamente** la configuración de servidores MCP (Mo
 ]
 ```
 
-**Servidor HTTP/SSE remoto:**
+**Servidor remoto (streamable HTTP; para SSE usar `"transport": "sse"`):**
 
 ```json
 [
@@ -462,7 +463,7 @@ async def calculadora(expresion: str) -> dict:
 
 ### 3. Tools MCP
 
-Los servidores MCP configurados en `mcp.json` exponen sus herramientas automáticamente. `tools/__init__.py` las descubre vía `mcp_helper.py` (usando el SDK oficial `mcp`) y las registra como tools nativas con prefijo `mcp_<server>_<tool>`. El agente las invoca igual que cualquier otra tool. Cada servidor tiene un timeout propio: si falla, se aísla y el resto del sistema sigue funcionando.
+Los servidores MCP configurados en `mcp.json` exponen sus herramientas automáticamente. `tools/__init__.py` las descubre vía `mcp_helper.py` (usando el SDK oficial `mcp`) y las registra como tools nativas con prefijo `<label>_<tool>` (por ejemplo `notebooklm_ask_question`). Los servidores desactivados (`disabled`) no se descubren. El agente las invoca igual que cualquier otra tool. Cada servidor tiene un timeout propio: si falla, se aísla y el resto del sistema sigue funcionando.
 
 ### Carga y registro
 

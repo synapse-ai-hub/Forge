@@ -264,10 +264,11 @@ Los servidores MCP se configuran en `~/.config/synapseForge/mcp.json` como un ar
 ]
 ```
 
-- `stdio` para servidores locales, `http` (con `server_url`) para remotos.
-- Sus tools se descubren automáticamente al iniciar y se exponen como tools del agente.
+- `stdio` para servidores locales (`command`), `http` (streamable HTTP, con `server_url` y `headers` si piden token) o `sse` para remotos. Si no se indica `transport`, se infiere: `command` es stdio y una URL es `http`.
+- Sus tools se descubren automáticamente al iniciar (o al tocar **Actualizar**) y se exponen como tools del agente con el prefijo `<label>_`.
+- Para apagar un servidor sin borrarlo: el interruptor de la pestaña **MCP**, o `"disabled": true` en su entrada del JSON (se aplica al tocar **Actualizar**).
 - Cada servidor tiene un timeout propio: si falla o no responde, se aísla (se marca en rojo en la interfaz) y el resto del sistema sigue funcionando.
-- El estado de cada servidor se ve en la pestaña **MCP** de la configuración: `connected` (verde) o `failed` (rojo).
+- El estado de cada servidor se ve en la pestaña **MCP** de la configuración: `connected` (verde), `failed` (rojo) o `disabled` (desactivado).
 
 ---
 

@@ -214,7 +214,7 @@ Barra lateral con tabs: Conversaciones (`sessionsTab`), Configuración (`configT
 Configuración: selector de proveedor/modelo, sección de modelo de decisión (habilitar, proveedor, modelo y ficha del catálogo), ventana de contexto, toggle verbose y gestión de archivos de contexto.
 
 ### `agentInfoTab.tsx`
-Panel de agentes con 6 sub-paneles: Tools, Skills, Agentes, MCP, RAG y Workflows (selección del flujo activo: `smart` o un workflow).
+Panel de agentes con 6 sub-paneles: Tools, Skills, Agentes, MCP (estado de cada servidor, interruptor para activarlo o desactivarlo y borrado), RAG y Workflows (selección del flujo activo: `smart` o un workflow).
 
 ### `MetricsModal.tsx`
 Dashboard de métricas con tabs: Overview, Sessions, Tools, Errors.
