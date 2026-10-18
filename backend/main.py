@@ -136,6 +136,20 @@ except ImportError as e:
     feedback_router = None
     logging.warning("backend.routes.feedback could not be imported.")
 
+try:
+    from backend.routes.workflows import router as workflows_router
+except ImportError as e:
+    log_error(str(e), source="main.py:workflows_import")
+    workflows_router = None
+    logging.warning("backend.routes.workflows could not be imported.")
+
+try:
+    from backend.routes.notifications import router as notifications_router
+except ImportError as e:
+    log_error(str(e), source="main.py:notifications_import")
+    notifications_router = None
+    logging.warning("backend.routes.notifications could not be imported.")
+
 # ---------------------------------------------------------------------------
 # Logging configuration
 # ---------------------------------------------------------------------------
@@ -255,6 +269,18 @@ async def lifespan(app: FastAPI):
         log_error(str(exc), source="main.py:lifespan(scheduler)")
         logger.warning("Failed to start scheduler service: %s", exc)
 
+    # Resume the workflow runs a stop or crash left as "running": they continue
+    # from the last committed node.
+    try:
+        from backend.agent.utils.workflow_service import workflow_service
+
+        resumed = await workflow_service.resume_interrupted()
+        if resumed:
+            logger.info("Resumed %d interrupted workflow run(s).", resumed)
+    except Exception as exc:
+        log_error(str(exc), source="main.py:lifespan(workflows_resume)")
+        logger.warning("Failed to resume workflow runs: %s", exc)
+
     logger.info("<nombre>nombre_proyecto</nombre> API started successfully.")
 
     # Pre-create the RAG vector DB (Gemini Embedding 2) once at startup,
@@ -277,6 +303,13 @@ async def lifespan(app: FastAPI):
         logger.warning("Failed to pre-init RAG vector DB: %s", exc)
 
     yield
+    try:
+        from backend.agent.utils.workflow_service import workflow_service
+
+        await workflow_service.shutdown()
+    except Exception as exc:
+        log_error(str(exc), source="main.py:lifespan(workflows_stop)")
+        logger.warning("Failed to stop workflow runs: %s", exc)
     try:
         from backend.agent.utils.scheduler_helpers import scheduler_service
 
@@ -360,6 +393,12 @@ if scheduler_router is not None:
 
 if billing_router is not None:
     app.include_router(billing_router, prefix="/api")
+
+if workflows_router is not None:
+    app.include_router(workflows_router, prefix="/api")
+
+if notifications_router is not None:
+    app.include_router(notifications_router, prefix="/api")
 
 
 # ---------------------------------------------------------------------------
