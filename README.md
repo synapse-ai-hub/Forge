@@ -83,7 +83,7 @@ The Forge turns those definitions into autonomous systems.
 - **Permission engine** — deny-by-default, per-agent, with wildcards and groups
 - **Security** — rules against prompt injection, data leaks and dangerous commands or SQL; they go in the router prompt or, with the decision model enabled, the decision model enforces them as a guardrail on the user message
 - **Agent loop** — iterative reasoning → tool calling → execution → continuation, with streaming SSE
-- **Workflows** — deterministic DAG execution: sequential steps, same-step nodes in parallel, with streaming SSE
+- **Workflows** — deterministic DAG execution started with a play button: sequential steps, same-step nodes in parallel, background runs with retries, persisted results and notifications
 - **Memory** — persistent conversation indexing and cross-session retrieval
 - **Multi-provider LLM** — Ollama (local), curated cloud providers (OpenAI-compatible + Google)
 - **MCP integration** — connect external tool servers via the Model Context Protocol (stdio, HTTP or SSE), with an on/off switch per server
@@ -152,13 +152,13 @@ flowchart LR
 
 FastAPI application with REST/SSE routers. The agent framework lives in `backend/agent/`: AgentLoop with native tool calling, tools registry (native + external + MCP), SQLite sessions, per-agent permissions, skills, RAG (ChromaDB) and long-term memory.
 
-**Native tools**: `read`, `write`, `edit`, `glob`, `grep`, `list_dir`, `webfetch`, `websearch`, `shell`, `task` (sub-agent delegation), `skill`, `reference`, `rag`, `search_memory`, `check_email`, `send_email`, `query_model_capabilities`, `help`.
+**Native tools**: `read`, `write`, `edit`, `glob`, `grep`, `list_dir`, `webfetch`, `websearch`, `shell`, `task` (sub-agent delegation), `workflow` (run a saved workflow), `skill`, `reference`, `rag`, `search_memory`, `check_email`, `send_email`, `query_model_capabilities`, `help`.
 
 ### Workflows
 
 Deterministic flows defined as flat YAML files (`~/.config/synapseForge/workflows/<name>.yaml`, one file per workflow). Each workflow is a list of nodes with `id`, `type` (`agent`, `tool`, `rag` or `run`), `step` (integer from 1) and exactly one node with `final: true`. Nodes in the same step run in parallel with a barrier; different steps run sequentially. Agent nodes run in a child session with that agent's own permissions; `run` nodes execute shell commands GitHub-Actions style.
 
-The chat runs in **smart** mode (the agent decides) or with one deterministic workflow selected from the agent info panel. Before running, the backend verifies that every referenced agent, tool and collection exists — if something is missing, it answers with a friendly message instead of executing. Workflows run under least-privilege permissions derived from their own nodes. A dedicated creator (interview + validation + user approval) generates the YAML; custom prompts can live as loose files in `workflows/prompts/`.
+A workflow runs from the **play** button of its card in the agent info panel. It runs in the background, in parallel with the chat, and opens a session in the history (`name — date`); while it runs the card shows "Ejecutando…" and can be cancelled. Before running, the backend verifies that every referenced agent, tool and collection exists — if something is missing, it says what instead of executing. Workflows run under least-privilege permissions derived from their own nodes. Every node is committed with its full result: if a node fails or the app stops, the run is retried (3 attempts in total, exponential backoff) from the first node without a confirmed result. When every node completes, a judge (the decision model, or the chat model if it is not enabled) checks the result; a definitive failure is explained in plain language. The result arrives as a persisted notification in the header bell, with the unread count; the run, its node commits and the spend of the judge are stored in their own tables. Agents can run workflows through the `workflow` tool when their `workflows` permission block allows it. A dedicated creator (interview + validation + user approval) generates the YAML; custom prompts can live as loose files in `workflows/prompts/`.
 
 ### Checkpoints and decision model
 

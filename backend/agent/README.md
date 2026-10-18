@@ -35,7 +35,7 @@ El módulo **Agent** es el núcleo del asistente conversacional. Implementa un b
 - **Checkpoints de flujo**: Cada tool call despachada se registra en `step_frontier`; si el flujo se corta, el trabajo sin confirmar se retoma en el turno siguiente.
 - **Modelo de decisión opcional**: Un modelo de decisión (System One) valida el cierre de cada paso y la continuidad del trabajo pendiente, y revisa el mensaje del usuario como guardrail de seguridad. Deshabilitado, el flujo no hace ninguna llamada extra.
 - **Reglas de seguridad**: Reglas contra prompt injection, fuga de datos y comandos o SQL peligrosos. Van en el system prompt del router o, con el modelo de decisión habilitado, las evalúa el decisor.
-- **Workflows deterministas**: Flujos en YAML ejecutados por un runner con pasos secuenciales, nodos paralelos, reintentos y permisos mínimos.
+- **Workflows deterministas**: Flujos en YAML que se ejecutan con un botón play, en segundo plano. Cada ejecución se guarda en su propia tabla, se reintenta hasta 3 veces retomando desde el último nodo confirmado y avisa el resultado con una notificación. Los agentes también pueden ejecutarlos con la tool `workflow`.
 
 ---
 
@@ -136,6 +136,9 @@ Contiene módulos de soporte genéricos para el funcionamiento del agente:
 - `decision.py` — Gates del modelo de decisión: cierre de paso, continuidad del trabajo pendiente y guardrail del mensaje del usuario.
 - `frontier_helpers.py` — Registro, resolución y reanudación de la frontera de tool calls.
 - `workflow_loader.py`, `workflow_validator.py`, `workflow_runner.py`, `workflows_helpers.py` — Carga, validación, ejecución y helpers de workflows.
+- `workflow_service.py`, `workflow_db.py`, `workflow_judge.py` — Ejecuciones de workflows (inicio, reintentos, cancelación, reanudación), su persistencia y el juez/explicador con LLM.
+- `notifications_helpers.py` — Notificaciones persistidas de workflows y tareas programadas.
+- `creator_runs.py` — Registro de las corridas de los creadores: envuelve el stream SSE de cada endpoint `/api/create/*` y suma a la corrida el uso de cada llamada que registra `record_creator_call`.
 - `provider_keys.py` — Gestión de API keys (cifrado Fernet en SQLite).
 - `skill_loader.py` — Carga y formateo de skills para el system prompt.
 - `skills_helpers.py` — Helpers de evaluación y creación de skills.
@@ -181,15 +184,21 @@ Directorio que contiene el archivo `agent.db` con las tablas:
 - `messages` — Historial de mensajes con tool calls, resultados y uso de tokens. El rol `decisor` guarda el veredicto del modelo de decisión y nunca se envía al LLM.
 - `attachments` — Archivos adjuntos de cada turno.
 - `context_files` — Archivos de contexto subidos por el usuario.
-- `config_kv` — Configuración persistente (modelo, proveedor, turnos de contexto, modelo de decisión, workflow activo, parámetros).
+- `config_kv` — Configuración persistente (modelo, proveedor, turnos de contexto, modelo de decisión, parámetros).
 - `providers` y `provider_api_keys` — Proveedores disponibles y sus API keys cifradas.
 - `model_catalog` y `decision_catalog` — Modelos por proveedor (chat y decisión), con límites, modalidades y tarifas.
 - `error_log` — Registro de excepciones del backend (session_id, turn_number, exception, source, created_at).
 - `step_frontier` — Tool calls despachadas del paso en curso (`open` / `done`).
+- `workflows` — Registro de workflows; el nombre es el id y el YAML es la definición.
+- `workflow_runs` — Una fila por ejecución: estado (`running`, `success`, `error`, `cancelled`), intento actual, sesión, resultado y explicación del error.
+- `workflow_run_steps` — Commits por nodo (`open`, `done`, `failed`, `stale`) con el resultado completo, para retomar desde el último nodo confirmado.
+- `workflow_usage` — Gasto de los LLM propios del workflow (juez y explicación de fallos).
+- `notifications` — Notificaciones de workflows y tareas programadas, con FK al workflow o a la tarea y estado de lectura.
 - `message_feedback` — Pulgar arriba o abajo del usuario sobre una respuesta, una fila por `(session_id, turn_number)`. Guarda también el modelo y el proveedor que respondió, y se borra con la sesión.
 - `turn_latency` — Latencia de cada turno.
 - `scheduled_tasks` y `task_runs` — Tareas programadas y sus ejecuciones.
-- `spend`, `spend_limits`, `billing`, `external_usage` y `creator_calls` — Gasto y uso por proveedor y modelo, límites de presupuesto y llamadas de los creadores.
+- `spend`, `spend_limits`, `billing`, `external_usage` y `creator_calls` — Gasto y uso por proveedor y modelo, límites de presupuesto y cada llamada al LLM de los creadores.
+- `creator_runs` — Una fila por corrida de un creador (agente, skill, tool o workflow): qué hizo (`question`, `create`, `iterate` o `exists`), el elemento que creó o modificó, el resultado (`success`, `error` o `aborted`), el modelo, la fecha y los tokens y el gasto de todas las llamadas de la corrida. El detalle de cada llamada sigue en `creator_calls`.
 
 El esquema se crea de forma idempotente en `ddl_setup.py` (`CREATE TABLE IF NOT EXISTS`).
 
@@ -226,7 +235,7 @@ Los tres fallan abiertos: ante cualquier error o respuesta inválida el mensaje 
 
 **Continuidad.** Al descartar el pendiente, el loop emite el evento SSE `decision` con `{"action": "discarded", "reason": "unrelated"}`.
 
-Sin el modelo habilitado, `should_close_step` acepta la señal del LLM, `should_keep_pending` conserva el pendiente y no hay guardrail de decisión: no hay llamadas extra. El runner de workflows usa el mismo gate de cierre.
+Sin el modelo habilitado, `should_close_step` acepta la señal del LLM, `should_keep_pending` conserva el pendiente y no hay guardrail de decisión: no hay llamadas extra. Los workflows tienen su propio juez (ver sección Workflows).
 
 ### 13. Workflows — `utils/workflow_*.py`
 
@@ -234,7 +243,16 @@ Flujos deterministas definidos en archivos planos `~/.config/synapseForge/workfl
 
 - `workflow_validator.py` — Valida el esquema: `name`, `retries` (0–10), `on_failure` (`continue` | `abort`) y nodos de tipo `agent`, `tool`, `rag` o `run`. Cada nodo tiene `id` y `step`; el workflow tiene exactamente un nodo `final: true`. Un nodo `run` ejecuta `run` (comando de shell), con `timeout` (1000–300000 ms, 30000 por defecto) y `workdir` opcional confinado al directorio del proyecto.
 - `workflow_loader.py` — `list_workflows` y `load_workflow` con rechazo de nombres con `..` o separadores de ruta.
-- `workflow_runner.py` — `WorkflowRunner.run` ejecuta los pasos en orden; los nodos del mismo `step` corren en paralelo con barrera. Cada nodo tiene reintentos y los de tipo `agent` corren en una sesión hija con los permisos de su agente. Las tools se habilitan con permisos mínimos: solo las que el YAML referencia (`task` nunca se habilita; la delegación se hace con nodos `agent`). Registra la frontera por paso y cierra con el mismo gate de cierre que el loop.
+- `workflow_runner.py` — `WorkflowRunner.execute_attempt` ejecuta un intento: los pasos en orden, con los nodos del mismo `step` en paralelo con barrera. Cada nodo tiene reintentos con espera exponencial; los de tipo `agent` corren en una sesión hija de la sesión del run, con los permisos de su agente. Un nodo `run` cuyo comando termina con código distinto de cero falla. Las tools se habilitan con permisos mínimos: solo las que el YAML referencia (`task` nunca se habilita; la delegación se hace con nodos `agent`). Cada nodo se confirma en `workflow_run_steps` con su resultado completo.
+- `workflow_service.py` — `WorkflowService` inicia, cancela y reanuda ejecuciones:
+  - Una ejecución es una tarea en segundo plano, en paralelo con el chat, el scheduler y otros workflows. Un mismo workflow no puede correr dos veces a la vez.
+  - Abre una sesión por ejecución, titulada `nombre — dd/mm/aaaa HH:MM`; las ejecuciones iniciadas desde una tool cuelgan de la sesión del agente que las llamó.
+  - Reintenta hasta 3 intentos en total, con espera exponencial (2 s y 4 s). Cada intento retoma desde el primer nodo sin resultado confirmado; un nodo que estaba en vuelo cuenta como fallido y se vuelve a ejecutar.
+  - Al arrancar el backend retoma las ejecuciones que quedaron en `running`; las que llamó un agente se cierran como interrumpidas.
+  - Al cancelar, la ejecución queda como `cancelled` y no genera notificación.
+- `workflow_judge.py` — Cuando todos los nodos terminan, decide si el workflow terminó bien con los resultados de los nodos: con el modelo de decisión si está listo, o con el modelo de chat si no (un solo prompt, `judge_workflow.jinja`, que según `decision` trae la pregunta o el formato de respuesta y los datos). Si una ejecución falla definitivamente, un LLM redacta una explicación en lenguaje simple (`explain_workflow_error.jinja`); el error técnico va a `error_log`. El gasto de estas llamadas queda en `workflow_usage`.
+- `workflow_db.py` — Persistencia de ejecuciones, commits por nodo y gasto.
+- `notifications_helpers.py` — Persiste cada notificación y la empuja a la interfaz por el bus de eventos. Solo notifican las ejecuciones lanzadas con play y las tareas programadas.
 - `workflows_helpers.py` — Listado y evaluación de workflows para el creador y `verificar_refs`, que comprueba que existan los agentes, tools y colecciones que el workflow referencia antes de ejecutarlo.
 
 ---
@@ -347,13 +365,16 @@ permissions:
     mi_skill: allow
   tasks:
     explorador: allow
+  workflows:
+    reporte-diario: allow
 ```
 
-Las claves son siempre `tools`, `skills` y `tasks` (plural). Las skills listadas se inyectan en el system prompt del router como `## Skills Disponibles`, igual que en un sub-agente.
+Las claves son siempre `tools`, `skills`, `tasks` y `workflows` (plural). Las skills listadas se inyectan en el system prompt del router como `## Skills Disponibles`, igual que en un sub-agente.
 
 - Si el archivo **no existe** → el router usa las tools base (`task`, `help`, `search_memory`, `read`, `websearch`, `webfetch`) y no tiene skills.
 - Si existe → usa **solo** los permisos explícitos del yaml: no se suma ninguna tool base.
 - `task` solo está disponible si el yaml la lista en `tools` o en `tasks`; `tasks` limita a qué sub-agentes puede delegar.
+- `workflow` solo está disponible si el yaml la lista en `tools` o define `workflows`; `workflows` limita cuáles puede ejecutar. El system prompt agrega la sección `## Workflows Disponibles` con los permitidos.
 
 El system prompt del router incluye solo las secciones de las tools que tiene habilitadas.
 
@@ -375,7 +396,6 @@ Los siguientes parámetros se seleccionan desde el **frontend** y se guardan en 
 | `decision_enabled` | Habilita el modelo de decisión (`true` / `false`) | `POST /config/models/decision/enabled` |
 | `decision_provider` | Proveedor del modelo de decisión | `POST /config/models/decision/select` |
 | `decision_model` | Modelo de decisión | `POST /config/models/decision/select` |
-| `selected_workflow` | Workflow activo (`smart` = flujo por defecto) | `POST /config/workflows/select` |
 | `telegram_enabled`, `active_session` | Estado del bot de Telegram y sesión activa compartida | `POST /telegram/toggle`, `POST /telegram/active-session` |
 
 Se cargan automáticamente al inicio vía `load_persisted_config()` en `backend/routes/config/runtime.py` y se aplican al agente singleton.
@@ -468,6 +488,7 @@ Definidas como métodos de la clase `Tools`, un módulo por tool. Incluyen:
 - `help` — Documentación interna del agente.
 - `query_model_capabilities` — Capacidades de un modelo desde el catálogo local.
 - `task` — Delegación a sub-agentes.
+- `workflow` — Ejecución de un workflow guardado; devuelve su resultado como un bloque `<workflow>`. Su permiso es un grupo (`workflows: {nombre: allow}`) que limita el argumento `name`.
 
 ### 2. Tools externas (en `~/.config/synapseForge/tools/`)
 
