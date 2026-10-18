@@ -184,11 +184,13 @@ async def craft_scheduled_prompt(data: dict[str, Any]) -> JSONResponse:
 
 @router.get("/scheduler/permissions/catalog")
 async def get_permissions_catalog() -> JSONResponse:
-    """Return the available tools, skills and sub-agents for permission selection.
+    """Return the available tools, skills, sub-agents and workflows for permission selection.
 
     The frontend uses this to populate the permission checkboxes in the
     scheduler task form.
     """
+    from backend.agent.utils.workflows_helpers import _listar_workflows_locales
+
     return JSONResponse(
         status_code=200,
         content={
@@ -196,5 +198,9 @@ async def get_permissions_catalog() -> JSONResponse:
             "tools": get_tools_list(),
             "skills": get_skills_list(),
             "agents": get_agents_list(),
+            "workflows": [
+                {"name": w["name"], "description": w.get("description", "")}
+                for w in _listar_workflows_locales()
+            ],
         },
     )

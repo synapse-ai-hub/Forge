@@ -6,9 +6,9 @@ async loop started from the application lifespan. Each execution:
 1. Creates a dedicated session (metadata ``source: "scheduler"``).
 2. Runs the normal agent loop with the task prompt.
 3. Records the result in ``task_runs``.
-4. Notifies the web UI through the event bus (``scheduler_run`` event) and
-   Telegram (one message per allowed chat), so both channels behave exactly
-   like a user-triggered run.
+4. Persists a notification (``notifications`` table, pushed to the web UI
+   through the event bus) and notifies Telegram (one message per allowed
+   chat), so both channels behave exactly like a user-triggered run.
 
 All functions are imported by ``backend/routes/scheduler.py``,
 ``backend/main.py`` and ``backend/telegram/``.
@@ -40,6 +40,7 @@ if _project_root not in sys.path:
 
 from backend.agent.utils.error_logger import log_error
 from backend.agent.utils.db import db_transaction, get_connection
+from backend.agent.utils.notifications_helpers import delete_task_notifications, notify
 from backend.agent.utils.queries import load_query
 
 logger = logging.getLogger(__name__)
@@ -398,6 +399,7 @@ def delete_task(task_id: str) -> dict:
             )
         if cursor.rowcount == 0:
             return {"status": "error", "message": "La tarea no existe."}
+        delete_task_notifications(task_id)
         # Remove the sub-agent .md if it exists.
         if task and task.get("name"):
             _cleanup_scheduler_agent(task["name"])
@@ -509,12 +511,15 @@ def _ensure_scheduler_agent(task: dict) -> str | None:
         "permissions": {},
     }
     if tool_perms:
-        tools_block = {k: v for k, v in tool_perms.items() if k != "task"}
+        tools_block = {k: v for k, v in tool_perms.items() if k not in ("task", "workflow")}
         if tools_block:
             frontmatter["permissions"]["tools"] = tools_block
         tasks_block = tool_perms.get("task")
         if isinstance(tasks_block, dict) and tasks_block:
             frontmatter["permissions"]["tasks"] = tasks_block
+        workflows_block = tool_perms.get("workflow")
+        if isinstance(workflows_block, dict) and workflows_block:
+            frontmatter["permissions"]["workflows"] = workflows_block
     if skill_perms:
         frontmatter["permissions"]["skills"] = skill_perms
     if params:
@@ -646,17 +651,23 @@ def record_run(
     detail: str,
     started_at: str,
     finished_at: str,
-) -> None:
-    """Persist a task execution result in ``task_runs``."""
+) -> int | None:
+    """Persist a task execution result in ``task_runs``.
+
+    Returns:
+        The id of the new ``task_runs`` row, or ``None`` when it failed.
+    """
     try:
         with db_transaction() as conn:
-            conn.execute(
+            cursor = conn.execute(
                 load_query("scheduler/insert_run.sql"),
                 (task_id, session_id, status, detail, started_at, finished_at),
             )
+            return cursor.lastrowid
     except Exception as exc:
         log_error(str(exc), source="backend/agent/utils/scheduler_helpers.py:record_run")
         logger.warning("Failed to record task run: %s", exc)
+        return None
 
 
 def _is_valid_time(time_str: str) -> bool:
@@ -679,7 +690,6 @@ async def execute_task(task: dict) -> None:
         task: The task dict (as returned by :func:`get_task`).
     """
     from backend.instances import agent, session_manager
-    from backend.event_bus import event_bus
 
     task_id = task["id"]
     prompt = task["prompt"]
@@ -772,17 +782,18 @@ async def execute_task(task: dict) -> None:
     if status == "success":
         detail = final_text[:300]
 
-    record_run(task_id, session_id, status, detail, started_at, finished_at)
+    run_row_id = record_run(task_id, session_id, status, detail, started_at, finished_at)
 
     finished_local = datetime.now().strftime("%d/%m/%Y %H:%M")
-    await event_bus.emit({
-        "type": "scheduler_run",
-        "status": status,
-        "task": prompt,
-        "detail": detail,
-        "finished_at": finished_local,
-        "session_id": session_id,
-    })
+    await notify(
+        kind="task",
+        task_id=task_id,
+        title=task.get("name") or prompt[:60],
+        status=status,
+        message=detail,
+        run_id=str(run_row_id) if run_row_id is not None else None,
+        session_id=session_id,
+    )
     await _notify_telegram(status, prompt, detail, finished_local)
 
 
