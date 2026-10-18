@@ -1,23 +1,21 @@
-"""Workflows E2E runner: verifies deterministic workflow lifecycle.
+"""Workflows E2E runner: deterministic workflow lifecycle against a live backend.
 
 Follows the same declarative YAML methodology as ``tests.e2e.runner`` (real
-endpoints, no mocks) and adds workflow-specific pieces:
+endpoints, no mocks) and adds the pieces specific to workflow runs:
 
-- ``verify`` block: asserts a workflow saved by the scenario appears in
-  ``GET /api/config/workflows/selection`` (``available``) and optionally
-  that it is the ``selected`` one.
-- ``response_contains`` chat expectation: asserts substrings in the final
-  assistant text (used for the friendly missing-refs message). The base
-  runner only asserts structure; this extension is local to workflows.
+- ``run`` action: presses the play button (``POST /api/workflows/{name}/run``),
+  waits for the background run to finish and asserts on the run row
+  (``GET /api/workflows/runs``) and its notification (``GET /api/notifications``).
+- ``verify`` block: asserts a workflow saved by the scenario is listed by
+  ``GET /api/workflows``.
 
-Scenario YAML schema (extends the e2e schema)::
+Scenario YAML schema (extends the e2e ``request`` action)::
 
     scenario: unique-name
     description: What this scenario verifies.
-    cleanup: true                      # reset selection to smart at the end
+    cleanup: true                      # delete the notifications and run sessions it created
     verify:
-      workflow: e2e-test-workflow      # must appear in selection.available
-      selected: e2e-test-workflow      # optional: must be selection.selected
+      workflow: e2e-test-workflow      # must appear in GET /api/workflows
     steps:
       - action: request
         method: POST
@@ -26,11 +24,18 @@ Scenario YAML schema (extends the e2e schema)::
         expect:
           http_status: 200
           json_status: success
-      - action: chat
-        message: "..."
+      - action: run                    # the play button
+        workflow: e2e-run-echo
+        timeout: 120                   # seconds to wait for the run to finish
+        cancel_after: 1.5              # optional: press cancel after N seconds
         expect:
-          done: true
-          response_contains: ["No se puede ejecutar"]
+          http_status: 200             # of the play request (default 200)
+          message_contains: ["..."]    # substrings of the play response message
+          run_status: success          # success | error | cancelled
+          attempts: 3                  # attempt the run ended in
+          result_contains: ["..."]     # substrings of the run result
+          error_contains: ["..."]      # substrings of the run error text
+          notification: true           # a notification exists for the run (false: none)
 
 Run with ``python -m tests.workflows.runner``. A JSON report is written under
 ``tests/workflows/reports/``.
@@ -52,70 +57,165 @@ import yaml
 from tests.e2e.runner import (
     DEFAULT_BASE_URL,
     _interpolate,
-    evaluate_chat_expectations,
-    run_chat_step,
     run_request_step,
 )
 
+POLL_SECONDS = 0.5
 
-def evaluate_workflow_expectations(expect: dict[str, Any], obs: dict[str, Any]) -> list[str]:
-    """Evaluate chat expectations plus ``response_contains`` substrings.
+
+def _find_run(base_url: str, name: str, run_id: str) -> dict[str, Any] | None:
+    """Return the run row of ``run_id`` from the runs listing, if present."""
+    try:
+        response = requests.get(
+            f"{base_url}/api/workflows/runs", params={"name": name, "limit": 50}, timeout=30
+        )
+        for run in (response.json().get("runs") or []):
+            if run.get("id") == run_id:
+                return run
+    except (requests.RequestException, ValueError):
+        pass
+    return None
+
+
+def run_play_step(
+    base_url: str, step: dict[str, Any], tracked: dict[str, set[str]]
+) -> list[str]:
+    """Press play on a workflow, wait for it and assert on the run.
 
     Args:
-        expect: Expectation block from the YAML step.
-        obs: Observation returned by :func:`run_chat_step`.
+        base_url: Backend base URL.
+        step: ``run`` step definition (see the module docstring).
+        tracked: Names of the workflows and ids of the sessions the scenario
+            created (mutated, used by the cleanup).
 
     Returns:
         List of human-readable failure descriptions (empty = pass).
     """
-    failures = evaluate_chat_expectations(expect, obs)
-    for wanted in expect.get("response_contains", []) or []:
+    name = str(step["workflow"])
+    expect = step.get("expect", {}) or {}
+    failures: list[str] = []
+
+    try:
+        response = requests.post(f"{base_url}/api/workflows/{name}/run", timeout=60)
+    except requests.RequestException as exc:
+        return [f"POST /api/workflows/{name}/run failed: {exc}"]
+    expected_http = int(expect.get("http_status", 200))
+    if response.status_code != expected_http:
+        failures.append(f"play {name}: HTTP {response.status_code} != {expected_http}")
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {}
+    message = str(payload.get("message", ""))
+    for needle in expect.get("message_contains", []) or []:
+        if str(needle) not in message:
+            failures.append(f"play {name}: message does not contain '{needle}' (got '{message}')")
+    if response.status_code != 200:
+        return failures
+
+    data = payload.get("data") or {}
+    run_id = str(data.get("run_id", ""))
+    tracked["names"].add(name)
+    if data.get("session_id"):
+        tracked["sessions"].add(str(data["session_id"]))
+
+    cancel_after = step.get("cancel_after")
+    started = time.time()
+    deadline = started + float(step.get("timeout", 120))
+    cancelled_sent = False
+    run: dict[str, Any] | None = None
+    while time.time() < deadline:
+        if cancel_after is not None and not cancelled_sent and time.time() - started >= float(cancel_after):
+            try:
+                requests.post(f"{base_url}/api/workflows/runs/{run_id}/cancel", timeout=30)
+            except requests.RequestException:
+                pass
+            cancelled_sent = True
+        run = _find_run(base_url, name, run_id)
+        if run and run.get("status") != "running":
+            break
+        time.sleep(POLL_SECONDS)
+    if run is None or run.get("status") == "running":
         try:
-            needle = str(wanted)
-        except Exception:
-            continue
-        if needle and needle not in (obs.get("response_text") or ""):
-            failures.append(f"response does not contain '{needle}'")
+            requests.post(f"{base_url}/api/workflows/runs/{run_id}/cancel", timeout=30)
+        except requests.RequestException:
+            pass
+        return failures + [f"run {run_id} of {name} did not finish in time"]
+
+    if expect.get("run_status") and run.get("status") != expect["run_status"]:
+        failures.append(f"run status '{run.get('status')}' != '{expect['run_status']}'")
+    if expect.get("attempts") is not None and run.get("attempt") != int(expect["attempts"]):
+        failures.append(f"run attempt {run.get('attempt')} != {expect['attempts']}")
+    for needle in expect.get("result_contains", []) or []:
+        if str(needle) not in str(run.get("result") or ""):
+            failures.append(f"run result does not contain '{needle}'")
+    for needle in expect.get("error_contains", []) or []:
+        if str(needle) not in str(run.get("error_text") or ""):
+            failures.append(f"run error text does not contain '{needle}'")
+
+    if expect.get("notification") is not None:
+        try:
+            notifications = requests.get(f"{base_url}/api/notifications", timeout=30).json().get(
+                "notifications"
+            ) or []
+        except (requests.RequestException, ValueError):
+            notifications = []
+        found = [n for n in notifications if n.get("run_id") == run_id]
+        if bool(found) != bool(expect["notification"]):
+            failures.append(
+                f"notification for run {run_id}: expected {bool(expect['notification'])}, found {bool(found)}"
+            )
+        elif found and expect.get("run_status") in ("success", "error"):
+            if found[0].get("status") != expect["run_status"]:
+                failures.append(
+                    f"notification status '{found[0].get('status')}' != '{expect['run_status']}'"
+                )
     return failures
 
 
-def verify_workflow_saved(base_url: str, expected: dict[str, Any]) -> list[str]:
-    """Call selection and verify the workflow is listed/selected.
+def verify_workflow_listed(base_url: str, expected: dict[str, Any]) -> list[str]:
+    """Verify the workflow appears in ``GET /api/workflows``.
 
     Args:
         base_url: Backend base URL.
-        expected: Expected values (``workflow`` in available, optional
-            ``selected`` match).
+        expected: Expected values (``workflow`` name).
 
     Returns:
         List of failure descriptions (empty = pass).
     """
     try:
-        response = requests.get(f"{base_url}/api/config/workflows/selection", timeout=60)
+        response = requests.get(f"{base_url}/api/workflows", timeout=60)
     except requests.RequestException as exc:
-        return [f"GET /api/config/workflows/selection failed: {exc}"]
-
+        return [f"GET /api/workflows failed: {exc}"]
     if response.status_code != 200:
-        return [f"GET /api/config/workflows/selection: HTTP {response.status_code} != 200"]
-
+        return [f"GET /api/workflows: HTTP {response.status_code} != 200"]
     try:
         payload = response.json()
     except ValueError:
-        return ["GET /api/config/workflows/selection: response is not valid JSON"]
-
-    if payload.get("status") != "success":
-        return [f"GET /api/config/workflows/selection: contract status '{payload.get('status')}' != 'success'"]
-
-    failures: list[str] = []
-    data = payload.get("data") or {}
+        return ["GET /api/workflows: response is not valid JSON"]
+    names = [w.get("name") for w in (payload.get("workflows") or [])]
     name = expected.get("workflow")
-    if name and name not in (data.get("available") or []):
-        failures.append(f"workflow '{name}' not found in selection.available")
-    if expected.get("selected") and data.get("selected") != expected["selected"]:
-        failures.append(
-            f"selection.selected '{data.get('selected')}' != '{expected['selected']}'"
-        )
-    return failures
+    if name and name not in names:
+        return [f"workflow '{name}' not found in GET /api/workflows"]
+    return []
+
+
+def cleanup_scenario(base_url: str, tracked: dict[str, set[str]]) -> None:
+    """Best-effort removal of what a scenario created (never affects the verdict)."""
+    try:
+        notifications = requests.get(f"{base_url}/api/notifications", timeout=30).json().get(
+            "notifications"
+        ) or []
+        for notification in notifications:
+            if notification.get("workflow_name") in tracked["names"]:
+                requests.delete(f"{base_url}/api/notifications/{notification['id']}", timeout=30)
+    except (requests.RequestException, ValueError):
+        pass
+    for session_id in tracked["sessions"]:
+        try:
+            requests.delete(f"{base_url}/api/sessions/{session_id}", timeout=30)
+        except requests.RequestException:
+            pass
 
 
 def run_scenario(base_url: str, scenario: dict[str, Any]) -> dict[str, Any]:
@@ -128,8 +228,8 @@ def run_scenario(base_url: str, scenario: dict[str, Any]) -> dict[str, Any]:
     Returns:
         Result dict: ``{"scenario", "file", "passed", "failures", "steps"}``.
     """
-    sessions: dict[str, str] = {}
     variables: dict[str, str] = {}
+    tracked: dict[str, set[str]] = {"names": set(), "sessions": set()}
     step_results: list[dict[str, Any]] = []
     all_failures: list[str] = []
 
@@ -137,9 +237,8 @@ def run_scenario(base_url: str, scenario: dict[str, Any]) -> dict[str, Any]:
         action = step.get("action")
         entry: dict[str, Any] = {"step": index, "action": action, "failures": []}
 
-        if action == "chat":
-            obs = run_chat_step(base_url, step, sessions)
-            entry["failures"] = evaluate_workflow_expectations(step.get("expect", {}) or {}, obs)
+        if action == "run":
+            entry["failures"] = run_play_step(base_url, step, tracked)
         elif action == "request":
             _, failures = run_request_step(base_url, step, variables)
             entry["failures"] = failures
@@ -149,11 +248,9 @@ def run_scenario(base_url: str, scenario: dict[str, Any]) -> dict[str, Any]:
         step_results.append(entry)
         all_failures.extend(entry["failures"])
 
-    # Workflow-specific verification: the saved workflow must be listed
-    # (and optionally selected).
     verify = _interpolate(scenario.get("verify") or {}, variables)
     if verify.get("workflow"):
-        verify_failures = verify_workflow_saved(base_url, verify)
+        verify_failures = verify_workflow_listed(base_url, verify)
         all_failures.extend(verify_failures)
         step_results.append(
             {
@@ -163,23 +260,10 @@ def run_scenario(base_url: str, scenario: dict[str, Any]) -> dict[str, Any]:
             }
         )
 
-    # Cleanup: delete chat sessions and reset selection to smart. There is
-    # no DELETE workflow endpoint, so saved test workflows stay on disk
-    # under a fixed e2e name (re-runs overwrite them).
+    # There is no DELETE workflow endpoint, so saved test workflows stay on
+    # disk under a fixed e2e name (re-runs overwrite them).
     if scenario.get("cleanup", True):
-        for session_id in sessions.values():
-            try:
-                requests.delete(f"{base_url}/api/sessions/{session_id}", timeout=30)
-            except requests.RequestException:
-                pass  # cleanup is best-effort; never affects the verdict
-        try:
-            requests.post(
-                f"{base_url}/api/config/workflows/select",
-                json={"workflow": "smart"},
-                timeout=30,
-            )
-        except requests.RequestException:
-            pass
+        cleanup_scenario(base_url, tracked)
 
     return {
         "scenario": scenario["scenario"],

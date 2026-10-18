@@ -98,16 +98,15 @@ steps:
       http_status: 400
       json_status: error
 ---
-scenario: workflow-save-y-seleccion
+scenario: workflow-save-y-listado
 description: >
-  Guardar un workflow de prueba, verificar que aparece en selection,
-  seleccionarlo y verificar que queda activo. Sin LLM.
-  La limpieza vuelve a smart (no hay DELETE de workflows: el archivo
-  e2e-test-workflow queda en disco y se sobrescribe en cada corrida).
+  Guardar un workflow de prueba y verificar que aparece en el listado
+  de workflows (GET /api/workflows). Sin LLM. No hay DELETE de
+  workflows: el archivo e2e-test-workflow queda en disco y se
+  sobrescribe en cada corrida.
 cleanup: true
 verify:
   workflow: e2e-test-workflow
-  selected: e2e-test-workflow
 steps:
   - action: request
     method: POST
@@ -130,14 +129,6 @@ steps:
             step: 2
             run: "echo listo"
             final: true
-    expect:
-      http_status: 200
-      json_status: success
-  - action: request
-    method: POST
-    path: /api/config/workflows/select
-    body:
-      workflow: e2e-test-workflow
     expect:
       http_status: 200
       json_status: success
@@ -165,19 +156,18 @@ steps:
       http_status: 400
       json_status: error
 ---
-scenario: workflow-select-inexistente
+scenario: workflow-run-inexistente
 description: >
-  Seleccionar un workflow que no existe. Espera 400. No requiere LLM.
+  Ejecutar (play) un workflow que no existe. Espera 404 con mensaje
+  amigable. No requiere LLM.
 cleanup: true
 steps:
-  - action: request
-    method: POST
-    path: /api/config/workflows/select
-    body:
-      workflow: no-existe-este-workflow
+  - action: run
+    workflow: no-existe-este-workflow
     expect:
-      http_status: 400
-      json_status: error
+      http_status: 404
+      message_contains:
+        - "no existe"
 ---
 scenario: workflow-generate-sin-descripcion
 description: >
