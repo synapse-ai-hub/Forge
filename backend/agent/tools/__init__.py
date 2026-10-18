@@ -18,7 +18,7 @@ the running agent's permissions (deny by default) before exposing it to
 the LLM.
 
 Refactored as a package: this module keeps the central registry/dispatch
-(``ToolsBase``) and composes the 18 native tools from individual modules
+(``ToolsBase``) and composes the 19 native tools from individual modules
 (``read.py``, ``write.py``, ...) via mixins. ``Tools`` preserves the
 original public API (``from backend.agent.tools import Tools``).
 """
@@ -91,6 +91,7 @@ from backend.agent.tools.skill import SkillMixin
 from backend.agent.tools.task import TaskMixin
 from backend.agent.tools.webfetch import WebfetchMixin
 from backend.agent.tools.websearch import WebsearchMixin
+from backend.agent.tools.workflow import WorkflowMixin
 from backend.agent.tools.write import WriteMixin
 
 
@@ -643,6 +644,7 @@ class Tools(
     TaskMixin,
     WebfetchMixin,
     WebsearchMixin,
+    WorkflowMixin,
     WriteMixin,
     ToolsBase,
 ):

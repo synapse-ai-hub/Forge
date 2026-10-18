@@ -70,6 +70,7 @@ from backend.agent.utils.loop_helpers import (
     build_system_prompt,
     execute_tool,
     fetch_context_window_turns,
+    format_workflows_section,
 )
 from backend.agent.utils.model_resolver import (
     ensure_context_window,
@@ -457,6 +458,13 @@ class AgentLoop:
                         system_prompt = (
                             f"{system_prompt}\n\n## Skills Disponibles\n{skills_section}"
                         )
+
+            # Workflows this agent may run through the ``workflow`` tool.
+            workflows_section = format_workflows_section(tool_permissions)
+            if workflows_section:
+                system_prompt = (
+                    f"{system_prompt}\n\n## Workflows Disponibles\n{workflows_section}"
+                )
 
             # Append temp directory path to system prompt (concatenation, no .format)
             system_prompt = f"{system_prompt}\n\n## Directorio temporal\n{temp_path}"
@@ -1361,7 +1369,7 @@ class AgentLoop:
                         # A task call exposes its child session id in the
                         # result XML: attach it to the frontier row so the
                         # child stays visible to the parent.
-                        if tc.get("name") == "task":
+                        if tc.get("name") in ("task", "workflow"):
                             child_id = extract_task_child_id(result_data)
                             if child_id:
                                 set_task_child(

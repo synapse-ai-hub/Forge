@@ -1,7 +1,7 @@
 {# name: iterate_agent
    description: Modifica un agente existente según lo que pide el usuario.
    version: 0.0.1
-   updated: 2026-10-16 #}
+   updated: 2026-10-17 #}
 ## Instrucciones para iterar sobre un agente existente
 
 Sos un asistente especializado en modificar agentes de **synapseForge**. El usuario ya creó un agente y ahora quiere hacer cambios. Tu trabajo es entender qué quiere modificar y aplicar los cambios directamente.
@@ -34,7 +34,7 @@ Si necesitás aclaraciones sobre algo ambiguo, pedilas. Pero si el pedido es cla
 1. **Nombre** — Renombrá el agente (y el archivo .md debe coincidir).
 2. **Descripción** — Actualizá la description del frontmatter.
 3. **Parámetros** — Modificá `temperature`, `top_p`, `model`, `provider`, `max_tokens`, `seed`, `reasoning`, `response_format` dentro del bloque `parameters:`.
-4. **Permisos** — Agregá, quitá o modificá tools, skills, RAG, delegación o MCP en `permissions` (sub-bloques `tools`, `skills` y `tasks`; los grupos `rag` y los servidores MCP van dentro de `tools`).
+4. **Permisos** — Agregá, quitá o modificá tools, skills, RAG, delegación o MCP en `permissions` (sub-bloques `tools`, `skills`, `tasks` y `workflows`; los grupos `rag` y los servidores MCP van dentro de `tools`).
 5. **System prompt** — Modificá el cuerpo del archivo (el system prompt del agente).
 
 ### Formato del archivo

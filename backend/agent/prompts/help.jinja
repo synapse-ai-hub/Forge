@@ -1,7 +1,7 @@
 {# name: help
    description: Documentación interna del sistema que devuelve la tool help.
    version: 0.0.1
-   updated: 2026-10-16 #}
+   updated: 2026-10-17 #}
 # Ayuda del sistema
 
 Ésta es la documentación de referencia del sistema. Acá se explica cómo configurar agentes, tools, skills y las opciones disponibles. Si tenés dudas sobre cómo usar o configurar el sistema, preguntale directamente al agente. El agente tiene acceso a herramientas internas para leer archivos, buscar en la web, ejecutar comandos, etc. Para más detalles sobre las herramientas disponibles, indicar que se consulte la documentación del agente.
@@ -21,6 +21,7 @@ Los sub-agentes son agentes especializados que se definen externamente al códig
    - **`permissions`**: Define lo que el agente puede usar. Si algo no está listado, no estará disponible. Los valores posibles son `allow` (permitido) y `deny` (denegado). Sus sub-bloques van siempre en plural:
      - `tools`: tools del agente. Planas: `read: allow`. Con opciones por grupo: `rag: { mi_coleccion: allow }`.
      - `tasks`: sub-agentes a los que puede delegar mediante `task`: `tasks: { nombre_agente: allow }`.
+     - `workflows`: workflows que puede ejecutar mediante la tool `workflow`: `workflows: { nombre_workflow: allow }`.
      - `skills`: skills que puede cargar: `mi_skill: allow`.
    - **`parameters`**: Configuración del modelo para este agente: `temperature`, `top_p`, `model`, `provider`, `max_tokens`, `seed`, `reasoning`, `response_format`. `model`, `provider`, `max_tokens` y `seed` son opcionales y normalmente se omiten (el agente usa los valores globales), salvo que necesite un modelo específico para su tarea. `reasoning` y `response_format` solo se incluyen si el modelo los soporta.
 
@@ -44,7 +45,7 @@ El archivo `AGENT.md` (si existe en `~/.config/synapseForge/agents/`) se inyecta
 
 ### Permisos del agente principal (`config.yaml`)
 
-El agente principal toma sus permisos de `~/.config/synapseForge/config.yaml`, con las claves `tools`, `skills` y `tasks` (siempre en plural):
+El agente principal toma sus permisos de `~/.config/synapseForge/config.yaml`, con las claves `tools`, `skills`, `tasks` y `workflows` (siempre en plural):
 
 ```yaml
 permissions:
@@ -55,11 +56,14 @@ permissions:
     mi_skill: allow
   tasks:
     explorador: allow
+  workflows:
+    reporte-diario: allow
 ```
 
 - Si el archivo **no existe**, el agente principal usa el conjunto base: `task`, `help`, `search_memory`, `read`, `websearch` y `webfetch`, sin skills.
 - Si el archivo **existe**, sus permisos reemplazan al conjunto base: el agente principal tiene solo lo que el yaml lista con `allow`.
 - `task` está disponible si el yaml lo lista en `tools` (puede delegar a todos los sub-agentes) o en `tasks` (solo a los indicados).
+- `workflow` está disponible si el yaml lo lista en `tools` o define `workflows`; solo puede ejecutar los workflows indicados.
 - Las skills de `skills` se agregan al system prompt del agente principal.
 - El system prompt se adapta a las tools habilitadas: solo trae las instrucciones de las tools que el agente tiene. Incluye una sección `## Seguridad` con reglas contra prompt injection y fuga de datos; con el modelo de decisión habilitado esas reglas las evalúa el modelo de decisión sobre el mensaje del usuario y el prompt no las lleva.
 
@@ -171,13 +175,21 @@ Las páginas de creación incluyen un botón **Descargar conversación** para gu
 
 Un workflow es un flujo determinista de nodos definido en YAML: un archivo plano por workflow en `~/.config/synapseForge/workflows/<nombre>.yaml` (sin subcarpetas). Cada nodo lleva `id`, `type` (`agent`, `tool`, `rag` o `run`), `step` (entero desde 1) y hay exactamente un nodo con `final: true`, que produce la respuesta final. Los nodos del mismo `step` se ejecutan en paralelo; los distintos `step`, en secuencia.
 
-### Elegir y ejecutar
+### Ejecutar
 
-El chat funciona en modo **smart** (el agente decide qué hacer) o con un workflow determinista activo. Se elige uno solo desde el panel de info del agente (pestaña **Workflows**) o desde el selector del chat. Con un workflow activo, cada mensaje que se envía se ejecuta con ese flujo, usando el mensaje como entrada.
+Un workflow se ejecuta con el botón **play** de su tarjeta (panel de info del agente, pestaña **Workflows**). El flujo corre en segundo plano, en paralelo con el chat, y cada ejecución abre una sesión en el historial con el nombre del workflow y la fecha. Mientras corre, la tarjeta muestra "Ejecutando…" y se puede cancelar.
+
+Al terminar, el resultado llega como notificación en la campanita del header, que queda guardada hasta que se elimine. Si un nodo falla, o la ejecución se corta (por ejemplo, si se cierra la aplicación), el workflow se reintenta hasta 3 veces en total, con espera exponencial, retomando desde el primer nodo sin resultado confirmado: lo ya hecho no se repite. Si falla definitivamente, la notificación explica en lenguaje simple qué pasó.
+
+Un agente también puede ejecutar un workflow con la tool `workflow` si tiene permiso (bloque `workflows` de sus permisos).
+
+### Cierre de la ejecución
+
+Cuando todos los nodos terminan, se juzga si el workflow terminó bien a partir de los resultados de sus nodos: con el modelo de decisión si está habilitado, o con el modelo de chat si no.
 
 ### Antes de ejecutar
 
-El sistema verifica que cada agente, tool y colección RAG referenciada por el workflow exista. Si falta algo, no ejecuta nada y responde qué falta y que hay que crearlo o elegir otro workflow.
+El sistema verifica que cada agente, tool y colección RAG referenciada por el workflow exista. Si falta algo, no ejecuta nada y avisa qué falta y que hay que crearlo.
 
 ### Permisos
 
@@ -193,7 +205,7 @@ Desde la pestaña **Crear** (botón de workflows) una entrevista asistida diseñ
 
 ### Retomar un flujo cortado
 
-Cada tool call que el agente despacha se registra antes de ejecutarse y se confirma cuando su resultado se guarda. Si el flujo se corta (se cancela la respuesta o se cae el backend), el siguiente turno arranca con el trabajo sin confirmar inyectado como contexto: el pedido original, las tool calls pendientes con sus argumentos completos y el último resultado registrado. El agente retoma desde ahí sin repetir lo ya hecho. El registro solo se borra cuando el paso cierra con una respuesta final validada; los workflows usan el mismo mecanismo.
+Cada tool call que el agente despacha se registra antes de ejecutarse y se confirma cuando su resultado se guarda. Si el flujo se corta (se cancela la respuesta o se cae el backend), el siguiente turno arranca con el trabajo sin confirmar inyectado como contexto: el pedido original, las tool calls pendientes con sus argumentos completos y el último resultado registrado. El agente retoma desde ahí sin repetir lo ya hecho. El registro solo se borra cuando el paso cierra con una respuesta final validada. Los workflows tienen su propio registro por nodo, que les permite retomar desde el último nodo confirmado.
 
 ### Modelo de decisión (opcional)
 
