@@ -26,6 +26,7 @@ from backend.agent.utils.create_helpers import (
 )
 from backend.instances import agent
 from backend.agent.utils.error_logger import log_error
+from backend.agent.utils.creator_runs import track_creator_run
 from backend.routes.create.common import (
     _AGENT_TOOLS_PERMS,
     _FRIENDLY_ERROR_TOOL,
@@ -419,7 +420,10 @@ async def post_create_tool_stream(req: CreateToolRequest):
             "data": {"exist": "No", "tool": name or "tool", "tool_path": str(_TOOLS_DIR / f"{name or 'tool'}.py")},
         }})
 
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+    return StreamingResponse(
+        track_creator_run("tool", req, event_stream()),
+        media_type="text/event-stream",
+    )
 
 
 # Helper para evaluar inline sin reimportar todo el módulo
