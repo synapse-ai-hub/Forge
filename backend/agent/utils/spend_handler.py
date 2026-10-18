@@ -738,6 +738,15 @@ def record_creator_call(
                     cost_output, cost_total, now,
                 ),
             )
+        # The usage also adds up in the creator run that made the call, if any.
+        from backend.agent.utils.creator_runs import add_usage, current_run_id
+
+        run_id = current_run_id()
+        if run_id is not None:
+            add_usage(
+                run_id, prompt_tokens, completion_tokens, total_tokens,
+                cost_input, cost_output, cost_total,
+            )
         # NOTE: spend is NOT touched here. Every creator/agenda call goes
         # through llm_process/llm_streaming, which already contemplate it
         # in spend via _record_spend (success and failure). Recording it

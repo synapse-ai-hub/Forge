@@ -23,11 +23,12 @@ import {
   Bell,
   CheckCircle2,
   XCircle,
+  Trash2,
 } from "lucide-react";
 import LogoImage from "../assets/logo_cliente.png";
 import chatService from "../services/chatService";
 import configService from "../services/configService";
-import type { SchedulerNotification } from "../services/schedulerService";
+import type { AppNotification } from "../services/notificationService";
 import { Button } from "../components/ui/button";
 import { FileChip, FileWarningBanner, MessageRow } from "../components/chatBlocks";
 import { ContextGauge } from "../components/ContextGauge";
@@ -82,6 +83,20 @@ function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
 }
 
+/** Format a local ISO timestamp as ``dd/mm/yyyy HH:MM`` (empty when invalid). */
+function formatNotificationDate(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString("es-AR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}
+
 /* ------------------------------------------------------------------ */
 /*  Main Component                                                    */
 /* ------------------------------------------------------------------ */
@@ -105,8 +120,11 @@ interface ChatInterfaceProps {
   telegramEnabled: boolean;
   onTelegramToggle: (val: boolean) => void;
   onShowScheduler?: () => void;
-  /** Bell notifications: one entry per scheduled-task execution. */
-  notifications?: SchedulerNotification[];
+  /** Bell notifications (persisted): workflow runs and scheduled-task executions. */
+  notifications?: AppNotification[];
+  /** Called when the bell opens: the app marks every notification as read. */
+  onOpenNotifications?: () => void;
+  onDeleteNotification?: (id: number) => void;
   onClearNotifications?: () => void;
 }
 
@@ -148,6 +166,8 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
       onTelegramToggle,
       onShowScheduler,
       notifications = [],
+      onOpenNotifications,
+      onDeleteNotification,
       onClearNotifications,
     }: ChatInterfaceProps,
     ref: ForwardedRef<ChatInterfaceHandle>,
@@ -164,8 +184,22 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
   const [vramGb, setVramGb] = useState<number | null>(null);
   const [ollamaDefaultContext, setOllamaDefaultContext] = useState<number | null>(null);
   const [currentProvider, setCurrentProvider] = useState<string | null>(null);
-  /* Bell dropdown: scheduled-task execution notifications. */
+  /* Bell dropdown: notifications of workflow runs and scheduled tasks. */
   const [showNotifications, setShowNotifications] = useState(false);
+  /* Ids that were unread when the bell opened (opening marks them as read,
+   * but they stay highlighted until it closes). */
+  const [freshNotificationIds, setFreshNotificationIds] = useState<number[]>([]);
+  const unreadCount = notifications.filter((n) => !n.read).length;
+
+  const toggleNotifications = () => {
+    if (showNotifications) {
+      setShowNotifications(false);
+      return;
+    }
+    setFreshNotificationIds(notifications.filter((n) => !n.read).map((n) => n.id));
+    setShowNotifications(true);
+    onOpenNotifications?.();
+  };
 
   /* ---- refs ---- */
   const { feedback, vote } = useSessionFeedback(sessionId);
@@ -279,43 +313,6 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
     window.addEventListener("model-changed", onModelChange);
     return () => window.removeEventListener("model-changed", onModelChange);
   }, [loadCurrentProvider]);
-
-  /* ---- workflow mode: smart or one deterministic workflow ---- */
-  const [workflowSelected, setWorkflowSelected] = useState("smart");
-  const [workflowAvailable, setWorkflowAvailable] = useState<string[]>(["smart"]);
-
-  const loadWorkflowSelection = useCallback(() => {
-    configService
-      .getWorkflowSelection()
-      .then((data) => {
-        if (cancelledRef.current) return;
-        setWorkflowAvailable(data.available?.length ? data.available : ["smart"]);
-        setWorkflowSelected(data.selected || "smart");
-      })
-      .catch(() => {
-        if (!cancelledRef.current) {
-          setWorkflowAvailable(["smart"]);
-          setWorkflowSelected("smart");
-        }
-      });
-  }, []);
-
-  useEffect(() => {
-    loadWorkflowSelection();
-  }, [loadWorkflowSelection]);
-
-  useEffect(() => {
-    const onChanged = (e: Event) => {
-      const w = (e as CustomEvent).detail?.workflow;
-      if (w) {
-        setWorkflowSelected(w);
-      } else {
-        loadWorkflowSelection();
-      }
-    };
-    window.addEventListener("workflow-changed", onChanged);
-    return () => window.removeEventListener("workflow-changed", onChanged);
-  }, [loadWorkflowSelection]);
 
   /* ---- blocked state: no provider/model selected yet ---- */
   const [modelSelected, setModelSelected] = useState<boolean | null>(null);
@@ -971,29 +968,8 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
           </h1>
         </div>
 
-        {/* Right: workflow mode + Telegram toggle + scheduler + docs + métricas + salir */}
+        {/* Right: Telegram toggle + scheduler + notificaciones + docs + métricas + salir */}
         <div className="flex items-center gap-1 shrink-0">
-          {/* Workflow mode — smart o un workflow determinista */}
-          <select
-            value={workflowSelected}
-            onChange={async (e) => {
-              const w = e.target.value;
-              try {
-                const sel = await configService.selectWorkflow(w);
-                setWorkflowSelected(sel);
-              } catch {
-                loadWorkflowSelection();
-              }
-            }}
-            title="Modo: smart o workflow determinista"
-            className="h-9 sm:h-10 px-2 text-xs font-medium rounded-md border border-app-border bg-white text-app-text hover:bg-app-bg-tertiary/60 transition-colors max-w-[140px]"
-          >
-            {workflowAvailable.map((w) => (
-              <option key={w} value={w}>
-                {w === "smart" ? "Smart" : w}
-              </option>
-            ))}
-          </select>
           {/* Telegram toggle — mismo formato y colores que el toggle de verbose */}
           <button
             type="button"
@@ -1037,25 +1013,25 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
             <span className="hidden sm:inline">Agenda</span>
           </Button>
 
-          {/* Notificaciones de tareas programadas — campanita con badge */}
+          {/* Notificaciones de workflows y tareas programadas — campanita con badge */}
           <div className="relative">
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => setShowNotifications((v) => !v)}
+              onClick={toggleNotifications}
               className="relative gap-1.5 sm:gap-2 text-sm h-9 sm:h-10"
-              title="Notificaciones de tareas programadas"
+              title="Notificaciones"
             >
               <Bell size={16} />
-              {notifications.length > 0 && (
+              {unreadCount > 0 && (
                 <span
                   className={`absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full text-[10px] font-semibold leading-4 text-white ${
-                    notifications.some((n) => n.status === "error")
+                    notifications.some((n) => !n.read && n.status === "error")
                       ? "bg-red-500"
                       : "bg-app-primary"
                   }`}
                 >
-                  {notifications.length > 9 ? "9+" : notifications.length}
+                  {unreadCount > 9 ? "9+" : unreadCount}
                 </span>
               )}
             </Button>
@@ -1091,27 +1067,45 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
                     ) : (
                       <ul className="divide-y divide-gray-100">
                         {notifications.map((n) => (
-                          <li key={n.id} className="flex gap-2.5 px-4 py-3">
+                          <li
+                            key={n.id}
+                            className={`group flex gap-2.5 px-4 py-3 ${
+                              freshNotificationIds.includes(n.id) ? "bg-app-primary/5" : ""
+                            }`}
+                          >
                             {n.status === "success" ? (
                               <CheckCircle2 size={16} className="shrink-0 mt-0.5 text-green-600" />
                             ) : (
                               <XCircle size={16} className="shrink-0 mt-0.5 text-red-500" />
                             )}
-                            <div className="min-w-0">
+                            <div className="min-w-0 flex-1">
                               <p className="text-sm font-medium text-app-text break-words">
-                                {n.task}
+                                {n.title}
                               </p>
                               <p className="text-xs text-app-text-secondary">
-                                {n.finishedAt}
+                                {formatNotificationDate(n.created_at)}
                                 {" · "}
-                                {n.status === "success" ? "Ejecutada con éxito" : "Falló"}
+                                {n.kind === "workflow" ? "Workflow" : "Tarea programada"}
+                                {" · "}
+                                {n.status === "success" ? "Ejecutado con éxito" : "Falló"}
                               </p>
-                              {n.detail && (
+                              {n.message && (
                                 <p className="text-xs text-app-text-secondary mt-1 line-clamp-3 break-words">
-                                  {n.detail}
+                                  {n.message}
                                 </p>
                               )}
                             </div>
+                            {onDeleteNotification && (
+                              <button
+                                type="button"
+                                onClick={() => onDeleteNotification(n.id)}
+                                className="shrink-0 self-start rounded p-1 text-app-text-secondary opacity-0 group-hover:opacity-100 hover:bg-red-100 hover:text-app-error transition-all"
+                                aria-label="Eliminar notificación"
+                                title="Eliminar notificación"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            )}
                           </li>
                         ))}
                       </ul>

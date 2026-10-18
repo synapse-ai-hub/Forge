@@ -26,6 +26,7 @@ import schedulerService, {
   ScheduleSlot,
   TaskParameters,
   PermissionAction,
+  ToolPermissions,
   CatalogItem,
   PermissionsCatalog,
 } from "../services/schedulerService";
@@ -155,6 +156,7 @@ export function SchedulerModal({ open, onClose }: SchedulerModalProps) {
     tools: [],
     skills: [],
     agents: [],
+    workflows: [],
   });
 
   /* ---- add-task form ---- */
@@ -164,6 +166,8 @@ export function SchedulerModal({ open, onClose }: SchedulerModalProps) {
   const [newDays, setNewDays] = useState<number[]>(ALL_DAYS);
   const [newToolPerms, setNewToolPerms] = useState<Record<string, PermissionAction>>({});
   const [newSkillPerms, setNewSkillPerms] = useState<Record<string, PermissionAction>>({});
+  /* Workflows the task may run through the `workflow` tool (grouped permission). */
+  const [newWorkflowPerms, setNewWorkflowPerms] = useState<Record<string, PermissionAction>>({});
   const [newParams, setNewParams] = useState<TaskParameters>({});
   const [newRepetitions, setNewRepetitions] = useState<ScheduleSlot[]>([]);
   const [formError, setFormError] = useState<string | null>(null);
@@ -263,14 +267,18 @@ export function SchedulerModal({ open, onClose }: SchedulerModalProps) {
       return;
     }
     try {
-      const hasToolPerms = Object.keys(newToolPerms).length > 0;
+      const toolPerms: ToolPermissions = { ...newToolPerms };
+      if (Object.keys(newWorkflowPerms).length > 0) {
+        toolPerms.workflow = newWorkflowPerms;
+      }
+      const hasToolPerms = Object.keys(toolPerms).length > 0;
       const hasSkillPerms = Object.keys(newSkillPerms).length > 0;
       await schedulerService.createTask({
         name,
         prompt,
         time: newTime,
         days: [...newDays].sort((a, b) => a - b),
-        tool_permissions: hasToolPerms ? newToolPerms : null,
+        tool_permissions: hasToolPerms ? toolPerms : null,
         skill_permissions: hasSkillPerms ? newSkillPerms : null,
         parameters: Object.keys(newParams).length > 0 ? newParams : null,
         repetitions: newRepetitions.length > 0 ? newRepetitions : null,
@@ -281,6 +289,7 @@ export function SchedulerModal({ open, onClose }: SchedulerModalProps) {
       setNewDays(ALL_DAYS);
       setNewToolPerms({});
       setNewSkillPerms({});
+      setNewWorkflowPerms({});
       setNewParams({});
       setNewRepetitions([]);
       setShowPermissions(false);
@@ -290,7 +299,7 @@ export function SchedulerModal({ open, onClose }: SchedulerModalProps) {
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "No se pudo crear la tarea.");
     }
-  }, [newName, newPrompt, newTime, newDays, newToolPerms, newSkillPerms, newParams, newRepetitions, reloadTasks]);
+  }, [newName, newPrompt, newTime, newDays, newToolPerms, newSkillPerms, newWorkflowPerms, newParams, newRepetitions, reloadTasks]);
 
   /* ---- craft prompt via LLM ---- */
   const handleCraftPrompt = useCallback(async () => {
@@ -598,14 +607,14 @@ export function SchedulerModal({ open, onClose }: SchedulerModalProps) {
               onToggle={() => setShowPermissions(!showPermissions)}
               icon={<Shield size={13} />}
               label="Permisos"
-              count={Object.keys(newToolPerms).length + Object.keys(newSkillPerms).length}
+              count={Object.keys(newToolPerms).length + Object.keys(newSkillPerms).length + Object.keys(newWorkflowPerms).length}
             >
               <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 space-y-3">
                 {catalog.tools.length > 0 && (
                   <div>
                     <p className="text-xs font-medium text-app-text mb-1.5">Tools</p>
                     <div className="flex flex-wrap gap-1.5">
-                      {catalog.tools.map((tool: CatalogItem) => (
+                      {catalog.tools.filter((tool: CatalogItem) => tool.name !== "workflow").map((tool: CatalogItem) => (
                         <PermissionCheckbox
                           key={tool.name}
                           name={tool.name}
@@ -633,8 +642,24 @@ export function SchedulerModal({ open, onClose }: SchedulerModalProps) {
                     </div>
                   </div>
                 )}
-                {catalog.tools.length === 0 && catalog.skills.length === 0 && (
-                  <p className="text-xs text-app-text-secondary">No hay tools ni skills disponibles.</p>
+                {catalog.workflows.length > 0 && (
+                  <div>
+                    <p className="text-xs font-medium text-app-text mb-1.5">Workflows</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {catalog.workflows.map((workflow: CatalogItem) => (
+                        <PermissionCheckbox
+                          key={workflow.name}
+                          name={workflow.name}
+                          description={workflow.description}
+                          checked={newWorkflowPerms[workflow.name] === "allow"}
+                          onChange={() => togglePermission(newWorkflowPerms, setNewWorkflowPerms, workflow.name)}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {catalog.tools.length === 0 && catalog.skills.length === 0 && catalog.workflows.length === 0 && (
+                  <p className="text-xs text-app-text-secondary">No hay tools, skills ni workflows disponibles.</p>
                 )}
               </div>
             </CollapsibleSection>
