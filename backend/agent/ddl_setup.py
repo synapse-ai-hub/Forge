@@ -35,8 +35,14 @@ _DDL_SCRIPTS: tuple[str, ...] = (
     "ddl/spend_limits.sql",
     "ddl/external_usage.sql",
     "ddl/creator_calls.sql",
+    "ddl/creator_runs.sql",
     "ddl/step_frontier.sql",
     "ddl/message_feedback.sql",
+    "ddl/workflows.sql",
+    "ddl/workflow_runs.sql",
+    "ddl/workflow_run_steps.sql",
+    "ddl/workflow_usage.sql",
+    "ddl/notifications.sql",
 )
 
 
