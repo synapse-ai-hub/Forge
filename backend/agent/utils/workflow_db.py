@@ -320,3 +320,27 @@ def record_usage(
     except Exception as exc:
         log_error(str(exc), source="workflow_db.py:record_usage")
         return False
+
+
+def delete_workflow(name: str) -> bool:
+    """Remove a workflow from the registry with its runs, commits, spend and notifications.
+
+    The sessions created by its runs stay in the history.
+
+    Args:
+        name: Workflow name (the id).
+
+    Returns:
+        ``True`` when everything was removed.
+    """
+    try:
+        with db_transaction() as conn:
+            conn.execute(load_query("notifications/delete_by_workflow.sql"), (name,))
+            conn.execute(load_query("workflows/delete_usage.sql"), (name,))
+            conn.execute(load_query("workflows/delete_steps.sql"), (name,))
+            conn.execute(load_query("workflows/delete_runs.sql"), (name,))
+            conn.execute(load_query("workflows/delete_workflow.sql"), (name,))
+        return True
+    except Exception as exc:
+        log_error(str(exc), source="workflow_db.py:delete_workflow")
+        return False

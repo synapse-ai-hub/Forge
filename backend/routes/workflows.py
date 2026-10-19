@@ -1,4 +1,4 @@
-"""Workflow run endpoints: list, play, cancel and history.
+"""Workflow endpoints: list, play, cancel, delete and run history.
 
 Thin HTTP layer over :mod:`backend.agent.utils.workflow_service`. The play
 button starts the run in the background and the result arrives as a
@@ -8,17 +8,21 @@ notification.
 from __future__ import annotations
 
 import logging
+import re
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
 from backend.agent.utils import workflow_db
+from backend.agent.utils.config_dir import get_workflows_dir
 from backend.agent.utils.error_logger import log_error
 from backend.agent.utils.workflow_service import workflow_service
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["workflows"])
+
+_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 
 _STATUS_BY_CODE = {
     "not_found": 404,
@@ -97,6 +101,41 @@ async def run_workflow(name: str) -> JSONResponse:
         return JSONResponse(
             status_code=500,
             content={"status": "error", "message": "No se pudo ejecutar el workflow."},
+        )
+
+
+@router.delete("/workflows/{name}")
+async def delete_workflow(name: str) -> JSONResponse:
+    """Delete a workflow: its YAML, its runs, commits, spend and notifications."""
+    if not _NAME_RE.match(name):
+        return JSONResponse(
+            status_code=400,
+            content={"status": "error", "message": "Nombre de workflow inválido."},
+        )
+    path = get_workflows_dir() / f"{name}.yaml"
+    if not path.is_file():
+        return JSONResponse(
+            status_code=404,
+            content={"status": "error", "message": f"Workflow '{name}' no encontrado."},
+        )
+    if workflow_service.is_running(name):
+        return JSONResponse(
+            status_code=409,
+            content={"status": "error", "message": "El workflow se está ejecutando. Cancelalo antes de eliminarlo."},
+        )
+    try:
+        path.unlink()
+        if not workflow_db.delete_workflow(name):
+            raise RuntimeError("No se pudieron borrar los registros del workflow.")
+        return JSONResponse(
+            status_code=200,
+            content={"status": "success", "message": f"Workflow '{name}' eliminado."},
+        )
+    except Exception as exc:
+        log_error(str(exc), source="backend/routes/workflows.py:delete")
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": f"No se pudo eliminar el workflow '{name}'."},
         )
 
 

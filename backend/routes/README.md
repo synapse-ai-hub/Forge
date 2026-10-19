@@ -803,6 +803,10 @@ Inicia una ejecución en segundo plano. Verifica antes que existan los agentes, 
 
 **Respuesta:** `{status, message, data: {run_id, session_id}}`. `404` si el workflow no existe, `400` si es inválido o faltan recursos (el mensaje dice qué falta) y `409` si ese workflow ya se está ejecutando.
 
+#### `DELETE /api/workflows/{name}`
+
+Elimina el archivo YAML del workflow y todos sus registros: ejecuciones, commits de nodos, gasto del motor y notificaciones. Las sesiones de sus ejecuciones quedan en el historial. `404` si no existe, `400` si el nombre es inválido y `409` si se está ejecutando.
+
 #### `POST /api/workflows/runs/{run_id}/cancel`
 
 Cancela una ejecución en curso. Queda persistida como `cancelled` y no genera notificación. `404` si la ejecución no está en curso.

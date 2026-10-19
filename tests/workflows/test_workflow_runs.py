@@ -326,3 +326,44 @@ def test_agent_frontmatter_workflows_block_becomes_the_workflow_permission(tmp_p
     import json
 
     assert json.loads(result["data"]) == {"read": "allow", "workflow": {"nightly": "allow"}}
+
+
+def test_delete_workflow_removes_file_runs_commits_and_notifications(env, monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    import backend.routes.workflows as routes
+
+    svc, write, query, tmp = env
+    monkeypatch.setattr(routes, "workflow_service", svc)
+    monkeypatch.setattr(routes, "get_workflows_dir", lambda: tmp / "workflows")
+    _simple_flow(write, "borrable")
+    _simple_flow(write, "queda")
+
+    async def go():
+        for name in ("borrable", "queda"):
+            started = await svc.start_run(name)
+            await started["task"]
+
+    _run(go())
+    assert len(query("select 1 from workflow_runs")) == 2
+
+    app = FastAPI()
+    app.include_router(routes.router, prefix="/api")
+    client = TestClient(app)
+    assert client.delete("/api/workflows/no-existe").status_code == 404
+    assert client.delete("/api/workflows/..%2Fx").status_code in (400, 404)
+
+    response = client.delete("/api/workflows/borrable")
+    assert response.status_code == 200
+    assert not (tmp / "workflows" / "borrable.yaml").exists()
+    for table, column in (("workflows", "name"), ("workflow_runs", "workflow_name"),
+                          ("notifications", "workflow_name"), ("workflow_usage", "workflow_name")):
+        assert query(f"select 1 from {table} where {column}=?", ("borrable",)) == []
+    assert query("select 1 from workflow_run_steps where run_id in (select id from workflow_runs where workflow_name='borrable')") == []
+    # The other workflow keeps everything.
+    assert (tmp / "workflows" / "queda.yaml").exists()
+    assert len(query("select 1 from workflow_runs where workflow_name='queda'")) == 1
+    assert len(query("select 1 from notifications where workflow_name='queda'")) == 1
+    assert len(query("select 1 from workflow_run_steps")) == 3
+
