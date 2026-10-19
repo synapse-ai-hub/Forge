@@ -102,7 +102,7 @@ frontend/
 │  ├─ services/                # Capa de comunicación con API
 │  │  ├─ chatService.ts        # Streaming SSE a /api/chat
 │  │  ├─ configService.ts      # Providers, models, modelo de decisión, workflows (validar/guardar/generar), MCP, verbose, contexto
-│  │  ├─ workflowService.ts    # Workflows: listado con estado, play y cancelar
+│  │  ├─ workflowService.ts    # Workflows: listado con estado, play, cancelar y eliminar
 │  │  ├─ notificationService.ts# Notificaciones persistidas de la campanita
 │  │  ├─ feedbackService.ts    # 👍/👎 sobre las respuestas (por sesión y turno)
 │  │  ├─ sessionService.ts     # Sesiones CRUD
@@ -224,7 +224,7 @@ Barra lateral con tabs: Conversaciones (`sessionsTab`), Configuración (`configT
 Configuración: selector de proveedor/modelo, sección de modelo de decisión (habilitar, proveedor, modelo y ficha del catálogo), ventana de contexto, toggle verbose y gestión de archivos de contexto.
 
 ### `agentInfoTab.tsx`
-Panel de agentes con 6 sub-paneles: Tools, Skills, Agentes, MCP (estado de cada servidor, interruptor para activarlo o desactivarlo y borrado), RAG y Workflows (una tarjeta por workflow con un botón play que lo ejecuta en segundo plano; mientras corre muestra "Ejecutando…" con un botón para cancelar y el play queda bloqueado).
+Panel de agentes con 6 sub-paneles: Tools, Skills, Agentes, MCP (estado de cada servidor, interruptor para activarlo o desactivarlo y borrado), RAG y Workflows (una tarjeta por workflow con un botón play que lo ejecuta en segundo plano y un botón de eliminar con confirmación, ambos visibles al pasar el mouse; mientras corre muestra "Ejecutando…" con un botón para cancelar y el play queda bloqueado).
 
 ### `MetricsModal.tsx`
 Dashboard de métricas con filtro de rango de tiempo (`1h`, `6h`, `1d`, `1w`, `1m`, todo) y tarjetas de Sesiones, Mensajes, Uso de herramientas, Modelos, Gasto y Errores. Cada tarjeta muestra sus gráficos, incluida la figura de outliers que renderiza el backend, y permite descargar los datos.
@@ -239,7 +239,7 @@ Panel de tareas programadas (agenda): agregar, editar horario y eliminar tareas.
 Pantalla inicial de configuración de providers (API keys) que aparece al primer arranque.
 
 ### Servicios (`services/`)
-Capa fina sobre `fetch`. `chatService` (SSE), `configService` (providers/models/modelo de decisión/workflows/MCP/verbose/contexto), `workflowService` (workflows: listado, play y cancelar), `notificationService` (notificaciones de la campanita), `sessionService` (sesiones), `feedbackService` (👍/👎 de las respuestas), `contextFilesService` (archivos de contexto), `metricsService` (métricas), `schedulerService` (tareas programadas), `telegramService` (bot de Telegram), `quoteHistoryService` (historial de cotizaciones).
+Capa fina sobre `fetch`. `chatService` (SSE), `configService` (providers/models/modelo de decisión/workflows/MCP/verbose/contexto), `workflowService` (workflows: listado, play, cancelar y eliminar), `notificationService` (notificaciones de la campanita), `sessionService` (sesiones), `feedbackService` (👍/👎 de las respuestas), `contextFilesService` (archivos de contexto), `metricsService` (métricas), `schedulerService` (tareas programadas), `telegramService` (bot de Telegram), `quoteHistoryService` (historial de cotizaciones).
 
 ---
 

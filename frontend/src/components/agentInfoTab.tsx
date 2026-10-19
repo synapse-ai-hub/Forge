@@ -518,6 +518,7 @@ function WorkflowsPanel() {
   const [items, setItems] = useState<WorkflowItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [starting, setStarting] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<string | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   const load = useCallback(async () => {
@@ -559,6 +560,23 @@ function WorkflowsPanel() {
     }
   };
 
+  const remove = async (name: string) => {
+    if (!window.confirm("¿Eliminar este workflow?")) return;
+    setDeleting(name);
+    setErrors((prev) => ({ ...prev, [name]: "" }));
+    try {
+      await workflowService.remove(name);
+      await load();
+    } catch (err) {
+      setErrors((prev) => ({
+        ...prev,
+        [name]: err instanceof Error ? err.message : "No se pudo eliminar el workflow.",
+      }));
+    } finally {
+      setDeleting(null);
+    }
+  };
+
   const stop = async (item: WorkflowItem) => {
     if (!item.run_id) return;
     try {
@@ -587,7 +605,7 @@ function WorkflowsPanel() {
         const last = w.last_run;
         const attempt = w.running && last?.attempt && last.attempt > 1 ? last.attempt : null;
         return (
-          <div key={w.name} className="rounded-lg border border-app-primary-light bg-white px-3 py-2">
+          <div key={w.name} className="group rounded-lg border border-app-primary-light bg-white px-3 py-2">
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0 flex-1">
                 <span className="text-sm font-medium text-app-text break-words">{w.name}</span>
@@ -618,28 +636,47 @@ function WorkflowsPanel() {
                   </p>
                 ) : null}
               </div>
-              {w.running ? (
-                <button
-                  type="button"
-                  onClick={() => stop(w)}
-                  className="shrink-0 rounded bg-red-500 hover:bg-red-600 text-white p-1.5 transition-colors"
-                  title="Cancelar ejecución"
-                  aria-label={`Cancelar ${w.name}`}
-                >
-                  <Square size={12} fill="currentColor" />
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  disabled={starting === w.name}
-                  onClick={() => play(w.name)}
-                  className="shrink-0 rounded bg-app-primary hover:opacity-90 text-white p-1.5 disabled:opacity-50 transition-opacity"
-                  title="Ejecutar workflow"
-                  aria-label={`Ejecutar ${w.name}`}
-                >
-                  <Play size={12} fill="currentColor" />
-                </button>
-              )}
+              <div className="flex items-center gap-1 shrink-0">
+                {w.running ? (
+                  <button
+                    type="button"
+                    onClick={() => stop(w)}
+                    className="action-btn action-btn--stop transition-all"
+                    title="Cancelar ejecución"
+                    aria-label={`Cancelar ${w.name}`}
+                  >
+                    <Square size={14} fill="currentColor" />
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      disabled={starting === w.name}
+                      onClick={() => play(w.name)}
+                      className="action-btn opacity-0 group-hover:opacity-100 transition-all"
+                      title="Ejecutar workflow"
+                      aria-label={`Ejecutar ${w.name}`}
+                    >
+                      <Play size={14} fill="currentColor" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => remove(w.name)}
+                      disabled={deleting === w.name}
+                      className="shrink-0 rounded p-1 text-app-text-secondary opacity-0 group-hover:opacity-100 hover:bg-red-100 hover:text-app-error transition-all"
+                      aria-label="Eliminar workflow"
+                    >
+                      {deleting === w.name ? (
+                        <div
+                          style={{ width: "14px", height: "14px", border: "2px solid #9ca3af", borderTop: "2px solid #C2413D", borderRadius: "50%", animation: "spin 1s linear infinite" }}
+                        />
+                      ) : (
+                        <Trash2 size={14} />
+                      )}
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
             {errors[w.name] && <p className="text-xs text-red-500 mt-1 break-words">{errors[w.name]}</p>}
           </div>

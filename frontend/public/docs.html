@@ -783,6 +783,7 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
               <tr><td>GET</td><td><code>/api/config/mcp</code></td><td>Listar servidores MCP con su estado.</td></tr>
               <tr><td>GET</td><td><code>/api/workflows</code></td><td>Listar los workflows con su estado (en ejecución, última ejecución).</td></tr>
               <tr><td>POST</td><td><code>/api/workflows/{name}/run</code></td><td>Ejecutar un workflow en segundo plano (botón play).</td></tr>
+              <tr><td>DELETE</td><td><code>/api/workflows/{name}</code></td><td>Eliminar un workflow con sus ejecuciones y notificaciones.</td></tr>
               <tr><td>POST</td><td><code>/api/workflows/runs/{run_id}/cancel</code></td><td>Cancelar una ejecución en curso.</td></tr>
               <tr><td>GET</td><td><code>/api/workflows/runs</code></td><td>Historial de ejecuciones de workflows.</td></tr>
               <tr><td>GET</td><td><code>/api/notifications</code></td><td>Listar las notificaciones (campanita).</td></tr>

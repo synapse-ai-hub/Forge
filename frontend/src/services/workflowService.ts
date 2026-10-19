@@ -1,4 +1,4 @@
-/** Service for workflow runs: list with state, play and cancel. */
+/** Service for workflows: list with state, play, cancel and delete. */
 
 const API_BASE_URL = import.meta.env.VITE_URL_BASE || "http://localhost:8000";
 
@@ -67,6 +67,17 @@ async function cancel(runId: string): Promise<void> {
   }
 }
 
-const workflowService = { list, run, cancel };
+/** Delete a workflow with its runs and notifications. */
+async function remove(name: string): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}/api/workflows/${encodeURIComponent(name)}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => null);
+    throw new Error(data?.message || "No se pudo eliminar el workflow.");
+  }
+}
+
+const workflowService = { list, run, cancel, remove };
 
 export default workflowService;

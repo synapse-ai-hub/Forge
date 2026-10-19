@@ -219,3 +219,27 @@ body {
   background-clip: text;
   color: transparent;
 }
+
+/* Botón de acción de las tarjetas (play / cancelar): igual que el de eliminar, el fondo cambia con el hover; colores fijos de los creadores (createColors.css), sin depender del tema */
+.action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  padding: 0.25rem;
+  border: 0;
+  border-radius: 0.25rem;
+  cursor: pointer;
+  background-color: transparent;
+  color: #4f46e5;
+}
+.action-btn:hover:not(:disabled) {
+  background-image: linear-gradient(to right, #4f46e5, #8b5cf6);
+  color: #ffffff;
+}
+.action-btn--stop,
+.action-btn--stop:hover:not(:disabled) {
+  background-image: none;
+  background-color: #ef4444;
+  color: #ffffff;
+}
