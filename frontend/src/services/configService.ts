@@ -67,11 +67,6 @@ export interface SetupCompletedResponse {
   completed: boolean;
 }
 
-export interface WorkflowSelection {
-  selected: string;
-  available: string[];
-}
-
 /** Advanced parameters (null = "default": use the agent's frontmatter value). */
 export interface AdvancedParams {
   temperature: number | null;
@@ -478,33 +473,6 @@ export const configService = {
     if (!response.ok) {
       throw new Error(await errorMessage(response));
     }
-  },
-
-  /** Get workflow selection (selected + available, smart first). */
-  async getWorkflowSelection(): Promise<WorkflowSelection> {
-    const response = await fetch(`${API_BASE_URL}/api/config/workflows/selection`, {
-      method: "GET",
-    });
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    }
-    const data = await response.json();
-    return data.data || { selected: "smart", available: ["smart"] };
-  },
-
-  /** Persist workflow selection (smart or one workflow name). */
-  async selectWorkflow(workflow: string): Promise<string> {
-    const response = await fetch(`${API_BASE_URL}/api/config/workflows/select`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ workflow }),
-    });
-    const data = await response.json();
-    if (!response.ok || data.status === "error") {
-      throw new Error(data.message || `HTTP ${response.status}`);
-    }
-    window.dispatchEvent(new CustomEvent("workflow-changed", { detail: { workflow } }));
-    return data.data?.selected || workflow;
   },
 
   /** Validate workflow YAML without saving (dry-run). */

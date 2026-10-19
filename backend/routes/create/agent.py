@@ -27,6 +27,7 @@ from backend.agent.utils.create_helpers import (
 )
 from backend.instances import agent
 from backend.agent.utils.error_logger import log_error
+from backend.agent.utils.creator_runs import track_creator_run
 from backend.routes.create.common import (
     _AGENT_TOOLS_PERMS,
     _AGENTS_DIR,
@@ -424,7 +425,10 @@ async def post_create_agent_stream(req: CreateAgentRequest):
             "data": {"exist": "No", "agent": name or "agente", "agent_path": str(_AGENTS_DIR / f"{name or 'agente'}.md")},
         }})
 
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+    return StreamingResponse(
+        track_creator_run("agent", req, event_stream()),
+        media_type="text/event-stream",
+    )
 
 
 def _listar_agentes_locales() -> list[dict[str, str]]:

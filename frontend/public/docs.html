@@ -549,10 +549,16 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
           <p>Un <strong>workflow</strong> es un flujo determinista de nodos definido en YAML: un archivo plano por workflow en <code>~/.config/synapseForge/workflows/&lt;nombre&gt;.yaml</code>, sin subcarpetas. Cada nodo lleva un <code>id</code>, un <code>type</code> (<code>agent</code>, <code>tool</code>, <code>rag</code> o <code>run</code>), un <code>step</code> (entero desde 1) y hay exactamente un nodo con <code>final: true</code>, que produce la respuesta final.</p>
           <h3>¿Cómo se ejecuta?</h3>
           <p>Los nodos del mismo <code>step</code> se ejecutan <strong>en paralelo</strong> con barrera; los distintos <code>step</code>, <strong>en secuencia</strong>. Los nodos <code>agent</code> corren en una sesión hija con los permisos propios de ese agente; los nodos <code>run</code> ejecutan comandos shell estilo GitHub Actions.</p>
-          <h3>Modo smart o workflow</h3>
-          <p>El chat funciona en modo <strong>smart</strong> (el agente decide qué hacer) o con un <strong>workflow determinista</strong> activo. Se elige uno solo desde el panel de info del agente (pestaña <strong>Workflows</strong>) o desde el selector del chat. Con un workflow activo, cada mensaje enviado se ejecuta con ese flujo, usando el mensaje como entrada.</p>
+          <h3>Ejecutar un workflow</h3>
+          <p>Un workflow se ejecuta con el botón <strong>play</strong> de su tarjeta (panel de info del agente, pestaña <strong>Workflows</strong>). El flujo corre en segundo plano, en paralelo con el chat, y cada ejecución abre una sesión en el historial con el nombre del workflow y la fecha. Mientras corre, la tarjeta muestra <em>Ejecutando…</em>, el play queda bloqueado y aparece un botón para <strong>cancelar</strong> (la ejecución queda registrada como cancelada).</p>
+          <h3>Reintentos y cierre</h3>
+          <p>Cada nodo se confirma con su resultado completo. Si un nodo falla o la ejecución se corta (por ejemplo, se cierra la aplicación), el workflow se reintenta hasta <strong>3 veces en total</strong>, con espera exponencial, retomando desde el primer nodo sin resultado confirmado: lo ya hecho no se repite. Cuando todos los nodos terminan, se juzga si el workflow terminó bien a partir de sus resultados: con el modelo de decisión si está habilitado, o con el modelo de chat si no. Si falla definitivamente, un LLM explica en lenguaje simple qué pasó, y el error técnico queda en el registro de errores.</p>
+          <h3>Resultados y notificaciones</h3>
+          <p>El resultado llega como notificación en la <strong>campanita</strong> del header, con un círculo que cuenta las no leídas. Al abrirla, pasan a leídas; cada notificación se puede eliminar y el botón <strong>Limpiar</strong> borra todas. Las notificaciones y las ejecuciones se guardan en la base de datos.</p>
+          <h3>Workflows desde un agente</h3>
+          <p>Un agente puede ejecutar un workflow con la tool <code>workflow</code>, si lo permite el bloque <code>workflows</code> de sus permisos (<code>workflows: { nombre: allow }</code>), igual que <code>tasks</code> limita a qué sub-agentes puede delegar. La ejecución devuelve su resultado al agente y no genera notificación.</p>
           <h3>Verificación previa y permisos</h3>
-          <p>Antes de ejecutar, el sistema verifica que cada agente, tool y colección RAG referenciada exista. Si falta algo, no ejecuta nada y responde qué falta. Cada ejecución usa solo los permisos que sus nodos necesitan (mínimo privilegio).</p>
+          <p>Antes de ejecutar, el sistema verifica que cada agente, tool y colección RAG referenciada exista. Si falta algo, no ejecuta nada y avisa qué falta. Cada ejecución usa solo los permisos que sus nodos necesitan (mínimo privilegio).</p>
           <h3>Cómo crear un workflow</h3>
           <ol>
             <li>Abrí la pestaña <strong>Crear</strong> y elegí el creador de workflows: una entrevista asistida diseña el flujo con vos.</li>
@@ -566,7 +572,7 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
           <h2>Checkpoints y modelo de decisión</h2>
           <h3>Checkpoints: retomar un flujo cortado</h3>
           <p>Cada tool call que el agente despacha se registra antes de ejecutarse y se confirma cuando su resultado se guarda. Si el flujo se corta (cancelás la respuesta o el backend se cae), el siguiente turno arranca con el trabajo sin confirmar inyectado como contexto: el pedido original, las tool calls pendientes con sus argumentos completos y el último resultado registrado. El agente retoma desde ahí en vez de repetir lo ya hecho.</p>
-          <p>El registro solo se borra cuando el paso cierra con una respuesta final validada. Las tool calls ya confirmadas que quedaron de un corte se limpian automáticamente pasadas 24 horas (configurable con <code>FRONTIER_TTL_HOURS</code>); las pendientes se conservan hasta que se resuelven o se descartan. Los workflows usan el mismo mecanismo: cada <code>step</code> se registra como un bloque.</p>
+          <p>El registro solo se borra cuando el paso cierra con una respuesta final validada. Las tool calls ya confirmadas que quedaron de un corte se limpian automáticamente pasadas 24 horas (configurable con <code>FRONTIER_TTL_HOURS</code>); las pendientes se conservan hasta que se resuelven o se descartan. Los workflows tienen su propio registro por nodo, que les permite retomar desde el último nodo confirmado.</p>
           <h3>Modelo de decisión (opcional)</h3>
           <p>Un <strong>modelo de decisión</strong> (System One) devuelve respuestas tipadas con un nivel de confianza en vez de texto generado. Se habilita desde <strong>Configuración</strong>, es independiente del modelo de chat y hace tres validaciones:</p>
           <ul>
@@ -600,7 +606,7 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
             <li><strong>Agentes</strong> — Lista los sub-agentes configurados.</li>
             <li><strong>MCP</strong> — Lista los servidores MCP con su estado (Conectado, Error o Desactivado) y un interruptor para activar o desactivar cada uno.</li>
             <li><strong>RAG</strong> — Lista las colecciones de la base de conocimiento.</li>
-            <li><strong>Workflows</strong> — Elige el flujo activo: <strong>smart</strong> o uno de los workflows guardados.</li>
+            <li><strong>Workflows</strong> — Una tarjeta por workflow guardado, con un botón <strong>play</strong> para ejecutarlo (y cancelarlo mientras corre).</li>
           </ul>
           <h3>Panel de configuración</h3>
           <p>En el panel lateral, hay una pestaña de <strong>Configuración</strong> con las siguientes opciones:</p>
@@ -642,7 +648,7 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
           </ul>
           <p>La zona horaria se toma directamente del sistema. Al activar una tarea se crea un sub-agente dedicado con los permisos seleccionados, y se ejecuta con el modelo y proveedor seleccionados, como si la hubieras pedido desde el chat.</p>
           <h3>Notificaciones</h3>
-          <p>Junto al botón de Agenda hay una <strong>campanita</strong> que acumula una notificación por cada ejecución de tarea programada: indica si terminó con éxito o falló, con fecha y hora. Cada ejecución también se notifica por Telegram (ver la sección Telegram).</p>
+          <p>Junto al botón de Agenda hay una <strong>campanita</strong> que guarda una notificación por cada ejecución de tarea programada y de workflow: indica si terminó con éxito o falló, con fecha y hora. Un círculo cuenta las no leídas y al abrirla pasan a leídas. Cada notificación se puede eliminar, y <strong>Limpiar</strong> borra todas. Las ejecuciones de tareas también se notifican por Telegram (ver la sección Telegram).</p>
           <h3>Historial</h3>
           <p>En el panel lateral, bajo la pestaña <strong>Conversaciones</strong>, se listan todas las sesiones de chat. Podés crear nuevas conversaciones, seleccionar sesiones anteriores y eliminar conversaciones existentes.</p>
           <h3>Métricas</h3>
@@ -775,8 +781,15 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
               <tr><td>POST</td><td><code>/api/config/tools/refresh</code></td><td>Releer las tools externas y reconstruir el registry (incluye MCP).</td></tr>
               <tr><td>GET</td><td><code>/api/config/agents</code></td><td>Listar sub-agentes disponibles.</td></tr>
               <tr><td>GET</td><td><code>/api/config/mcp</code></td><td>Listar servidores MCP con su estado.</td></tr>
-              <tr><td>GET</td><td><code>/api/config/workflows/selection</code></td><td>Workflow activo y workflows disponibles.</td></tr>
-              <tr><td>POST</td><td><code>/api/config/workflows/select</code></td><td>Activar <code>smart</code> o un workflow.</td></tr>
+              <tr><td>GET</td><td><code>/api/workflows</code></td><td>Listar los workflows con su estado (en ejecución, última ejecución).</td></tr>
+              <tr><td>POST</td><td><code>/api/workflows/{name}/run</code></td><td>Ejecutar un workflow en segundo plano (botón play).</td></tr>
+              <tr><td>DELETE</td><td><code>/api/workflows/{name}</code></td><td>Eliminar un workflow con sus ejecuciones y notificaciones.</td></tr>
+              <tr><td>POST</td><td><code>/api/workflows/runs/{run_id}/cancel</code></td><td>Cancelar una ejecución en curso.</td></tr>
+              <tr><td>GET</td><td><code>/api/workflows/runs</code></td><td>Historial de ejecuciones de workflows.</td></tr>
+              <tr><td>GET</td><td><code>/api/notifications</code></td><td>Listar las notificaciones (campanita).</td></tr>
+              <tr><td>POST</td><td><code>/api/notifications/read</code></td><td>Marcar todas las notificaciones como leídas.</td></tr>
+              <tr><td>DELETE</td><td><code>/api/notifications/{id}</code></td><td>Eliminar una notificación.</td></tr>
+              <tr><td>DELETE</td><td><code>/api/notifications</code></td><td>Eliminar todas las notificaciones.</td></tr>
               <tr><td>POST</td><td><code>/api/config/workflows/validate</code></td><td>Validar un YAML de workflow sin guardarlo.</td></tr>
               <tr><td>POST</td><td><code>/api/config/workflows/save</code></td><td>Validar y guardar un workflow como <code>&lt;nombre&gt;.yaml</code>.</td></tr>
               <tr><td>POST</td><td><code>/api/config/workflows/generate</code></td><td>Generar el YAML de un workflow a partir de una descripción.</td></tr>
@@ -813,14 +826,14 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
               <tr><td>DELETE</td><td><code>/api/agent/mcp/{label}</code></td><td>Eliminar un servidor MCP.</td></tr>
               <tr><td>PUT</td><td><code>/api/agent/mcp/{label}/enabled</code></td><td>Activar o desactivar un servidor MCP.</td></tr>
               <tr><td>DELETE</td><td><code>/api/agent/knowledge/{collection}</code></td><td>Eliminar una colección RAG.</td></tr>
-              <tr><td>GET</td><td><code>/api/events</code></td><td>Streaming SSE del event bus (Telegram → Frontend).</td></tr>
+              <tr><td>GET</td><td><code>/api/events</code></td><td>Streaming SSE del event bus (Telegram, notificaciones y ejecuciones de workflows → Frontend).</td></tr>
               <tr><td>GET</td><td><code>/api/scheduler/tasks</code></td><td>Listar las tareas programadas.</td></tr>
               <tr><td>POST</td><td><code>/api/scheduler/craft-prompt</code></td><td>Refinar la descripción de una tarea con el LLM (wizard).</td></tr>
               <tr><td>POST</td><td><code>/api/scheduler/tasks</code></td><td>Crear una tarea programada (descripción, hora y días).</td></tr>
               <tr><td>PUT</td><td><code>/api/scheduler/tasks/{id}</code></td><td>Actualizar una tarea programada (hora, días o descripción).</td></tr>
               <tr><td>DELETE</td><td><code>/api/scheduler/tasks/{id}</code></td><td>Eliminar una tarea programada.</td></tr>
               <tr><td>GET</td><td><code>/api/scheduler/runs</code></td><td>Historial de ejecuciones de tareas programadas.</td></tr>
-              <tr><td>GET</td><td><code>/api/scheduler/permissions/catalog</code></td><td>Tools, skills y agentes disponibles para armar los permisos de una tarea.</td></tr>
+              <tr><td>GET</td><td><code>/api/scheduler/permissions/catalog</code></td><td>Tools, skills, agentes y workflows disponibles para armar los permisos de una tarea.</td></tr>
               <tr><td>GET</td><td><code>/api/telegram/status</code></td><td>Estado del bot de Telegram.</td></tr>
               <tr><td>POST</td><td><code>/api/telegram/toggle</code></td><td>Activar/desactivar el bot de Telegram.</td></tr>
               <tr><td>GET/POST</td><td><code>/api/telegram/active-session</code></td><td>Obtener/establecer la sesión activa compartida.</td></tr>

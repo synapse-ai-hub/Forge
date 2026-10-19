@@ -5,6 +5,12 @@ const API_BASE_URL = import.meta.env.VITE_URL_BASE || "http://localhost:8000";
 /** Permission entry: "allow" | "deny". */
 export type PermissionAction = "allow" | "deny";
 
+/**
+ * Tool permissions: flat (``read: "allow"``) or grouped
+ * (``workflow: { nightly: "allow" }``).
+ */
+export type ToolPermissions = Record<string, PermissionAction | Record<string, PermissionAction>>;
+
 /** Schedule slot for additional repetitions. */
 export interface ScheduleSlot {
   time: string;
@@ -36,7 +42,7 @@ export interface SchedulerTask {
   /** Additional schedule slots (time + days pairs). */
   repetitions: ScheduleSlot[] | null;
   /** Tool permissions override (null = router default). */
-  tool_permissions: Record<string, PermissionAction> | null;
+  tool_permissions: ToolPermissions | null;
   /** Skill permissions override (null = router default). */
   skill_permissions: Record<string, PermissionAction> | null;
   /** Model parameters override (null = use defaults). */
@@ -61,18 +67,6 @@ export interface SchedulerRun {
   finished_at: string | null;
 }
 
-/** In-app notification shown by the header bell when a task executes. */
-export interface SchedulerNotification {
-  id: string;
-  status: "success" | "error";
-  /** Task description. */
-  task: string;
-  /** Result summary (final answer or error message). */
-  detail: string;
-  /** Human-readable local finish timestamp (from the backend). */
-  finishedAt: string;
-}
-
 /** Catalog item for permission checkboxes. */
 export interface CatalogItem {
   name: string;
@@ -84,6 +78,7 @@ export interface PermissionsCatalog {
   tools: CatalogItem[];
   skills: CatalogItem[];
   agents: CatalogItem[];
+  workflows: CatalogItem[];
 }
 
 async function getTasks(): Promise<SchedulerTask[]> {
@@ -98,7 +93,7 @@ async function createTask(payload: {
   prompt: string;
   time: string;
   days: number[];
-  tool_permissions?: Record<string, PermissionAction> | null;
+  tool_permissions?: ToolPermissions | null;
   skill_permissions?: Record<string, PermissionAction> | null;
   parameters?: TaskParameters | null;
   repetitions?: ScheduleSlot[] | null;
@@ -121,7 +116,7 @@ async function updateTask(
     time: string;
     days: number[];
     enabled: boolean;
-    tool_permissions: Record<string, PermissionAction> | null;
+    tool_permissions: ToolPermissions | null;
     skill_permissions: Record<string, PermissionAction> | null;
     parameters: TaskParameters | null;
     repetitions: ScheduleSlot[] | null;
@@ -179,6 +174,7 @@ async function getPermissionsCatalog(): Promise<PermissionsCatalog> {
     tools: data.tools || [],
     skills: data.skills || [],
     agents: data.agents || [],
+    workflows: data.workflows || [],
   };
 }
 

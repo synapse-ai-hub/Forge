@@ -1,9 +1,10 @@
 scenario: workflow-run-echo-e2e
 description: >
-  Ejecución real de un workflow con nodo run (echo) + final.
-  Guarda, selecciona y chatea: el runner determinista debe correr,
-  terminar con [DONE] y responder no vacío. Requiere backend vivo;
-  el nodo run no necesita LLM pero el chat sí pasa por el backend.
+  Ejecución real (play) de un workflow con nodo run (echo) + final.
+  Guarda el workflow, lo ejecuta en background y verifica que el run
+  termine en éxito, con el resultado del echo, y que se cree la
+  notificación. Requiere backend vivo; no requiere LLM (si hay un modelo
+  configurado, el juez lo usa para validar el resultado).
 cleanup: true
 steps:
   - action: request
@@ -27,27 +28,21 @@ steps:
     expect:
       http_status: 200
       json_status: success
-  - action: request
-    method: POST
-    path: /api/config/workflows/select
-    body:
-      workflow: e2e-run-echo
+  - action: run
+    workflow: e2e-run-echo
     expect:
       http_status: 200
-      json_status: success
-  - action: chat
-    message: "ejecutá el workflow"
-    expect:
-      done: true
-      nonempty: true
-      events_include:
-        - chunk
+      run_status: success
+      attempts: 1
+      result_contains:
+        - "hola-e2e"
+      notification: true
 ---
 scenario: workflow-faltantes-amigable
 description: >
-  Workflow que referencia una tool inexistente: el chat debe frenar
-  con el mensaje amigable (contiene "No se puede ejecutar") en vez de
-  correr el runner. Requiere backend vivo. No requiere LLM.
+  Workflow que referencia una tool inexistente: el play frena con el
+  mensaje amigable (contiene "No se puede ejecutar") y no crea ningún
+  run. Requiere backend vivo. No requiere LLM.
 cleanup: true
 steps:
   - action: request
@@ -67,18 +62,84 @@ steps:
     expect:
       http_status: 200
       json_status: success
+  - action: run
+    workflow: e2e-faltante
+    expect:
+      http_status: 400
+      message_contains:
+        - "No se puede ejecutar"
+---
+scenario: workflow-fallo-reintenta
+description: >
+  Un comando que termina con código distinto de cero falla el nodo. El
+  workflow se reintenta con backoff exponencial hasta 3 intentos en total
+  (2 s y 4 s de espera) y termina en error con una explicación y una
+  notificación de error. Tarda unos 8 segundos. Requiere backend vivo; no
+  requiere LLM (sin modelo la explicación es un texto genérico).
+cleanup: true
+steps:
   - action: request
     method: POST
-    path: /api/config/workflows/select
+    path: /api/config/workflows/save
     body:
-      workflow: e2e-faltante
+      name: e2e-fallo
+      yaml: |
+        name: "e2e-fallo"
+        description: "Siempre falla"
+        version: "1"
+        retries: 0
+        nodes:
+          - id: "falla"
+            type: "run"
+            step: 1
+            run: "exit 3"
+            timeout: 10000
+            final: true
     expect:
       http_status: 200
       json_status: success
-  - action: chat
-    message: "ejecutá el workflow"
+  - action: run
+    workflow: e2e-fallo
+    timeout: 90
     expect:
-      done: true
-      nonempty: true
-      response_contains:
-        - "No se puede ejecutar"
+      http_status: 200
+      run_status: error
+      attempts: 3
+      notification: true
+---
+scenario: workflow-cancelar
+description: >
+  Cancelar un workflow en ejecución. El run queda persistido como
+  cancelled y no genera notificación. Usa python para dormir 40 s, por lo
+  que necesita python en el PATH del backend. Requiere backend vivo; no
+  requiere LLM.
+cleanup: true
+steps:
+  - action: request
+    method: POST
+    path: /api/config/workflows/save
+    body:
+      name: e2e-lento
+      yaml: |
+        name: "e2e-lento"
+        description: "Tarda mucho"
+        version: "1"
+        retries: 0
+        nodes:
+          - id: "dormir"
+            type: "run"
+            step: 1
+            run: "python -c \"import time; time.sleep(40)\""
+            timeout: 60000
+            final: true
+    expect:
+      http_status: 200
+      json_status: success
+  - action: run
+    workflow: e2e-lento
+    cancel_after: 2
+    timeout: 30
+    expect:
+      http_status: 200
+      run_status: cancelled
+      notification: false

@@ -44,6 +44,13 @@ from backend.agent.utils.error_logger import log_error
 
 logger = logging.getLogger(__name__)
 
+_GROUP_ARG = {"task": "agent_name", "workflow": "name"}
+"""Discriminating argument of the tools whose permission is a nested group.
+
+``tasks: {explorer: allow}`` constrains ``task(agent_name=...)`` and
+``workflows: {nightly: allow}`` constrains ``workflow(name=...)``.
+"""
+
 # ---------------------------------------------------------------------------
 # Ensure the project root is in sys.path so absolute imports (backend.*)
 # resolve correctly regardless of how the file is invoked.
@@ -169,7 +176,9 @@ def get_tool_permissions(agent_name: str | None) -> dict[str, Any]:
     """Resolve an agent's **tool** permissions at runtime.
 
     Reads ``agents/<agent_name>.md`` and returns the ``tools`` block
-    under ``permissions``, combining it with the ``task`` block if present.
+    under ``permissions``, combining it with the ``tasks`` block (as the
+    nested ``task`` permission) and the ``workflows`` block (as the nested
+    ``workflow`` permission) if present.
 
     Args:
         agent_name: Agent name (without ``.md``). ``None``/empty → empty
@@ -195,6 +204,9 @@ def get_tool_permissions(agent_name: str | None) -> dict[str, Any]:
     tasks_perms = permissions.get("tasks")
     if isinstance(tasks_perms, dict) and tasks_perms:
         tools_perms["task"] = tasks_perms
+    workflows_perms = permissions.get("workflows")
+    if isinstance(workflows_perms, dict) and workflows_perms:
+        tools_perms["workflow"] = workflows_perms
 
     return make_success_response(
         message=f"Tool permissions for agent '{agent_name}'.",
@@ -459,8 +471,8 @@ def is_tool_allowed(
       key (wildcard) and the value is exactly ``"allow"``.
     - **Nested group with exact match** (``{"task": {"explorer": "allow"}}``):
       for the single tool named like the group key (``task``), the first
-      relevant argument (``agent_name`` for ``task``) must match one of the
-      allowed sub-keys.
+      relevant argument (``agent_name`` for ``task``, ``name`` for
+      ``workflow``) must match one of the allowed sub-keys.
     - **Nested group with prefix** (``{"notebooklm": {"*": "allow"}}``):
       tools named ``<group>_<sub>`` are allowed when the group has
       ``"*": "allow"`` or the sub-tool name is explicitly allowed.
@@ -485,7 +497,7 @@ def is_tool_allowed(
         if tool_name == key:
             # Single tool constrained to allowed sub-keys (e.g. task →
             # agent_name). Resolve the discriminating argument.
-            arg_name = "agent_name" if key == "task" else None
+            arg_name = _GROUP_ARG.get(key)
             if arg_name is None:
                 # Unknown grouping argument: require the catch-all.
                 return sub.get("*") == "allow"

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
-import { Wrench, Puzzle, Brain, Server, Globe, Database, Trash2, RefreshCw, Workflow } from "lucide-react";
+import { Wrench, Puzzle, Brain, Server, Globe, Database, Trash2, RefreshCw, Workflow, Play, Square, Loader2 } from "lucide-react";
 import configService, { type SkillInfo, type ToolInfo, type AgentInfo, type McpServerStatus } from "../services/configService";
+import workflowService, { type WorkflowItem } from "../services/workflowService";
 
 type AgentTab = "tools" | "skills" | "agents" | "mcp" | "rag" | "workflows";
 
@@ -90,7 +91,7 @@ export function AgentInfoTab() {
         {tab === "agents" && <AgentsPanel onRefresh={refreshAll} />}
         {tab === "mcp" && <McpPanel servers={mcpServers} loading={mcpLoading} error={mcpError} onRefresh={loadMcp} />}
         {tab === "rag" && <RagPanel onRefresh={refreshAll} />}
-        {tab === "workflows" && <WorkflowsPanel onRefresh={refreshAll} />}
+        {tab === "workflows" && <WorkflowsPanel />}
       </div>
     </div>
   );
@@ -499,19 +500,30 @@ export default AgentInfoTab;
 
 // ─── Workflows ──────────────────────────────────────────────────
 
-function WorkflowsPanel({ onRefresh }: { onRefresh: () => Promise<void> }) {
-  const [available, setAvailable] = useState<string[]>(["smart"]);
-  const [selected, setSelected] = useState("smart");
+/** Format a local ISO timestamp as ``dd/mm HH:MM`` (empty when invalid). */
+function formatRunDate(iso: string | null): string {
+  if (!iso) return "";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString("es-AR", {
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}
+
+function WorkflowsPanel() {
+  const [items, setItems] = useState<WorkflowItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [msg, setMsg] = useState("");
-  const [saving, setSaving] = useState(false);
+  const [starting, setStarting] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<string | null>(null);
+  const [errors, setErrors] = useState<Record<string, string>>({});
 
   const load = useCallback(async () => {
     try {
-      setLoading(true);
-      const data = await configService.getWorkflowSelection();
-      setAvailable(data.available?.length ? data.available : ["smart"]);
-      setSelected(data.selected || "smart");
+      setItems(await workflowService.list());
     } catch (err) {
       console.error("Error cargando workflows:", err);
     } finally {
@@ -522,32 +534,59 @@ function WorkflowsPanel({ onRefresh }: { onRefresh: () => Promise<void> }) {
   useEffect(() => { load(); }, [load]);
 
   useEffect(() => {
-    const onFocus = () => { load(); };
-    const onChanged = (e: Event) => {
-      const w = (e as CustomEvent).detail?.workflow;
-      if (w) setSelected(w);
-    };
-    window.addEventListener("focus", onFocus);
-    window.addEventListener("workflow-changed", onChanged);
+    // The app forwards the backend "workflow_run" events (a run started,
+    // retried or finished) as a window event; focus covers new/edited files.
+    window.addEventListener("focus", load);
+    window.addEventListener("workflow-run", load);
     return () => {
-      window.removeEventListener("focus", onFocus);
-      window.removeEventListener("workflow-changed", onChanged);
+      window.removeEventListener("focus", load);
+      window.removeEventListener("workflow-run", load);
     };
   }, [load]);
 
-  const choose = async (workflow: string) => {
-    setSaving(true);
+  const play = async (name: string) => {
+    setStarting(name);
+    setErrors((prev) => ({ ...prev, [name]: "" }));
     try {
-      const sel = await configService.selectWorkflow(workflow);
-      setSelected(sel);
-      setMsg(workflow === "smart" ? "Flujo smart activado." : `Workflow «${workflow}» activado.`);
-      setTimeout(() => setMsg(""), 3000);
+      await workflowService.run(name);
+      await load();
     } catch (err) {
-      console.error("Error seleccionando workflow:", err);
-      setMsg("No se pudo activar el workflow.");
-      setTimeout(() => setMsg(""), 3000);
+      setErrors((prev) => ({
+        ...prev,
+        [name]: err instanceof Error ? err.message : "No se pudo ejecutar el workflow.",
+      }));
     } finally {
-      setSaving(false);
+      setStarting(null);
+    }
+  };
+
+  const remove = async (name: string) => {
+    if (!window.confirm("¿Eliminar este workflow?")) return;
+    setDeleting(name);
+    setErrors((prev) => ({ ...prev, [name]: "" }));
+    try {
+      await workflowService.remove(name);
+      await load();
+    } catch (err) {
+      setErrors((prev) => ({
+        ...prev,
+        [name]: err instanceof Error ? err.message : "No se pudo eliminar el workflow.",
+      }));
+    } finally {
+      setDeleting(null);
+    }
+  };
+
+  const stop = async (item: WorkflowItem) => {
+    if (!item.run_id) return;
+    try {
+      await workflowService.cancel(item.run_id);
+      await load();
+    } catch (err) {
+      setErrors((prev) => ({
+        ...prev,
+        [item.name]: err instanceof Error ? err.message : "No se pudo cancelar la ejecución.",
+      }));
     }
   };
 
@@ -556,34 +595,93 @@ function WorkflowsPanel({ onRefresh }: { onRefresh: () => Promise<void> }) {
   return (
     <div className="space-y-1">
       <p className="text-[11px] text-app-text-secondary leading-snug mb-2">
-        Elegí un solo modo activo: smart (flujo estándar con paralelización) o un workflow
-        determinista. La selección persiste y el chat la usa en el próximo mensaje.
-        Mismo step corre en paralelo, distinto step es secuencial.
+        Ejecutá un workflow con el botón play: corre en segundo plano y el resultado llega como
+        notificación. Mismo step corre en paralelo, distinto step es secuencial.
       </p>
-      {msg && <p className="text-xs text-green-600 mb-1">{msg}</p>}
-      {available.map((w) => (
-        <div key={w} className="flex items-start justify-between rounded-lg border border-app-primary-light bg-white px-3 py-2">
-          <div className="min-w-0 flex-1">
-            <span className="text-sm font-medium text-app-text break-words">
-              {w === "smart" ? "Smart (estándar)" : w}
-            </span>
-            {selected === w && (
-              <p className="text-xs text-green-600 mt-0.5">Activo</p>
-            )}
+      {items.length === 0 && (
+        <p className="text-sm text-app-text-secondary">No hay workflows creados todavía.</p>
+      )}
+      {items.map((w) => {
+        const last = w.last_run;
+        const attempt = w.running && last?.attempt && last.attempt > 1 ? last.attempt : null;
+        return (
+          <div key={w.name} className="group rounded-lg border border-app-primary-light bg-white px-3 py-2">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0 flex-1">
+                <span className="text-sm font-medium text-app-text break-words">{w.name}</span>
+                {w.description && (
+                  <p className="text-xs text-app-text-secondary mt-0.5 break-words">{w.description}</p>
+                )}
+                {w.running ? (
+                  <p className="text-xs text-app-primary mt-0.5 flex items-center gap-1">
+                    <Loader2 size={12} className="animate-spin" />
+                    Ejecutando…{attempt ? ` (intento ${attempt} de 3)` : ""}
+                  </p>
+                ) : last ? (
+                  <p
+                    className={`text-xs mt-0.5 ${
+                      last.status === "success"
+                        ? "text-green-600"
+                        : last.status === "error"
+                          ? "text-red-500"
+                          : "text-app-text-secondary"
+                    }`}
+                  >
+                    {last.status === "success"
+                      ? "Última ejecución: éxito"
+                      : last.status === "error"
+                        ? "Última ejecución: falló"
+                        : "Última ejecución: cancelada"}
+                    {last.finished_at ? ` · ${formatRunDate(last.finished_at)}` : ""}
+                  </p>
+                ) : null}
+              </div>
+              <div className="flex items-center gap-1 shrink-0">
+                {w.running ? (
+                  <button
+                    type="button"
+                    onClick={() => stop(w)}
+                    className="action-btn action-btn--stop transition-all"
+                    title="Cancelar ejecución"
+                    aria-label={`Cancelar ${w.name}`}
+                  >
+                    <Square size={14} fill="currentColor" />
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      disabled={starting === w.name}
+                      onClick={() => play(w.name)}
+                      className="action-btn opacity-0 group-hover:opacity-100 transition-all"
+                      title="Ejecutar workflow"
+                      aria-label={`Ejecutar ${w.name}`}
+                    >
+                      <Play size={14} fill="currentColor" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => remove(w.name)}
+                      disabled={deleting === w.name}
+                      className="shrink-0 rounded p-1 text-app-text-secondary opacity-0 group-hover:opacity-100 hover:bg-red-100 hover:text-app-error transition-all"
+                      aria-label="Eliminar workflow"
+                    >
+                      {deleting === w.name ? (
+                        <div
+                          style={{ width: "14px", height: "14px", border: "2px solid #9ca3af", borderTop: "2px solid #C2413D", borderRadius: "50%", animation: "spin 1s linear infinite" }}
+                        />
+                      ) : (
+                        <Trash2 size={14} />
+                      )}
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+            {errors[w.name] && <p className="text-xs text-red-500 mt-1 break-words">{errors[w.name]}</p>}
           </div>
-          {selected !== w && (
-            <button
-              type="button"
-              disabled={saving}
-              onClick={() => choose(w)}
-              className="text-xs bg-app-primary hover:opacity-90 text-white px-2 py-0.5 rounded disabled:opacity-50"
-            >
-              Activar
-            </button>
-          )}
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
-

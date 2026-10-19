@@ -1,4 +1,4 @@
-"""Workflow endpoints: active selection, validate, save and generate."""
+"""Workflow endpoints: validate, save and generate."""
 
 from __future__ import annotations
 
@@ -13,110 +13,6 @@ from backend.agent.utils.error_logger import log_error
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Workflow selection (Fase 1 - persistencia como modelo en config_kv)
-# ---------------------------------------------------------------------------
-
-_SELECTED_WORKFLOW_KEY = "selected_workflow"
-
-_SELECTED_WORKFLOW_DEFAULT = "smart"
-
-def _list_workflow_names() -> list[str]:
-    """List available workflow names from disk.
-
-    Delegates to ``workflow_loader.list_workflows`` (flat
-    ``~/.config/synapseForge/workflows/<nombre>.yaml`` files).
-    Returns sorted names. Never raises.
-    """
-    try:
-        from backend.agent.utils.workflow_loader import list_workflows
-
-        return list_workflows()
-    except Exception as exc:
-        log_error(str(exc), source="backend/routes/config.py:_list_workflow_names")
-        return []
-
-def _get_selected_workflow() -> str:
-    """Read selected workflow, defaulting to smart."""
-    try:
-        if session_manager is not None:
-            raw = session_manager.get_config(_SELECTED_WORKFLOW_KEY)
-            if raw and raw.strip():
-                return raw.strip()
-    except Exception as exc:
-        log_error(str(exc), source="backend/routes/config.py:_get_selected_workflow")
-    return _SELECTED_WORKFLOW_DEFAULT
-
-@router.get("/workflows/selection")
-async def get_workflow_selection() -> JSONResponse:
-    """Return current workflow selection and available workflows."""
-    try:
-        selected = _get_selected_workflow()
-        available = ["smart"] + _list_workflow_names()
-        if selected not in available:
-            selected = _SELECTED_WORKFLOW_DEFAULT
-        return JSONResponse(
-            status_code=200,
-            content={
-                "status": "success",
-                "message": "Workflow selection.",
-                "data": {"selected": selected, "available": available},
-                "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "total_time": 0},
-            },
-        )
-    except Exception as exc:
-        log_error(str(exc), source="backend/routes/config.py:get_workflow_selection")
-        return JSONResponse(
-            status_code=500,
-            content={"status": "error", "message": "Error leyendo selección de workflow."},
-        )
-
-@router.post("/workflows/select")
-async def select_workflow(payload: dict[str, Any]) -> JSONResponse:
-    """Persist workflow selection. Only one active value."""
-    try:
-        workflow = str((payload or {}).get("workflow", "")).strip()
-        if not workflow:
-            return JSONResponse(
-                status_code=400,
-                content={"status": "error", "message": "Campo 'workflow' requerido."},
-            )
-        available = ["smart"] + _list_workflow_names()
-        if workflow not in available:
-            return JSONResponse(
-                status_code=400,
-                content={
-                    "status": "error",
-                    "message": f"Workflow '{workflow}' no existe.",
-                },
-            )
-        if session_manager is not None:
-            session_manager.set_config(_SELECTED_WORKFLOW_KEY, workflow)
-        try:
-            from backend.event_bus import event_bus
-
-            await event_bus.emit({
-                "type": "workflow_changed",
-                "content": {"workflow": workflow},
-            })
-        except Exception as exc:
-            logger.warning("No se pudo emitir workflow_changed: %s", exc)
-        return JSONResponse(
-            status_code=200,
-            content={
-                "status": "success",
-                "message": f"Workflow '{workflow}' seleccionado.",
-                "data": {"selected": workflow},
-                "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "total_time": 0},
-            },
-        )
-    except Exception as exc:
-        log_error(str(exc), source="backend/routes/config.py:select_workflow")
-        return JSONResponse(
-            status_code=500,
-            content={"status": "error", "message": "Error guardando selección de workflow."},
-        )
 
 @router.post("/workflows/validate")
 async def validate_workflow_endpoint(payload: dict[str, Any]) -> JSONResponse:
@@ -198,6 +94,9 @@ async def save_workflow_endpoint(payload: dict[str, Any]) -> JSONResponse:
             )
         with open(target, "w", encoding="utf-8") as fh:
             fh.write(raw if raw.endswith("\n") else raw + "\n")
+        from backend.agent.utils.workflow_db import ensure_workflow
+
+        ensure_workflow(name)
         return JSONResponse(
             status_code=200,
             content={

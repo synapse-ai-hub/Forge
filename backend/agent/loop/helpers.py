@@ -71,8 +71,8 @@ def _router_tool_permissions(router_perms: dict | None) -> dict:
     """Resolve the router's tool permissions.
 
     If ``config.yaml`` defines permissions they are used exclusively (no
-    floor): ``tools`` become flat permissions and ``tasks`` the nested
-    ``task`` permission. Without ``config.yaml`` the guaranteed floor tools
+    floor): ``tools`` become flat permissions, ``tasks`` the nested
+    ``task`` permission and ``workflows`` the nested ``workflow`` permission. Without ``config.yaml`` the guaranteed floor tools
     are used.
 
     Args:
@@ -96,6 +96,9 @@ def _router_tool_permissions(router_perms: dict | None) -> dict:
     tasks_perms = router_perms.get("tasks")
     if isinstance(tasks_perms, dict) and tasks_perms:
         tool_permissions["task"] = tasks_perms
+    workflows_perms = router_perms.get("workflows")
+    if isinstance(workflows_perms, dict) and workflows_perms:
+        tool_permissions["workflow"] = workflows_perms
     return tool_permissions
 
 def _read_param_override(key: str) -> Any:

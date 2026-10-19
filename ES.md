@@ -83,7 +83,7 @@ La fábrica transforma esas definiciones en sistemas autónomos.
 - **Motor de permisos** — deny-by-default, por agente, con wildcards y grupos
 - **Seguridad** — reglas contra prompt injection, fuga de datos y comandos o SQL peligrosos; van en el prompt del router o, con el modelo de decisión habilitado, las aplica el modelo de decisión como guardrail sobre el mensaje del usuario
 - **Agent loop** — razonamiento iterativo → tool calling → ejecución → continuación, con streaming SSE
-- **Workflows** — ejecución determinista de DAGs: steps secuenciales, nodos del mismo step en paralelo, con streaming SSE
+- **Workflows** — ejecución determinista de DAGs con un botón play: steps secuenciales, nodos del mismo step en paralelo, ejecución en segundo plano con reintentos, resultados persistidos y notificaciones
 - **Memoria** — indexación persistente de conversaciones y recuperación cross-sesión
 - **LLM multi-proveedor** — Ollama (local), providers cloud curados (OpenAI-compatibles + Google)
 - **Integración MCP** — conectá servidores de herramientas externos vía Model Context Protocol (stdio, HTTP o SSE), con un interruptor por servidor
@@ -152,13 +152,13 @@ flowchart LR
 
 Aplicación FastAPI con routers REST/SSE. El framework de agentes vive en `backend/agent/`: AgentLoop con tool calling nativo, registro de tools (nativos + externos + MCP), sesiones SQLite, permisos por agente, skills, RAG (ChromaDB) y memoria de largo plazo.
 
-**Tools nativos**: `read`, `write`, `edit`, `glob`, `grep`, `list_dir`, `webfetch`, `websearch`, `shell`, `task` (delegación a sub-agentes), `skill`, `reference`, `rag`, `search_memory`, `check_email`, `send_email`, `query_model_capabilities`, `help`.
+**Tools nativos**: `read`, `write`, `edit`, `glob`, `grep`, `list_dir`, `webfetch`, `websearch`, `shell`, `task` (delegación a sub-agentes), `workflow` (ejecutar un workflow guardado), `skill`, `reference`, `rag`, `search_memory`, `check_email`, `send_email`, `query_model_capabilities`, `help`.
 
 ### Workflows
 
 Flujos deterministas definidos como archivos YAML planos (`~/.config/synapseForge/workflows/<nombre>.yaml`, un archivo por workflow). Cada workflow es una lista de nodos con `id`, `type` (`agent`, `tool`, `rag` o `run`), `step` (entero desde 1) y exactamente un nodo con `final: true`. Los nodos del mismo step corren en paralelo con barrera; los distintos steps corren en secuencia. Los nodos agente corren en una sesión hija con los permisos propios de ese agente; los nodos `run` ejecutan comandos shell estilo GitHub Actions.
 
-El chat corre en modo **smart** (el agente decide) o con un workflow determinista seleccionado desde el panel de info del agente. Antes de ejecutar, el backend verifica que cada agente, tool y colección referenciada exista — si falta algo, responde con un mensaje amigable en vez de ejecutar. Los workflows corren con permisos de mínimo privilegio derivados de sus propios nodos. Un creador dedicado (entrevista + validación + aprobación del usuario) genera el YAML; los prompts propios pueden vivir como archivos sueltos en `workflows/prompts/`.
+Un workflow se ejecuta con el botón **play** de su tarjeta en el panel de info del agente. Corre en segundo plano, en paralelo con el chat, y abre una sesión en el historial (`nombre — fecha`); mientras corre la tarjeta muestra "Ejecutando…" y se puede cancelar. Antes de ejecutar, el backend verifica que cada agente, tool y colección referenciada exista — si falta algo, avisa qué en vez de ejecutar. Los workflows corren con permisos de mínimo privilegio derivados de sus propios nodos. Cada nodo se confirma con su resultado completo: si un nodo falla o la aplicación se detiene, la ejecución se reintenta (3 intentos en total, con espera exponencial) desde el primer nodo sin resultado confirmado. Cuando todos los nodos terminan, un juez (el modelo de decisión, o el modelo de chat si no está habilitado) revisa el resultado; un fallo definitivo se explica en lenguaje simple. El resultado llega como notificación persistida en la campanita del header, con el contador de no leídas; la ejecución, los commits de sus nodos y el gasto del juez se guardan en tablas propias. Los agentes pueden ejecutar workflows con la tool `workflow` si su bloque de permisos `workflows` lo permite. Un creador dedicado (entrevista + validación + aprobación del usuario) genera el YAML; los prompts propios pueden vivir como archivos sueltos en `workflows/prompts/`.
 
 ### Checkpoints y modelo de decisión
 

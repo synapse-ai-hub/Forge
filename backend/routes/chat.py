@@ -178,92 +178,16 @@ async def chat_endpoint(
         # Set error context for this request (inside event_stream so set/reset share same async context)
         error_ctx_token = set_error_context(session_id=session_id, turn_number=turn_number)
         try:
-            # Fase 3: si hay workflow seleccionado y válido, corre el
-            # WorkflowRunner determinista. Si falla la carga, fallback a
-            # smart con aviso. Mismos eventos SSE y Telegram.
-            selected_workflow = "smart"
-            try:
-                raw_selection = session_manager.get_config("selected_workflow")
-                if raw_selection and raw_selection.strip():
-                    selected_workflow = raw_selection.strip()
-            except Exception as exc:
-                log_error(str(exc), source="backend/routes/chat.py:selected_workflow")
-                selected_workflow = "smart"
-            workflow_data = None
-            if selected_workflow != "smart":
-                try:
-                    from backend.agent.utils.workflow_loader import load_workflow
-
-                    loaded = load_workflow(selected_workflow)
-                    if isinstance(loaded, dict) and loaded.get("status") == "success":
-                        workflow_data = loaded.get("data")
-                    else:
-                        logger.warning("Workflow '%s' inválido, fallback a smart", selected_workflow)
-                        yield f"data: {json.dumps({'type': 'chunk', 'content': f'_Workflow {selected_workflow} inválido, usando flujo smart._'}, ensure_ascii=False)}\n\n"
-                        workflow_data = None
-                except Exception as exc:
-                    log_error(str(exc), source="backend/routes/chat.py:load_workflow")
-                    yield f"data: {json.dumps({'type': 'chunk', 'content': f'_Workflow {selected_workflow} no disponible, usando flujo smart._'}, ensure_ascii=False)}\n\n"
-                    workflow_data = None
-            # Fase 6: fuente única de eventos. Workflow válido usa el runner
-            # determinista, si no el flujo smart. Ambos pasan por el mismo
-            # consumo y el mismo envío a Telegram.
-            if workflow_data is not None:
-                try:
-                    from backend.agent.utils.workflows_helpers import verificar_refs
-
-                    refs = verificar_refs(workflow_data)
-                except Exception as exc:
-                    log_error(str(exc), source="backend/routes/chat.py:verificar_refs")
-                    refs = {"ok": False, "faltantes": [{
-                        "nodo": "", "tipo": "", "ref": "",
-                        "detalle": "No se pudieron verificar los recursos del workflow.",
-                    }]}
-                if not refs.get("ok"):
-                    faltantes = refs.get("faltantes", []) or []
-                    detalle = "; ".join(
-                        str(f.get("detalle", "")) for f in faltantes if isinstance(f, dict)
-                    ) or "Faltan recursos del workflow."
-                    aviso = (
-                        f"_No se puede ejecutar el workflow {selected_workflow}: {detalle} "
-                        f"Crealos o elegí otro workflow._"
-                    )
-                    try:
-                        session_manager.save_message(
-                            session_id, "assistant", content=aviso,
-                            turn_number=turn_number, step=1,
-                            status="error", message=detalle,
-                        )
-                    except Exception as exc:
-                        log_error(str(exc), source="backend/routes/chat.py:save_refs_error")
-
-                    async def _aviso_source():
-                        yield f"data: {json.dumps({'type': 'chunk', 'content': aviso}, ensure_ascii=False)}\n\n"
-                        yield "data: [DONE]\n\n"
-
-                    event_source = _aviso_source()
-                else:
-                    from backend.agent.utils.workflow_runner import WorkflowRunner
-
-                    runner = WorkflowRunner(agent=agent, session_manager=session_manager)
-                    event_source = runner.run(
-                        session_id=session_id,
-                        user_message=message,
-                        workflow=workflow_data,
-                        turn_number=turn_number,
-                        stream_cancel_event=stream_cancel_event,
-                    )
-            else:
-                agent_loop = AgentLoop(
-                    agent=agent,
-                    session_manager=session_manager,
-                )
-                event_source = agent_loop.run(
-                    session_id=session_id,
-                    user_message=message,
-                    file_contents=file_contents,
-                    stream_cancel_event=stream_cancel_event,
-                )
+            agent_loop = AgentLoop(
+                agent=agent,
+                session_manager=session_manager,
+            )
+            event_source = agent_loop.run(
+                session_id=session_id,
+                user_message=message,
+                file_contents=file_contents,
+                stream_cancel_event=stream_cancel_event,
+            )
             async for sse_event in event_source:
                 # If client disconnected, signal cancellation but let generator finish naturally
                 # (loop.py will handle aborted event, save partial response, and yield [DONE])

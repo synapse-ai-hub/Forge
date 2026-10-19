@@ -42,9 +42,11 @@ Las respuestas siguen dos formatos:
 - **`metrics`**: métricas de sesiones, mensajes, tools, errores, modelos y costos, con exportación a CSV.
 - **`rag`**: colecciones RAG, compatibilidad de embeddings, reindexado, archivos y URLs.
 - **`scheduler`**: tareas programadas (agenda), ejecuciones y refinado de prompts.
+- **`workflows`**: listado de workflows con su estado, ejecución con play, cancelación e historial de ejecuciones.
+- **`notifications`**: notificaciones persistidas (campanita del header).
 - **`create`**: creación de skills, tools, agentes y workflows vía streaming SSE.
 - **`conversation`**: exportación de conversaciones a Markdown.
-- **`events`**: bus de eventos SSE (Telegram y cambios de configuración → frontend).
+- **`events`**: bus de eventos SSE (Telegram, cambios de configuración, notificaciones y ejecuciones de workflows → frontend).
 - **`telegram`**: estado, activación y sesión activa del bot de Telegram.
 - **`agent_items`**: borrado de skills, tools, agentes, servidores MCP y colecciones; activación de MCP; esquema y prueba de tools.
 - **`billing`**: uso, límites de gasto, estadísticas de facturación y gasto por modelo.
@@ -109,8 +111,6 @@ Con un modelo de decisión habilitado, el evento `decision` informa dos casos:
 
 - `{"action": "discarded", "reason": "unrelated"}`: al iniciar el turno se descartó el trabajo pendiente de un turno anterior porque el mensaje nuevo no lo continúa.
 - `{"action": "blocked", "reason": "guardrail"}`: el mensaje se bloqueó por las reglas de seguridad y no se llamó al LLM. La respuesta es un `chunk` con el aviso del bloqueo.
-
-Si hay un workflow activo distinto de `smart`, antes de ejecutarlo se verifica que existan los agentes, tools y colecciones que referencia. Si falta alguno, el stream responde con un aviso y no ejecuta el workflow.
 
 ---
 
@@ -342,20 +342,6 @@ Lista los servidores MCP configurados con su estado (`connected`, `failed` o `di
 
 **Respuesta:** `{status, servers: McpServer[], error: string | null}`. `McpServer` incluye `label`, `status`, `transport` y, si falló, `error`.
 
-#### `GET /api/config/workflows/selection`
-
-Devuelve el workflow activo y los disponibles. `smart` es el flujo por defecto (router LLM) y siempre está disponible; el resto son archivos `<nombre>.yaml` en `~/.config/synapseForge/workflows/`.
-
-**Respuesta:** contrato con `data: {selected, available[]}`.
-
-#### `POST /api/config/workflows/select`
-
-Activa un workflow (persistido en `config_kv`: `selected_workflow`). Emite el evento `workflow_changed` en el bus de eventos.
-
-**Body (JSON):** `{"workflow": "nombre"}`.
-
-**Respuesta:** contrato con `data: {selected}`. `400` si falta el campo o el workflow no existe.
-
 #### `POST /api/config/workflows/validate`
 
 Valida un YAML de workflow sin escribir nada.
@@ -375,6 +361,8 @@ Valida y guarda un workflow como `<nombre>.yaml`. El `name` del YAML debe coinci
 #### `POST /api/config/workflows/generate`
 
 Genera un workflow en YAML a partir de una descripción y lo valida antes de devolverlo. No escribe en disco.
+
+Para ejecutar un workflow ver la sección Workflows (`POST /api/workflows/{name}/run`).
 
 **Body (JSON):** `{"description": "..."}`.
 
@@ -587,9 +575,9 @@ Refina una descripción en lenguaje natural hasta convertirla en un prompt claro
 
 #### `GET /api/scheduler/permissions/catalog`
 
-Devuelve las tools, skills y agentes disponibles para armar los permisos de una tarea.
+Devuelve las tools, skills, agentes y workflows disponibles para armar los permisos de una tarea.
 
-**Respuesta:** `{status, tools, skills, agents}`.
+**Respuesta:** `{status, tools, skills, agents, workflows}`. `workflows` trae `name` y `description`; sus permisos se guardan como el grupo `tool_permissions.workflow` (`{nombre: "allow"}`).
 
 ---
 
@@ -651,7 +639,7 @@ Exporta una conversación a Markdown.
 
 #### `GET /api/events`
 
-Stream SSE del bus de eventos. El frontend se suscribe para reaccionar a lo que ocurre fuera de su propio chat. Tipos de evento: `telegram_message`, `telegram_command`, `telegram_create`, `model_changed`, `workflow_changed` y `scheduler_run`.
+Stream SSE del bus de eventos. El frontend se suscribe para reaccionar a lo que ocurre fuera de su propio chat. Tipos de evento: `telegram_message`, `telegram_command`, `telegram_create`, `model_changed`, `notification` (una notificación nueva, con su contenido completo) y `workflow_run` (una ejecución cambió de estado: `{run_id, workflow, status, attempt, session_id}`).
 
 **Respuesta:** `text/event-stream` con los eventos del bus.
 
@@ -796,6 +784,62 @@ Devuelve el gasto registrado por modelo.
 **Parámetros (Query):** `provider` (str, opcional).
 
 **Respuesta:** contrato con `data: {spend[], count}`.
+
+---
+
+### 14. Workflows (`backend/routes/workflows.py`)
+
+Ejecución de workflows. El play inicia la ejecución en segundo plano y el resultado llega como notificación. Las ejecuciones corren en paralelo con el chat, el scheduler y otros workflows.
+
+#### `GET /api/workflows`
+
+Lista los workflows con su estado.
+
+**Respuesta:** `{status, workflows: Workflow[]}`. `Workflow` incluye `name`, `description`, `running`, `run_id` (de la ejecución en curso) y `last_run` (última ejecución, o `null`).
+
+#### `POST /api/workflows/{name}/run`
+
+Inicia una ejecución en segundo plano. Verifica antes que existan los agentes, tools y colecciones que el workflow referencia.
+
+**Respuesta:** `{status, message, data: {run_id, session_id}}`. `404` si el workflow no existe, `400` si es inválido o faltan recursos (el mensaje dice qué falta) y `409` si ese workflow ya se está ejecutando.
+
+#### `DELETE /api/workflows/{name}`
+
+Elimina el archivo YAML del workflow y todos sus registros: ejecuciones, commits de nodos, gasto del motor y notificaciones. Las sesiones de sus ejecuciones quedan en el historial. `404` si no existe, `400` si el nombre es inválido y `409` si se está ejecutando.
+
+#### `POST /api/workflows/runs/{run_id}/cancel`
+
+Cancela una ejecución en curso. Queda persistida como `cancelled` y no genera notificación. `404` si la ejecución no está en curso.
+
+#### `GET /api/workflows/runs`
+
+Historial de ejecuciones, de la más reciente a la más antigua.
+
+**Parámetros (Query):** `name` (str, opcional) — filtra por workflow; `limit` (int, por defecto 50, máximo 200).
+
+**Respuesta:** `{status, runs: Run[]}`. `Run` incluye `id`, `workflow_name`, `session_id`, `source` (`play` o `tool`), `status` (`running`, `success`, `error` o `cancelled`), `attempt`, `started_at`, `finished_at`, `result` y `error_text`.
+
+---
+
+### 15. Notifications (`backend/routes/notifications.py`)
+
+Notificaciones de workflows y tareas programadas. Se guardan hasta que el usuario las elimina.
+
+#### `GET /api/notifications`
+
+**Respuesta:** `{status, notifications: Notification[]}`, de la más reciente a la más antigua. `Notification` incluye `id`, `kind` (`workflow` o `task`), `workflow_name` o `task_id`, `run_id`, `title`, `status`, `message`, `session_id`, `read` y `created_at`.
+
+#### `POST /api/notifications/read`
+
+Marca todas como leídas (el usuario abrió la campanita).
+
+#### `DELETE /api/notifications/{notification_id}`
+
+Elimina una notificación. `404` si no existe.
+
+#### `DELETE /api/notifications`
+
+Elimina todas las notificaciones.
 
 ---
 

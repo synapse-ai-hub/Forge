@@ -20,7 +20,7 @@ from backend.agent.utils.db import db_transaction
 from backend.agent.utils.error_logger import log_error
 from backend.agent.utils.queries import load_query
 
-_TASK_ID_RE = re.compile(r'<task\s+id="([^"]+)"')
+_TASK_ID_RE = re.compile(r'<(?:task|workflow)\s+id="([^"]+)"')
 
 
 def _now() -> str:
@@ -120,11 +120,11 @@ def set_task_child(
 
 
 def extract_task_child_id(result_data: Any) -> str | None:
-    """Extract the child session id from a task tool result.
+    """Extract the child session id from a task or workflow tool result.
 
-    The task tool wraps its answer as ``<task id="...">`` XML in the
-    result payload, so the parent can see the child id without any
-    change to the task tool itself.
+    The task and workflow tools wrap their answer as ``<task id="...">`` /
+    ``<workflow id="...">`` XML in the result payload, so the parent can
+    see the child id without any change to the tools themselves.
 
     Args:
         result_data: Tool result (contract dict or raw string).
@@ -247,9 +247,9 @@ def build_resume_message(session_id: str) -> str | None:
                 result = _tool_result_text(row)
                 detail = f"Último resultado registrado: {result}" if result else "Sin resultado registrado."
                 child = row.get("child_id")
-                if row["tool_name"] == "task":
+                if row["tool_name"] in ("task", "workflow"):
                     lines.append(
-                        f"{position}. task({row['tool_args']}) — "
+                        f"{position}. {row['tool_name']}({row['tool_args']}) — "
                         f"sub-sesión: {child or 'no creada'}. {detail}"
                     )
                 else:

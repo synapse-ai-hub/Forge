@@ -24,7 +24,7 @@ import sessionService, {
 import configService from "./services/configService";
 import telegramService from "./services/telegramService";
 import chatService from "./services/chatService";
-import type { SchedulerNotification } from "./services/schedulerService";
+import notificationService, { type AppNotification } from "./services/notificationService";
 
 export type { ContentBlock };
 
@@ -144,11 +144,41 @@ function App() {
   );
   const [telegramEnabled, setTelegramEnabled] = useState(false);
   const [telegramCountdown, setTelegramCountdown] = useState<number | null>(null);
-  /* Header bell notifications: one entry per scheduled-task execution. */
-  const [notifications, setNotifications] = useState<SchedulerNotification[]>([]);
+  /* Header bell notifications: persisted in the backend (workflow runs and
+   * scheduled-task executions). */
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
 
-  const handleClearNotifications = useCallback(() => {
-    setNotifications([]);
+  useEffect(() => {
+    notificationService.list().then(setNotifications).catch(() => {});
+  }, []);
+
+  /* Opening the bell: refresh the list, then mark everything as read. */
+  const handleOpenNotifications = useCallback(async () => {
+    try {
+      setNotifications(await notificationService.list());
+      await notificationService.markAllRead();
+      setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+    } catch {
+      /* The list stays as it was; the next open retries. */
+    }
+  }, []);
+
+  const handleDeleteNotification = useCallback(async (id: number) => {
+    try {
+      await notificationService.remove(id);
+      setNotifications((prev) => prev.filter((n) => n.id !== id));
+    } catch {
+      /* Keep the notification if the backend could not delete it. */
+    }
+  }, []);
+
+  const handleClearNotifications = useCallback(async () => {
+    try {
+      await notificationService.clear();
+      setNotifications([]);
+    } catch {
+      /* Keep the list if the backend could not clear it. */
+    }
   }, []);
 
   /* Initial setup screen: shown on first launch only (until the user saves
@@ -349,19 +379,19 @@ const handleTelegramToggle = useCallback((val: boolean) => {
         // every subscriber — gauge (ChatInterface), ConfigTab dropdown,
         // etc. — refreshes in lockstep.
         window.dispatchEvent(new CustomEvent("model-changed"));
-      } else if (data.type === "scheduler_run") {
-        // A scheduled task finished: push a bell notification and refresh the
-        // sidebar so the session created by the task shows up.
-        setNotifications((prev) => [
-          {
-            id: generateId(),
-            status: data.status === "success" ? "success" : "error",
-            task: data.task || "",
-            detail: data.detail || "",
-            finishedAt: data.finished_at || "",
-          },
-          ...prev,
-        ]);
+      } else if (data.type === "notification") {
+        // A workflow run or a scheduled task finished: persisted by the
+        // backend. Add it to the bell and refresh the sidebar so the session
+        // of the execution shows up.
+        const incoming = data.content as AppNotification;
+        setNotifications((prev) =>
+          prev.some((n) => n.id === incoming.id) ? prev : [incoming, ...prev]
+        );
+        setRefreshTrigger((t) => t + 1);
+      } else if (data.type === "workflow_run") {
+        // A workflow run changed state: tell the workflow cards and refresh
+        // the sidebar (the run session appears when it starts).
+        window.dispatchEvent(new CustomEvent("workflow-run", { detail: data.content }));
         setRefreshTrigger((t) => t + 1);
       } else if (data.type === "telegram_create") {
         // Telegram as remote control ("or"): open/close the same create window
@@ -439,6 +469,8 @@ const handleTelegramToggle = useCallback((val: boolean) => {
           onTelegramToggle={handleTelegramToggle}
           onShowScheduler={() => setShowScheduler(true)}
           notifications={notifications}
+          onOpenNotifications={handleOpenNotifications}
+          onDeleteNotification={handleDeleteNotification}
           onClearNotifications={handleClearNotifications}
         />
       </div>

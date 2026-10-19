@@ -8,7 +8,7 @@
 
 ---
 
-Tests end-to-end de los workflows deterministas: validación del esquema, guardado, selección y ejecución real contra el backend. Usan la misma metodología declarativa que `tests/e2e` (endpoints reales, sin mocks) y aserta sobre **estructura del contrato**, nunca sobre texto exacto del modelo.
+Tests de los workflows deterministas: validación del esquema, guardado, listado y ejecución real (play, reintentos, cancelación, notificaciones). Hay dos capas: escenarios end-to-end contra el backend (misma metodología declarativa que `tests/e2e`: endpoints reales, sin mocks, aserciones sobre **estructura del contrato**, nunca sobre texto exacto del modelo) y tests de pytest contra una base y una carpeta de workflows aisladas.
 
 ---
 
@@ -32,7 +32,25 @@ python -m tests.workflows.runner --only workflow-validate-ok
 
 # Apuntar a otro backend
 python -m tests.workflows.runner --base-url http://192.168.1.100:8000
+
+# Tests de pytest (base y carpeta de workflows temporales, tardan ~1 minuto por los reintentos)
+pytest tests/workflows/test_workflow_runs.py
+pytest tests/workflows/test_workflow_regression.py
 ```
+
+Al terminar, cada corrida de pytest escribe un log con el resultado de cada test en `tests/workflows/reports/pytest_<fecha>.log` (y en `tests/creators/reports/` para los tests de creadores). Lo genera `tests/conftest.py`; las carpetas de reportes están en `.gitignore`.
+
+`test_workflow_regression.py` fija por contrato las decisiones del diseño, sin LLM real (el juez y el explicador se simulan en `agent.decision` y `agent.llm_process`):
+
+- **Tablas:** una base sin las tablas nuevas las recibe al arrancar, y `notifications` exige exactamente un origen.
+- **Motor:** backoff exponencial con tres intentos, workflows distintos en paralelo, juez negativo sin reintento y resultados de los nodos enviados al juez.
+- **Juez y explicador:** decisor listo, umbral, respaldo al LLM, resultado favorable cuando el juez falla, texto genérico sin LLM y prompt en ambas variantes.
+- **Permisos:** bloque `workflows` del router, de los subagentes y de las tareas programadas.
+- **Chat:** siempre pasa por `AgentLoop` y no existe ningún endpoint para seleccionar un workflow.
+- **Notificaciones:** conteo, marcar como leídas, borrar una, limpiar y borrado de las de una tarea eliminada.
+- **Creadores:** una corrida por tipo, el stream llega idéntico y un fallo del registro no rompe al creador.
+
+Los escenarios `workflow-fallo-reintenta` y `workflow-cancelar` usan comandos de shell (`exit 3`, `python -c ...`): el backend necesita `python` en el PATH.
 
 ---
 
@@ -40,38 +58,46 @@ python -m tests.workflows.runner --base-url http://192.168.1.100:8000
 
 | Archivo | Escenarios |
 |---------|-----------|
-| `workflows.yaml` | `workflow-validate-ok`, `workflow-validate-sin-final`, `workflow-validate-run-ok`, `workflow-validate-run-workdir-traversal`, `workflow-save-y-seleccion`, `workflow-save-nombre-invalido`, `workflow-select-inexistente`, `workflow-generate-sin-descripcion` |
-| `workflows_run.yaml` | `workflow-run-echo-e2e`, `workflow-faltantes-amigable` |
+| `workflows.yaml` | `workflow-validate-ok`, `workflow-validate-sin-final`, `workflow-validate-run-ok`, `workflow-validate-run-workdir-traversal`, `workflow-save-y-listado`, `workflow-save-nombre-invalido`, `workflow-run-inexistente`, `workflow-generate-sin-descripcion` |
+| `workflows_run.yaml` | `workflow-run-echo-e2e`, `workflow-faltantes-amigable`, `workflow-fallo-reintenta`, `workflow-cancelar` |
 
 | Escenario | Qué verifica |
 |-----------|--------------|
 | `workflow-validate-*` | `POST /api/config/workflows/validate` acepta un workflow correcto y un nodo `run`, y rechaza un workflow sin nodo `final` y un `workdir` con traversal |
-| `workflow-save-y-seleccion` | Un workflow guardado aparece en `available` y queda activo al seleccionarlo |
+| `workflow-save-y-listado` | Un workflow guardado aparece en `GET /api/workflows` |
 | `workflow-save-nombre-invalido` | El guardado rechaza nombres inválidos |
-| `workflow-select-inexistente` | Seleccionar un workflow que no existe devuelve error |
+| `workflow-run-inexistente` | Ejecutar un workflow que no existe devuelve 404 |
 | `workflow-generate-sin-descripcion` | La generación exige una descripción |
-| `workflow-run-echo-e2e` | Un workflow con un nodo `run` se ejecuta, termina con `[DONE]` y responde con contenido |
-| `workflow-faltantes-amigable` | Un workflow que referencia una tool inexistente no se ejecuta y el chat responde «No se puede ejecutar» |
+| `workflow-run-echo-e2e` | Un workflow con un nodo `run` se ejecuta con play, termina en éxito al primer intento con el resultado del comando y genera su notificación |
+| `workflow-faltantes-amigable` | Un workflow que referencia una tool inexistente no se ejecuta, no crea ningún run y el play responde «No se puede ejecutar» |
+| `workflow-fallo-reintenta` | Un comando que termina con código distinto de cero falla el nodo; el run se reintenta hasta 3 intentos y termina en error con su notificación |
+| `workflow-cancelar` | Cancelar un run en curso lo deja como `cancelled` y no genera notificación |
 
 ---
 
 ## Formato de escenarios YAML
 
-Igual que `tests/e2e` (`chat`, `request`, `expect`), más dos extensiones propias de este runner:
+Igual que `tests/e2e` (`request`, `expect`), más la acción `run` y el bloque `verify` propios de este runner:
 
 ```yaml
 scenario: nombre-unico-del-escenario
 description: Qué verifica este escenario.
-cleanup: true                      # vuelve la selección a smart al terminar
+cleanup: true                      # borra las notificaciones y las sesiones de run que creó
 verify:
-  workflow: e2e-test-workflow      # debe figurar en selection.available
-  selected: e2e-test-workflow      # opcional: debe ser selection.selected
+  workflow: e2e-test-workflow      # debe figurar en GET /api/workflows
 steps:
-  - action: chat
-    message: "ejecutá el workflow"
+  - action: run                    # el botón play
+    workflow: e2e-run-echo
+    timeout: 120                   # segundos de espera a que termine el run
+    cancel_after: 1.5              # opcional: cancela a los N segundos
     expect:
-      done: true
-      response_contains: ["No se puede ejecutar"]   # substrings en el texto final
+      http_status: 200             # del play (por defecto 200)
+      message_contains: ["No se puede ejecutar"]   # substrings del mensaje del play
+      run_status: success          # success | error | cancelled
+      attempts: 3                  # intento en el que terminó
+      result_contains: ["hola"]    # substrings del resultado del run
+      error_contains: ["..."]      # substrings de la explicación del error
+      notification: true           # existe una notificación del run (false: ninguna)
 ```
 
 ---
@@ -80,4 +106,4 @@ steps:
 
 Cada ejecución genera un JSON en `tests/workflows/reports/` con timestamp, totales y resultados por escenario. La carpeta no está versionada.
 
-Los escenarios de guardado escriben archivos `e2e-*.yaml` en `~/.config/synapseForge/workflows/` y no hay endpoint para borrarlos: se sobrescriben en cada corrida.
+Los escenarios de guardado escriben archivos `e2e-*.yaml` en `~/.config/synapseForge/workflows/` y no hay endpoint para borrarlos: se sobrescriben en cada corrida. Las notificaciones y las sesiones de run que crean se eliminan al terminar (`cleanup`); las filas de `workflow_runs` quedan como historial.

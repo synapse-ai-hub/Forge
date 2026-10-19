@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import sys
+from types import SimpleNamespace
 from typing import Any, AsyncGenerator, Optional
 
 from fastapi import File, Form, UploadFile
@@ -32,6 +33,7 @@ from backend.agent.utils.create_helpers import (
 from backend.instances import agent
 from backend.routes.file_text_extractor import extract_text_from_bytes
 from backend.agent.utils.error_logger import log_error
+from backend.agent.utils.creator_runs import track_creator_run
 from backend.routes.create.common import (
     _AGENT_TOOLS_PERMS,
     _FRIENDLY_ERROR,
@@ -410,4 +412,14 @@ async def post_create_skill_stream(
                 "data": {"exist": "No", "skill": nombre_creado, "skill_dir": str(skill_dir or _SKILLS_DIR / nombre_creado)},
             }})
 
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+    return StreamingResponse(
+        track_creator_run(
+            "skill",
+            SimpleNamespace(
+                descripcion=descripcion, name=name, model=model,
+                provider=provider, iterate=iterate,
+            ),
+            event_stream(),
+        ),
+        media_type="text/event-stream",
+    )

@@ -32,6 +32,7 @@ from backend.agent.utils.create_helpers import (
 )
 from backend.instances import agent
 from backend.agent.utils.error_logger import log_error
+from backend.agent.utils.creator_runs import track_creator_run
 from backend.routes.create.common import (
     _AGENT_TOOLS_PERMS,
     _formatear_mensajes,
@@ -436,4 +437,7 @@ async def post_create_workflow_stream(req: CreateWorkflowRequest):
             "data": {"exist": "No", "workflow": found_name, "workflow_path": found_path},
         }})
 
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+    return StreamingResponse(
+        track_creator_run("workflow", req, event_stream()),
+        media_type="text/event-stream",
+    )
