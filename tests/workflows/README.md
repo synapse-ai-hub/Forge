@@ -35,7 +35,20 @@ python -m tests.workflows.runner --base-url http://192.168.1.100:8000
 
 # Tests de pytest (base y carpeta de workflows temporales, tardan ~1 minuto por los reintentos)
 pytest tests/workflows/test_workflow_runs.py
+pytest tests/workflows/test_workflow_regression.py
 ```
+
+Al terminar, cada corrida de pytest escribe un log con el resultado de cada test en `tests/workflows/reports/pytest_<fecha>.log` (y en `tests/creators/reports/` para los tests de creadores). Lo genera `tests/conftest.py`; las carpetas de reportes están en `.gitignore`.
+
+`test_workflow_regression.py` fija por contrato las decisiones del diseño, sin LLM real (el juez y el explicador se simulan en `agent.decision` y `agent.llm_process`):
+
+- **Tablas:** una base sin las tablas nuevas las recibe al arrancar, y `notifications` exige exactamente un origen.
+- **Motor:** backoff exponencial con tres intentos, workflows distintos en paralelo, juez negativo sin reintento y resultados de los nodos enviados al juez.
+- **Juez y explicador:** decisor listo, umbral, respaldo al LLM, resultado favorable cuando el juez falla, texto genérico sin LLM y prompt en ambas variantes.
+- **Permisos:** bloque `workflows` del router, de los subagentes y de las tareas programadas.
+- **Chat:** siempre pasa por `AgentLoop` y no existe ningún endpoint para seleccionar un workflow.
+- **Notificaciones:** conteo, marcar como leídas, borrar una, limpiar y borrado de las de una tarea eliminada.
+- **Creadores:** una corrida por tipo, el stream llega idéntico y un fallo del registro no rompe al creador.
 
 Los escenarios `workflow-fallo-reintenta` y `workflow-cancelar` usan comandos de shell (`exit 3`, `python -c ...`): el backend necesita `python` en el PATH.
 
