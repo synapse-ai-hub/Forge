@@ -408,7 +408,8 @@ def _run(project_dir: str) -> None:
         try:
             import urllib.request
 
-            urllib.request.urlopen("http://127.0.0.1:8000/api/shutdown", timeout=2)
+            req = urllib.request.Request("http://127.0.0.1:8000/api/shutdown", method="POST")
+            urllib.request.urlopen(req, timeout=2)
             time.sleep(5)
         except Exception:
             pass
