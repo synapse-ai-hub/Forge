@@ -288,7 +288,10 @@ class CompletionMixin:
                 prompt_tokens = 0
                 total_tokens = 0
                 if response.usage_metadata:
-                    completion_tokens = response.usage_metadata.candidates_token_count or 0
+                    # Thinking tokens are billed as output: count them too.
+                    completion_tokens = (response.usage_metadata.candidates_token_count or 0) + (
+                        getattr(response.usage_metadata, "thoughts_token_count", None) or 0
+                    )
                     prompt_tokens = response.usage_metadata.prompt_token_count or 0
                     total_tokens = response.usage_metadata.total_token_count or 0
                 total_time = round(time.time() - _proc_t0, 2)
