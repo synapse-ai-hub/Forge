@@ -49,7 +49,7 @@ class DispatchMixin:
             return
 
         # "cancelar" aborts any pending question or exits a skill/RAG mode.
-        if text.strip().lower() == "cancelar":
+        if text.strip().lower() in ("cancelar", "/cancelar"):
             if chat_id in self._mode:
                 await self._exit_mode(chat_id, "Cancelado.")
                 return

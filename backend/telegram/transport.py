@@ -21,17 +21,21 @@ class TransportMixin:
             chat_id: The Telegram chat id.
             path: The absolute path of the file to send.
         """
-        url = _TELEGRAM_API.format(token=self.token) + "/sendDocument"
-        filename = os.path.basename(path)
-        with open(path, "rb") as fh:
-            resp = await self._client.post(
-                url,
-                data={"chat_id": chat_id},
-                files={"document": (filename, fh)},
-            )
-        payload = resp.json()
-        if not payload.get("ok"):
-            raise RuntimeError(payload.get("description", "sendDocument failed"))
+        try:
+            url = _TELEGRAM_API.format(token=self.token) + "/sendDocument"
+            filename = os.path.basename(path)
+            with open(path, "rb") as fh:
+                resp = await self._client.post(
+                    url,
+                    data={"chat_id": chat_id},
+                    files={"document": (filename, fh)},
+                )
+            payload = resp.json()
+            if not payload.get("ok"):
+                raise RuntimeError(payload.get("description", "sendDocument failed"))
+        except Exception as exc:
+            logger.warning("Failed to send Telegram document: %s", exc)
+            raise
 
     async def send_message(self, chat_id: int, text: str) -> None:
         """Send a text message to a chat (used for the final answer)."""
@@ -39,8 +43,28 @@ class TransportMixin:
             return
 
         url = _TELEGRAM_API.format(token=self.token) + "/sendMessage"
+        # Telegram rejects messages over 4096 chars: split preserving lines.
+        max_len = 4096
+        chunks: list[str] = []
+        remaining = text
+        while len(remaining) > max_len:
+            cut = remaining.rfind("\n", 0, max_len)
+            if cut <= 0:
+                cut = max_len
+            chunks.append(remaining[:cut])
+            remaining = remaining[cut:].lstrip("\n")
+        chunks.append(remaining)
         try:
-            resp = await self._client.post(url, json={"chat_id": chat_id, "text": text})
+            for chunk in chunks:
+                if not chunk:
+                    continue
+                resp = await self._client.post(url, json={"chat_id": chat_id, "text": chunk})
+                try:
+                    payload = resp.json()
+                    if not payload.get("ok"):
+                        logger.warning("Telegram sendMessage rejected: %s", payload.get("description"))
+                except Exception:
+                    pass
             
 
         except Exception as exc:

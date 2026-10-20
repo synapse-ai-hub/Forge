@@ -185,14 +185,18 @@ class CreateFlowsMixin:
             return
         mensajes = data.get("mensajes", [])
         try:
-            from backend.routes.create import CreateSkillRequest, post_create_skill_stream
+            import json as _json
+
+            from backend.routes.create.skill import post_create_skill_stream
 
             resp = await post_create_skill_stream(
-                CreateSkillRequest(
-                    descripcion=descripcion,
-                    name=data.get("name"),
-                    mensajes=mensajes,
-                )
+                descripcion=descripcion,
+                name=data.get("name"),
+                mensajes=_json.dumps(mensajes),
+                model=None,
+                provider=None,
+                iterate=False,
+                files=None,
             )
             accumulated = ""
             async for raw in resp.body_iterator:
