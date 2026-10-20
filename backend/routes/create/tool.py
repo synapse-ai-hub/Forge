@@ -31,6 +31,7 @@ from backend.routes.create.common import (
     _AGENT_TOOLS_PERMS,
     _FRIENDLY_ERROR_TOOL,
     _TOOLS_DIR,
+    _formatear_dato,
     _formatear_mensajes,
     _sse,
     _try_parse_json,
@@ -227,7 +228,7 @@ async def post_create_tool_stream(req: CreateToolRequest):
         else:
             parametros_text = "(No se declararon parámetros. Inferir los necesarios.)"
 
-        datos_text = "\n".join(f"  - {d}" for d in datos) if datos else "(No se declararon datos externos. Inferir si los necesita.)"
+        datos_text = "\n".join(f"  - {_formatear_dato(d)}" for d in datos) if datos else "(No se declararon datos externos. Inferir si los necesita.)"
 
         try:
             prompt = agent.prompt(
@@ -317,7 +318,7 @@ async def post_create_tool_stream(req: CreateToolRequest):
         else:
             params_text = "(Inferir parámetros según la descripción.)"
 
-        datos_text = "\n".join(f"- {d}" for d in llm_datos) if llm_datos else "(Si la tool necesita credenciales, documentarlas acá.)"
+        datos_text = "\n".join(f"- {_formatear_dato(d)}" for d in llm_datos) if llm_datos else "(Si la tool necesita credenciales, documentarlas acá.)"
 
         conversacion = _formatear_mensajes(mensajes) if mensajes else f"**Usuario**: {task}"
 

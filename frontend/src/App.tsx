@@ -63,6 +63,8 @@ export interface Message {
   turn?: number;
   /** User message the guardrail blocked (rendered in red). */
   blocked?: boolean;
+  /** Transient "retrying…" notice while streaming; never part of the answer. */
+  retryNotice?: string | null;
 }
 
 /** Generate a unique ID with safe fallback when crypto is unavailable. */
@@ -74,9 +76,11 @@ function generateId(): string {
 }
 
 /** Map backend session messages to the frontend Message shape. */
-function mapSessionMessages(raw: SessionMessage[]): Message[] {
+function mapSessionMessages(raw: SessionMessage[], sessionId: string): Message[] {
   return raw.map((m) => ({
-    id: m.id,
+    // El backend numera las respuestas `turn-N` en cada sesión; sin el id de
+    // sesión React reutiliza las burbujas (y el estado de sus tools) al cambiar.
+    id: `${sessionId}:${m.id}`,
     type: m.type,
     turn: m.turn_number ?? undefined,
     content: m.type === "user" ? m.content : "",
@@ -302,7 +306,7 @@ const handleTelegramToggle = useCallback((val: boolean) => {
     try {
       const data = await sessionService.getSession(id);
       setCurrentSessionId(id);
-      setMessages([WELCOME_MESSAGE, ...mapSessionMessages(data.messages)]);
+      setMessages([WELCOME_MESSAGE, ...mapSessionMessages(data.messages, id)]);
       setIsStreaming(false);
       // Restore the context-window gauge from the saved session data
       const ctx = data.context;

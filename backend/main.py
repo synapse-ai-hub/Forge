@@ -16,7 +16,9 @@ from typing import Dict
 
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
@@ -333,6 +335,16 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+@app.exception_handler(RequestValidationError)
+async def _validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    """Persist 422 validation failures in error_log and keep FastAPI's default response."""
+    log_error(
+        f"422 {request.method} {request.url.path}: {exc.errors()}",
+        source="main.py:request_validation",
+    )
+    return JSONResponse(status_code=422, content={"detail": jsonable_encoder(exc.errors())})
+
 
 # ---------------------------------------------------------------------------
 # CORS middleware

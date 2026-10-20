@@ -81,6 +81,16 @@ Además de las tools internas del sistema, se pueden crear herramientas personal
 4. La función debe ser `async` y debe devolver el contrato `{status, message, data, usage}`.
 5. Una vez creada, se puede habilitar para cualquier agente agregándola en su `permissions.tools`.
 
+### Variables de entorno y API keys de una tool externa
+
+Las credenciales (API keys, tokens, endpoints privados) **no van en el código de la tool ni en el chat**. Van en el archivo `~/.config/synapseForge/tools/lib/.env`, una línea `NOMBRE=valor` por variable (por ejemplo `SCRAPINGBEE_API_KEY=xxxx`).
+
+- La tool las lee con `os.getenv("NOMBRE")`. Para que se carguen, al inicio del archivo debe hacer `load_dotenv(dotenv_path=_TOOLS_DIR / "lib" / ".env")` (`from dotenv import load_dotenv`, con `_TOOLS_DIR = Path(__file__).resolve().parent`). Las tools que genera el creador ya lo hacen.
+- Si la variable falta, la tool debe devolver un error claro indicando cuál falta, sin inventar valores.
+- Esas variables son solo para las tools externas. Las API keys de los providers de LLM no van acá: se cargan en Configuración → Providers.
+- Si agregás o cambiás una variable en `lib/.env`, la tool la recoge la próxima vez que se importa; si no la ve, reiniciá el backend.
+- Al crear una tool con el LLM, los datos externos que declares en el formulario ("Datos externos") se documentan en la tool, pero el valor real lo cargás vos en `lib/.env`.
+
 ### Sandbox de prueba
 
 Al crear una tool con el LLM, aparece un botón **Probar** que abre un panel interactivo. El sistema introspea la función y genera automáticamente un formulario con los parámetros detectados (nombres, tipos, valores por defecto y campos requeridos). Completás los campos, hacés clic en **Ejecutar** y ves el resultado sin tener que salir de la pantalla.

@@ -553,9 +553,26 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
         telegramChatId,
       });
 
+      let retryActive = false;
       for await (const event of eventStream) {
         // console.log(`[DEBUG_TIEMPO_SSE] event received type=${event.type} — t=${performance.now()}, elapsed=${performance.now() - _t0}`);
+        // El aviso de reintento es transitorio: desaparece con cualquier otro evento.
+        if (retryActive && event.type !== "retry") {
+          retryActive = false;
+          setMessages((prev) =>
+            prev.map((m) => (m.id === assistantId ? { ...m, retryNotice: null } : m)),
+          );
+        }
         switch (event.type) {
+          case "retry":
+            retryActive = true;
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === assistantId ? { ...m, retryNotice: String(event.content || "") } : m,
+              ),
+            );
+            break;
+
           case "router_status":
           case "reasoning":
             // Normalizar \n en los chunks de reasoning para evitar que se vean en líneas separadas
@@ -890,7 +907,7 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
       setMessages((prev) => {
         const matched = prev.some((m) => m.id === assistantId);
         // console.log(`[DEBUG_TIEMPO_SSE] finally setMessages — assistantId=${assistantId}, matchFound=${matched}, prevLen=${prev.length}, t=${performance.now()}`);
-        return prev.map((m) => (m.id === assistantId ? { ...m, isStreaming: false } : m));
+        return prev.map((m) => (m.id === assistantId ? { ...m, isStreaming: false, retryNotice: null } : m));
       });
       onSessionEnd?.();
     }
