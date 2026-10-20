@@ -1,7 +1,4 @@
-const MODE = import.meta.env.VITE_MODE || "dev";
-const API_BASE_URL = MODE === "prod"
-  ? (import.meta.env.VITE_URL_PROD || "http://localhost:8000")
-  : (import.meta.env.VITE_URL_DEV || "http://localhost:8000");
+import { API_BASE_URL } from "../config/api";
 
 export interface Quote {
   id: string;

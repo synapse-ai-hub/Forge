@@ -14,8 +14,9 @@ import { MessageRow } from "../components/chatBlocks";
 import { CreateModelSelector } from "../components/CreateModelSelector";
 import type { Message, ContentBlock } from "../App";
 import { saveFileWithPicker, fetchConversationMarkdown } from "../utils/conversationExport";
+import { API_BASE_URL } from "../config/api";
 
-const API = (import.meta.env.VITE_URL_BASE || "http://localhost:8000") + "/api";
+const API = API_BASE_URL + "/api";
 
 /** Generate a unique ID with safe fallback when crypto is unavailable. */
 function generateId(): string {

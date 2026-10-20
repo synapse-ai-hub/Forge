@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState, type ChangeEvent, type FormEvent } from "react";
 import { Database, Plus, Trash2, Upload, Link2, FolderOpen } from "lucide-react";
 import { configService } from "../services/configService";
+import { API_BASE_URL } from "../config/api";
 
-const API = (import.meta.env.VITE_URL_BASE || "http://localhost:8000") + "/api";
+const API = API_BASE_URL + "/api";
 
 const ALLOWED_EXTENSIONS = /\.(pdf|txt|md|docx|doc|csv|xlsx|xls|json|xml|yaml|yml|py)$/i;
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50 MB por archivo
