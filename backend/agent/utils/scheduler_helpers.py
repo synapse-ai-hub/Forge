@@ -211,6 +211,18 @@ def add_task(
     if error:
         return {"status": "error", "message": error}
 
+    # Task names share the .md file namespace: reject duplicates so deleting
+    # one task never breaks another.
+    try:
+        for existing in list_tasks():
+            if (existing.get("name") or "").lower() == name.lower():
+                return {
+                    "status": "error",
+                    "message": f"Ya existe una tarea con el nombre '{name}'. Elegí otro nombre.",
+                }
+    except Exception:
+        pass
+
     # Every task gets a dedicated sub-agent named after the task; reject it
     # if that name is already taken by a user-created agent.
     if _agent_name_conflict(name):
@@ -588,13 +600,12 @@ def mark_slot_fired(task_id: str, slot_key: str, date_str: str) -> None:
         date_str: Today's date (``YYYY-MM-DD``).
     """
     try:
-        with get_connection() as conn:
+        with db_transaction() as conn:
             row = conn.execute(
                 load_query("scheduler/get_slot_runs.sql"), (task_id,)
             ).fetchone()
             slot_runs = _parse_json_field(row["slot_runs"] if row else None, {})
             slot_runs[slot_key] = date_str
-        with db_transaction() as conn:
             conn.execute(
                 load_query("scheduler/update_slot_runs.sql"),
                 (json.dumps(slot_runs, ensure_ascii=False), task_id),
@@ -845,6 +856,7 @@ class SchedulerService:
         self._running = False
         # Only one scheduled execution at a time.
         self._exec_lock = asyncio.Lock()
+        self._fired_tasks: set[asyncio.Task] = set()
 
     async def start(self) -> None:
         """Start the background check loop (idempotent)."""
@@ -876,12 +888,27 @@ class SchedulerService:
                 logger.warning("Scheduler loop error: %s", exc)
             await asyncio.sleep(CHECK_INTERVAL_SECONDS)
 
+    async def _run_task_guarded(self, task: dict) -> None:
+        """Execute one task holding the serial lock.
+
+        Runs as a background asyncio task so a long execution never blocks
+        the minute check and other due tasks are still evaluated.
+        """
+        async with self._exec_lock:
+            try:
+                logger.info("Executing scheduled task: %s", task["prompt"][:60])
+                await execute_task(task)
+            except Exception as exc:
+                log_error(str(exc), source="backend/agent/utils/scheduler_helpers.py:_run_task_guarded")
+                logger.warning("Scheduled task failed: %s", exc)
+
     async def _check_due_tasks(self) -> None:
-        """Execute every enabled task whose time matches the current minute.
+        """Queue every enabled task whose time matches the current minute.
 
         Supports multiple slots per task: the primary slot (``time``/``days``)
         plus any additional slots in ``repetitions``.  Each slot is deduped
-        independently via ``slot_runs``.
+        independently via ``slot_runs``. Executions are launched as background
+        tasks so a long task never makes a later task miss its minute.
         """
         now = datetime.now()
         today = now.strftime("%Y-%m-%d")
@@ -910,18 +937,12 @@ class SchedulerService:
                 if slot_runs.get(slot_key) == today:
                     continue
 
-                if self._exec_lock.locked():
-                    logger.info(
-                        "Scheduled task deferred (another execution in progress): %s",
-                        task["prompt"][:60],
-                    )
-                    continue
-
-                # Mark before executing so a restart never double-fires the task.
+                # Mark before queueing so a restart never double-fires the task.
                 mark_slot_fired(task["id"], slot_key, today)
-                async with self._exec_lock:
-                    logger.info("Executing scheduled task: %s", task["prompt"][:60])
-                    await execute_task(task)
+                logger.info("Queueing scheduled task: %s", task["prompt"][:60])
+                fired = asyncio.create_task(self._run_task_guarded(dict(task)))
+                self._fired_tasks.add(fired)
+                fired.add_done_callback(self._fired_tasks.discard)
                 # Break after first slot match per task to avoid double-execution
                 # in the same check cycle.
                 break

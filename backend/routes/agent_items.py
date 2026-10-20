@@ -67,6 +67,20 @@ def _make_response(
     )
 
 
+def _is_plain_name(name: str) -> bool:
+    """Return True if name is a single path component.
+
+    Rejects separators of both platforms, parent references and drive
+    letters: on Windows Path(base) / absolute replaces the base, so a
+    check for dot-dot and slash alone lets absolute paths through.
+    """
+    if not name or name in (".", ".."):
+        return False
+    if any(ch in name for ch in ("/", "\\", ":")):
+        return False
+    return ".." not in name and Path(name).name == name
+
+
 def _rmtree(path: Path) -> bool:
     """Remove a directory tree."""
     try:
@@ -130,7 +144,7 @@ async def delete_skill(name: str) -> JSONResponse:
     Returns:
         A JSONResponse with the operation result.
     """
-    if not name or ".." in name or "/" in name:
+    if not _is_plain_name(name):
         return _make_response("error", "Nombre de skill inválido.", 400)
 
     skill_dir = get_skills_dir() / name
@@ -159,7 +173,7 @@ async def delete_tool(name: str) -> JSONResponse:
     Returns:
         A JSONResponse with the operation result.
     """
-    if not name or ".." in name or "/" in name:
+    if not _is_plain_name(name):
         return _make_response("error", "Nombre de tool inválido.", 400)
 
     # La tool puede estar como nombre sin extensión
@@ -191,7 +205,7 @@ async def delete_agent(name: str) -> JSONResponse:
     Returns:
         A JSONResponse with the operation result.
     """
-    if not name or ".." in name or "/" in name:
+    if not _is_plain_name(name):
         return _make_response("error", "Nombre de agente inválido.", 400)
 
     agent_path = get_agents_dir() / f"{name}.md"
@@ -301,16 +315,18 @@ async def delete_knowledge_collection(collection: str) -> JSONResponse:
     Returns:
         A JSONResponse with the operation result.
     """
-    if not collection or ".." in collection or "/" in collection:
+    if not _is_plain_name(collection):
         return _make_response("error", "Nombre de colección inválido.", 400)
 
-    coll_dir = get_knowledge_dir() / collection
-    if not coll_dir.is_dir():
-        return _make_response("error", f"Colección '{collection}' no encontrada.", 404)
-
-    logger.info("Eliminando colección vectorial: %s", coll_dir)
-    ok = _rmtree(coll_dir)
-    if not ok:
+    # Collections live inside Chroma (not as directories): delete them there.
+    try:
+        db = get_vector_db()
+        if collection not in [c["name"] for c in db.list_collections()]:
+            return _make_response("error", f"Colección '{collection}' no encontrada.", 404)
+        logger.info("Eliminando colección vectorial: %s", collection)
+        db.delete_collection(collection)
+    except Exception as exc:
+        log_error(str(exc), source="agent_items.py:delete_knowledge_collection")
         return _make_response(
             "error", f"No se pudo eliminar la colección '{collection}'.", 500
         )
@@ -332,6 +348,11 @@ def _load_tool_module(tool_name: str) -> tuple[Any, str] | None:
     """
     tools_dir = get_tools_dir()
     tool_path = tools_dir / f"{tool_name}.py"
+    try:
+        if tool_path.resolve().parent != tools_dir.resolve():
+            return None
+    except OSError:
+        return None
     if not tool_path.is_file():
         return None
 
@@ -368,7 +389,7 @@ async def get_tool_schema(tool_name: str) -> JSONResponse:
     Returns:
         JSONResponse with ``{properties, required}`` or error.
     """
-    if not tool_name or ".." in tool_name or "/" in tool_name:
+    if not _is_plain_name(tool_name):
         return _make_response("error", "Nombre de tool inválido.", 400)
 
     result = _load_tool_module(tool_name)
@@ -456,7 +477,7 @@ async def test_tool(
     Returns:
         JSONResponse with the tool's contract result.
     """
-    if not tool_name or ".." in tool_name or "/" in tool_name:
+    if not _is_plain_name(tool_name):
         return _make_response("error", "Nombre de tool inválido.", 400)
 
     result = _load_tool_module(tool_name)

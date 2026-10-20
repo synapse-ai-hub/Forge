@@ -1,6 +1,6 @@
+import { API_BASE_URL } from "../config/api";
 /** Service for scheduled tasks (agenda): CRUD + execution history. */
 
-const API_BASE_URL = import.meta.env.VITE_URL_BASE || "http://localhost:8000";
 
 /** Permission entry: "allow" | "deny". */
 export type PermissionAction = "allow" | "deny";

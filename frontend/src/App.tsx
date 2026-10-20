@@ -25,6 +25,7 @@ import configService from "./services/configService";
 import telegramService from "./services/telegramService";
 import chatService from "./services/chatService";
 import notificationService, { type AppNotification } from "./services/notificationService";
+import { API_BASE_URL } from "./config/api";
 
 export type { ContentBlock };
 
@@ -224,7 +225,6 @@ function App() {
 
   // Heartbeat: ping backend every 10s so watchdog knows frontend is alive
   useEffect(() => {
-    const API_BASE_URL = import.meta.env.VITE_URL_BASE || "http://localhost:8000";
     const interval = setInterval(() => {
       fetch(`${API_BASE_URL}/api/heartbeat`, { method: "POST", keepalive: true }).catch(() => {});
     }, 10000);
@@ -335,7 +335,6 @@ const handleTelegramToggle = useCallback((val: boolean) => {
   // Listen to backend events (SSE) so Telegram messages/commands run the
   // exact same chat flow as if the user had typed in the web UI.
   useEffect(() => {
-    const API_BASE_URL = import.meta.env.VITE_URL_BASE || "http://localhost:8000";
     const es = new EventSource(`${API_BASE_URL}/api/events`);
     es.onmessage = (ev) => {
       let data: any;
@@ -412,7 +411,7 @@ const handleTelegramToggle = useCallback((val: boolean) => {
             if (createWindowRef.current) {
               createWindowRef.current.close();
             }
-            createWindowRef.current = window.open(`${base}/${page}`, "_blank", "noopener,noreferrer");
+            createWindowRef.current = window.open(`${base}/${page}`, "_blank");
           }
         } else if (action === "close") {
           if (createWindowRef.current) {

@@ -1,6 +1,6 @@
+import { API_BASE_URL } from "../config/api";
 /** Service for workflows: list with state, play, cancel and delete. */
 
-const API_BASE_URL = import.meta.env.VITE_URL_BASE || "http://localhost:8000";
 
 export type WorkflowRunStatus = "running" | "success" | "error" | "cancelled";
 

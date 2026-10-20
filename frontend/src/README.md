@@ -171,10 +171,9 @@ Crea `.env` en la raíz del proyecto (el `envDir` de Vite apunta a `../`):
 VITE_MODE=dev            # "dev" o "prod"
 VITE_URL_DEV=http://localhost:8000
 VITE_URL_PROD=http://localhost:8000
-VITE_URL_BASE=http://localhost:8000
 ```
 
-Los servicios `chatService`, `configService`, `sessionService`, `contextFilesService` y `quoteHistoryService` usan `VITE_MODE` para elegir entre `VITE_URL_DEV` y `VITE_URL_PROD`. `VITE_URL_BASE` es la base de la API en `metricsService`, `schedulerService`, `telegramService` y en los componentes y páginas que llaman a la API directamente (`App`, uso y facturación, páginas de creación y de RAG). `VITE_MODE=dev` además muestra las pestañas **Agente** y **Crear** del sidebar.
+Todo el frontend toma la URL del backend de `src/config/api.ts`: con `VITE_MODE=prod` usa `VITE_URL_PROD`, con cualquier otro valor usa `VITE_URL_DEV`. Un valor vacío significa el mismo origen. `VITE_MODE=dev` además muestra las pestañas **Agente** y **Crear** del sidebar.
 
 ---
 

@@ -34,6 +34,7 @@ import { FileChip, FileWarningBanner, MessageRow } from "../components/chatBlock
 import { ContextGauge } from "../components/ContextGauge";
 import { useSessionFeedback } from "./useSessionFeedback";
 import type { Message, SubagentEvent, SubagentStep, ContentBlock } from "../App";
+import { API_BASE_URL } from "../config/api";
 
 /* ------------------------------------------------------------------ */
 /*  Exported welcome message for App initialization                   */
@@ -391,7 +392,6 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
   const handleShutdown = useCallback(async () => {
     if (!window.confirm("¿Cerrar la aplicación completamente?")) return;
     try {
-      const API_BASE_URL = import.meta.env.VITE_URL_BASE || "http://localhost:8000";
       await fetch(`${API_BASE_URL}/api/shutdown`, { method: "POST" });
     } catch {
       // Ignore network errors - server is shutting down
@@ -628,11 +628,23 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
                 typeof payload.name === "string" ? payload.name : "unknown";
               const toolResultValue =
                 "result" in payload ? payload.result : payload;
-              // Update accumulatedBlocks
-              for (let i = accumulatedBlocks.length - 1; i >= 0; i--) {
-                if (accumulatedBlocks[i].type === "tool" && (accumulatedBlocks[i] as any).result === undefined) {
+              // Update accumulatedBlocks: backend emits results in call order,
+              // so assign to first pending (optionally matching name).
+              let placed = false;
+              for (let i = 0; i < accumulatedBlocks.length; i++) {
+                const b = accumulatedBlocks[i] as any;
+                if (b.type === "tool" && b.result === undefined && (b.name === toolName || b.name === "unknown" || toolName === "unknown")) {
                   accumulatedBlocks[i] = { ...accumulatedBlocks[i], result: toolResultValue } as any;
+                  placed = true;
                   break;
+                }
+              }
+              if (!placed) {
+                for (let i = 0; i < accumulatedBlocks.length; i++) {
+                  if (accumulatedBlocks[i].type === "tool" && (accumulatedBlocks[i] as any).result === undefined) {
+                    accumulatedBlocks[i] = { ...accumulatedBlocks[i], result: toolResultValue } as any;
+                    break;
+                  }
                 }
               }
               setMessages((prev) =>

@@ -16,10 +16,10 @@ COPY frontend/ ./
 
 # Build in production mode (API calls resolve to same origin by default)
 ARG VITE_MODE=prod
-ARG VITE_URL_BASE=
+ARG VITE_URL_DEV=
 ARG VITE_URL_PROD=
 ENV VITE_MODE=$VITE_MODE \
-    VITE_URL_BASE=$VITE_URL_BASE \
+    VITE_URL_DEV=$VITE_URL_DEV \
     VITE_URL_PROD=$VITE_URL_PROD
 
 RUN npm run build

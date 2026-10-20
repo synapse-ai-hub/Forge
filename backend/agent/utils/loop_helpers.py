@@ -201,6 +201,7 @@ def fetch_context_window_turns() -> int:
 def build_system_prompt(
     agent_name: str | None = None,
     tools: Iterable[str] | None = None,
+    task_perms: dict | None = None,
 ) -> str:
     """Build the system prompt for an agent.
 
@@ -218,6 +219,9 @@ def build_system_prompt(
             includes the sections of the tools it can use. ``None`` means
             all tools for the router and the agent's own tools for a
             sub-agent.
+        task_perms: Router only. Nested ``task`` permission; when given,
+            the ``## Agentes`` section lists only the agents it allows.
+            The section is left out when the router has no ``task`` tool.
 
     Returns:
         The system prompt string.
@@ -231,6 +235,10 @@ def build_system_prompt(
         result = get_agent_prompt(agent_name)
         if result.get("status") == "success":
             base = result.get("data", "") or ""
+            # Context files reach sub-agents too (not only the router).
+            context_text = load_context_text()
+            if context_text:
+                base = "\n\n---\n\n".join(p for p in (base, f"## Contexto\n{context_text}") if p)
             if tools is None:
                 tools = _agent_tool_names(agent_name)
             mandatory = _mandatory_block(tools)
@@ -284,6 +292,18 @@ def build_system_prompt(
         if agents_result.get("status") == "success"
         else []
     )
+    if "task" not in tools:
+        agents = []
+    elif isinstance(task_perms, dict) and task_perms:
+        from backend.agent.permissions import wildcard_match
+
+        agents = [
+            a for a in agents
+            if any(
+                action == "allow" and wildcard_match(key, a["name"])
+                for key, action in task_perms.items()
+            )
+        ]
     agents_str = ""
     if agents:
         agents_str = "\n".join(

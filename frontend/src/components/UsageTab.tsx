@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { TrendingUp, RefreshCw, AlertCircle, DollarSign } from "lucide-react";
+import { API_BASE_URL } from "../config/api";
 
-const API_BASE_URL = import.meta.env.VITE_URL_BASE || "http://localhost:8000";
 
 export interface UsageData {
   by_provider: {

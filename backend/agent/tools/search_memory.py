@@ -56,7 +56,13 @@ class SearchMemoryMixin:
                     )
 
                 # Exclude the current session so it never retrieves itself.
-                current_session_id = getattr(self, "_current_session_id", None)
+                from backend.agent.utils.loop_helpers import _tool_call_ctx
+
+                _snap = _tool_call_ctx.get()
+                current_session_id = (
+                    _snap.get("parent_session_id") if _snap is not None
+                    else getattr(self, "_current_session_id", None)
+                )
                 where = (
                     {"session_id": {"$ne": current_session_id}}
                     if current_session_id

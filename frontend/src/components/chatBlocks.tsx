@@ -22,12 +22,23 @@ import DOMPurify from "dompurify";
 import { renderMermaid } from "../utils/mermaid";
 import type { Message, SubagentEvent, SubagentStep } from "../App";
 import type { FeedbackType } from "../services/feedbackService";
+import { API_BASE_URL } from "../config/api";
 
 /* ------------------------------------------------------------------ */
 /*  TypingIndicator                                                   */
 /* ------------------------------------------------------------------ */
 
 /** Bouncing-dots typing indicator. */
+/**
+ * A string result is an error only when it is the tool error payload
+ * (`{"error": ...}`, possibly wrapped in `<tool_output>` when reloaded from
+ * history). The word "error" inside normal content (a log, a file) is not.
+ */
+function isErrorText(text: string): boolean {
+  const body = text.replace(/^\s*<tool_output[^>]*>\s*/, "");
+  return /^\s*\{\s*"error"\s*:/.test(body);
+}
+
 function TypingIndicator() {
   return (
     <div className="flex items-center gap-1.5 px-1" role="status" aria-label="Escribiendo...">
@@ -239,7 +250,7 @@ function ToolCallBlock({
     )) ||
     (!isTask && typeof result.result === "object" && result.result !== null && result.result.status === "error") ||
     (!isTask && typeof result.result === "object" && result.result !== null && "error" in result.result) ||
-    (typeof result.result === "string" && result.result.toLowerCase().includes("error"))
+    (typeof result.result === "string" && isErrorText(result.result))
   );
 
   // Find matching child session ID from real-time events or result XML.
@@ -325,7 +336,6 @@ function ToolCallBlock({
 
     const childId = match[1];
     try {
-      const API_BASE_URL = import.meta.env.VITE_URL_BASE || "http://localhost:8000";
       const response = await fetch(`${API_BASE_URL}/api/sessions/${encodeURIComponent(childId)}`);
       const data = await response.json();
       if (data?.data?.messages) {
@@ -403,7 +413,7 @@ function ToolCallBlock({
     if (!childResult) return childDone ? "error" : "calling";
     if (
       (typeof childResult === "object" && childResult !== null && childResult.status === "error") ||
-      (typeof childResult === "string" && childResult.toLowerCase().includes("error"))
+      (typeof childResult === "string" && isErrorText(childResult))
     ) return "error";
     return "success";
   };

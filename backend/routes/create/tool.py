@@ -415,8 +415,8 @@ async def post_create_tool_stream(req: CreateToolRequest):
             return
 
         yield _sse({"type": "tool_result_final", "content": {
-            "status": "success",
-            "message": f"Tool '{name or 'tool'}' creada exitosamente.",
+            "status": "error",
+            "message": f"No se pudo verificar la creación de la tool '{name or 'tool'}'.",
             "data": {"exist": "No", "tool": name or "tool", "tool_path": str(_TOOLS_DIR / f"{name or 'tool'}.py")},
         }})
 

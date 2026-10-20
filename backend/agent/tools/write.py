@@ -23,7 +23,9 @@ class WriteMixin:
                 dict with ``{status, message, data, usage}``.
             """
             try:
-                os.makedirs(os.path.dirname(file_path), exist_ok=True)
+                parent = os.path.dirname(file_path)
+                if parent:
+                    os.makedirs(parent, exist_ok=True)
                 with open(file_path, "w", encoding="utf-8") as f:
                     f.write(content)
                 return make_success_response(

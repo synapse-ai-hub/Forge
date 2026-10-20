@@ -327,24 +327,26 @@ provider: Optional provider override (any curated provider id,
                                 if cleaned_output:
                                     clean_text = self.clean(clean_text)
                                 yield {'type': 'chunk', 'content': clean_text}
-                    # Accumulate streaming tool_calls (Ollama sends them in chunks)
+                    # Accumulate tool_calls. Ollama sends every call complete
+                    # (name + args) and spreads parallel calls over several
+                    # chunks: each one is a new call, never a fragment.
                     if chunk.message and chunk.message.tool_calls:
-                        for idx, tc in enumerate(chunk.message.tool_calls):
-                            if idx not in accumulated_tool_calls:
-                                accumulated_tool_calls[idx] = {"id": "", "name": "", "arguments": ""}
+                        for tc in chunk.message.tool_calls:
+                            idx = len(accumulated_tool_calls)
+                            accumulated_tool_calls[idx] = {"id": "", "name": "", "arguments": ""}
                             # Ollama ToolCall may not have 'id' attribute
                             tc_id = getattr(tc, 'id', None)
                             if tc_id:
                                 accumulated_tool_calls[idx]["id"] = tc_id
-                        if tc.function:
-                            if tc.function.name:
-                                accumulated_tool_calls[idx]["name"] = tc.function.name
-                            if tc.function.arguments:
-                                # Ollama may send arguments as dict or string
-                                args = tc.function.arguments
-                                if isinstance(args, dict):
-                                    args = json.dumps(args, ensure_ascii=False)
-                                accumulated_tool_calls[idx]["arguments"] += args
+                            if tc.function:
+                                if tc.function.name:
+                                    accumulated_tool_calls[idx]["name"] = tc.function.name
+                                if tc.function.arguments:
+                                    # Ollama may send arguments as dict or string
+                                    args = tc.function.arguments
+                                    if isinstance(args, dict):
+                                        args = json.dumps(args, ensure_ascii=False)
+                                    accumulated_tool_calls[idx]["arguments"] += args
             except Exception as _ex:
                 err = str(_ex)
                 if "does not support thinking" in err:
@@ -385,9 +387,9 @@ provider: Optional provider override (any curated provider id,
                                         clean_text = self.clean(clean_text)
                                     yield {'type': 'chunk', 'content': clean_text}
                         if chunk.message and chunk.message.tool_calls:
-                            for idx, tc in enumerate(chunk.message.tool_calls):
-                                if idx not in accumulated_tool_calls:
-                                    accumulated_tool_calls[idx] = {"id": "", "name": "", "arguments": ""}
+                            for tc in chunk.message.tool_calls:
+                                idx = len(accumulated_tool_calls)
+                                accumulated_tool_calls[idx] = {"id": "", "name": "", "arguments": ""}
                                 tc_id = getattr(tc, 'id', None)
                                 if tc_id:
                                     accumulated_tool_calls[idx]["id"] = tc_id
@@ -476,9 +478,11 @@ provider: Optional provider override (any curated provider id,
 
                 # Capture usage from the final chunk
                 if chunk.usage_metadata:
+                    # Thinking tokens are billed as output: count them too.
                     usage_data = {
                         'prompt_tokens': chunk.usage_metadata.prompt_token_count or 0,
-                        'completion_tokens': chunk.usage_metadata.candidates_token_count or 0,
+                        'completion_tokens': (chunk.usage_metadata.candidates_token_count or 0)
+                        + (getattr(chunk.usage_metadata, 'thoughts_token_count', None) or 0),
                         'total_tokens': chunk.usage_metadata.total_token_count or 0,
                         'total_time': 0.0,
                     }

@@ -13,8 +13,9 @@ import { CreateModelSelector } from "../components/CreateModelSelector";
 import configService from "../services/configService";
 import type { Message, ContentBlock } from "../App";
 import { saveFileWithPicker, fetchConversationMarkdown } from "../utils/conversationExport";
+import { API_BASE_URL } from "../config/api";
 
-const API = (import.meta.env.VITE_URL_BASE || "http://localhost:8000") + "/api";
+const API = API_BASE_URL + "/api";
 
 /** Generate a unique ID with safe fallback when crypto is unavailable. */
 function generateId(): string {
@@ -324,10 +325,22 @@ export function WorkflowInterface() {
                       typeof payload.name === "string" ? payload.name : "unknown";
                     const toolResultValue =
                       "result" in payload ? payload.result : payload;
-                    for (let i = accumulatedBlocks.length - 1; i >= 0; i--) {
-                      if (accumulatedBlocks[i].type === "tool" && (accumulatedBlocks[i] as any).result === undefined) {
+                    // Backend emits results in call order: first pending wins.
+                    let placed = false;
+                    for (let i = 0; i < accumulatedBlocks.length; i++) {
+                      const b = accumulatedBlocks[i] as any;
+                      if (b.type === "tool" && b.result === undefined && (b.name === toolName || b.name === "unknown" || toolName === "unknown")) {
                         accumulatedBlocks[i] = { ...accumulatedBlocks[i], result: toolResultValue } as any;
+                        placed = true;
                         break;
+                      }
+                    }
+                    if (!placed) {
+                      for (let i = 0; i < accumulatedBlocks.length; i++) {
+                        if (accumulatedBlocks[i].type === "tool" && (accumulatedBlocks[i] as any).result === undefined) {
+                          accumulatedBlocks[i] = { ...accumulatedBlocks[i], result: toolResultValue } as any;
+                          break;
+                        }
                       }
                     }
                     setMessages((prev) =>

@@ -1,6 +1,6 @@
+import { API_BASE_URL } from "../config/api";
 /** Service for the Telegram toggle (status + enable/disable). */
 
-const API_BASE_URL = import.meta.env.VITE_URL_BASE || "http://localhost:8000";
 
 export interface TelegramStatus {
   enabled: boolean;

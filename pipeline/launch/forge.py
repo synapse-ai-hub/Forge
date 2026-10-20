@@ -367,7 +367,7 @@ def _build_executable(repo_path: str, launcher_path: str, exe_name: str) -> Path
 
     # Determine icon path (try common locations)
     icon_candidates = [
-        Path(repo_path) / "frontend" / "src" / "assets" / " logo_cliente.ico",
+        Path(repo_path) / "frontend" / "src" / "assets" / "logo_cliente.ico",
         Path(repo_path) / "frontend" / "public" / "logo.ico",
         Path(repo_path) / "logo.ico",
     ]

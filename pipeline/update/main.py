@@ -185,6 +185,7 @@ def run_update(target_dir: str) -> None:
             ".env.example",
             ".gitignore",
             ".dockerignore",
+            "docker-compose.yml",
             "docker-compose.yaml",
             "Dockerfile",
             "requirements.txt",

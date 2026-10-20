@@ -119,9 +119,9 @@ def _build_blocks(messages: list[dict]) -> list[dict] | None:
     """Build ordered blocks from assistant + tool messages in one turn.
 
     Each step produces a text block (if the LLM wrote something) followed
-    by one tool block per tool call.  The tool result is matched to its
-    tool block by iterating in reverse and looking for the last unmatched
-    block with the same tool name.
+    by one tool block per tool call. The tool result is matched to the
+    first unmatched tool block, preferring tool_call_id when available
+    and falling back to name match in emission order.
 
     Args:
         messages: All messages in a turn, ordered by ``(turn_number, step, id)``.
@@ -159,31 +159,71 @@ def _build_blocks(messages: list[dict]) -> list[dict] | None:
                         "name": name,
                         "args": args,
                         "result": None,
+                        "tool_call_id": tc.get("id", "") or tc.get("tool_call_id", ""),
                     })
         elif role == "tool":
             tool_name = msg.get("tool_name", "")
+            tool_call_id = msg.get("tool_call_id", "")
             raw_content = msg.get("content") or ""
             parsed: str | dict = raw_content
             try:
                 parsed = json.loads(raw_content) if raw_content else ""
             except (json.JSONDecodeError, TypeError):
                 parsed = raw_content
-            # Match to last unmatched tool block with same name
-            for i in range(len(blocks) - 1, -1, -1):
-                b = blocks[i]
-                if b["type"] == "tool" and b["name"] == tool_name and b.get("result") is None:
-                    b["result"] = parsed
-                    break
+            matched = False
+            if tool_call_id:
+                for b in blocks:
+                    if b["type"] == "tool" and b.get("result") is None and b.get("tool_call_id") == tool_call_id:
+                        b["result"] = parsed
+                        matched = True
+                        break
+            if not matched:
+                # Match to first unmatched tool block with same name (emission order)
+                for b in blocks:
+                    if b["type"] == "tool" and b["name"] == tool_name and b.get("result") is None:
+                        b["result"] = parsed
+                        matched = True
+                        break
+            if not matched:
+                # Provider without ids/names: first pending block in order
+                for b in blocks:
+                    if b["type"] == "tool" and b.get("result") is None:
+                        b["result"] = parsed
+                        break
 
     # Fallback: fill remaining None results from assistant's tool_results
     for msg in messages:
         if msg.get("role") == "assistant" and msg.get("tool_results"):
             trs = msg["tool_results"]
-            idx = 0
-            for b in blocks:
-                if b["type"] == "tool" and b.get("result") is None and idx < len(trs):
-                    b["result"] = trs[idx].get("result", "")
-                    idx += 1
+            if isinstance(trs, str):
+                try:
+                    trs = json.loads(trs)
+                except (json.JSONDecodeError, TypeError):
+                    continue
+            for tr in trs:
+                if not isinstance(tr, dict):
+                    continue
+                tr_id = tr.get("tool_call_id", "")
+                tr_name = tr.get("tool_name", tr.get("name", ""))
+                tr_result = tr.get("result", "")
+                placed = False
+                if tr_id:
+                    for b in blocks:
+                        if b["type"] == "tool" and b.get("result") is None and b.get("tool_call_id") == tr_id:
+                            b["result"] = tr_result
+                            placed = True
+                            break
+                if not placed and tr_name:
+                    for b in blocks:
+                        if b["type"] == "tool" and b.get("result") is None and b.get("name") == tr_name:
+                            b["result"] = tr_result
+                            placed = True
+                            break
+                if not placed:
+                    for b in blocks:
+                        if b["type"] == "tool" and b.get("result") is None:
+                            b["result"] = tr_result
+                            break
 
     return blocks if blocks else None
 
@@ -250,7 +290,7 @@ async def get_session(session_id: str):
                     "content": BLOCKED_USER_TEXT if blocked else (um.get("content") or ""),
                     "blocked": blocked,
                     "turn_number": tn,
-                    "files": [{"name": fname} for fname in attachments.get(tn, [])],
+                    "files": attachments.get(tn, []),
                 })
 
             if non_user:

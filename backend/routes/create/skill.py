@@ -404,11 +404,11 @@ async def post_create_skill_stream(
                 "data": {"exist": "No", "skill": skill_name_creado, "skill_dir": str(skill_dir)},
             }})
         else:
-            # El agente terminó la creación (escribió los archivos). Mostrar el cartel de éxito.
+            # El agente terminó pero no se encontró archivo: informar error.
             nombre_creado = skill_name_creado or name or "skill"
             yield _sse({"type": "skill_result", "content": {
-                "status": "success",
-                "message": f"Skill '{nombre_creado}' creada exitosamente.",
+                "status": "error",
+                "message": f"No se pudo verificar la creación de la skill '{nombre_creado}'.",
                 "data": {"exist": "No", "skill": nombre_creado, "skill_dir": str(skill_dir or _SKILLS_DIR / nombre_creado)},
             }})
 

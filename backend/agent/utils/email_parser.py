@@ -210,11 +210,19 @@ def _extract_plain_text(msg: email.message.Message) -> str:
             if content_type == "text/plain" and "attachment" not in content_disposition:
                 payload = part.get_payload(decode=True)
                 if payload:
-                    return payload.decode("utf-8", errors="replace")
+                    charset = part.get_content_charset() or "utf-8"
+                    try:
+                        return payload.decode(charset, errors="replace")
+                    except (LookupError, UnicodeError):
+                        return payload.decode("utf-8", errors="replace")
         return ""
     payload = msg.get_payload(decode=True)
     if payload:
-        return payload.decode("utf-8", errors="replace")
+        try:
+            charset = msg.get_content_charset() or "utf-8"
+            return payload.decode(charset, errors="replace")
+        except (LookupError, UnicodeError):
+            return payload.decode("utf-8", errors="replace")
     return ""
 
 

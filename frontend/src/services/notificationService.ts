@@ -1,6 +1,6 @@
+import { API_BASE_URL } from "../config/api";
 /** Service for the persisted notifications (header bell). */
 
-const API_BASE_URL = import.meta.env.VITE_URL_BASE || "http://localhost:8000";
 
 /** A finished workflow run or scheduled-task execution. */
 export interface AppNotification {

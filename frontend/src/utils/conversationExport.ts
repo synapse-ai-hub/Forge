@@ -8,6 +8,7 @@
  */
 
 import type { Message, ContentBlock, SubagentEvent, SubagentStep } from "../App";
+import { API_BASE_URL } from "../config/api";
 
 /**
  * Escape a string so it is safe to embed inside a fenced code block.
@@ -202,7 +203,7 @@ export async function fetchConversationMarkdown(
   messages: Message[],
   title: string = "Conversación",
 ): Promise<string> {
-  const base = (import.meta.env.VITE_URL_BASE || "http://localhost:8000") + "/api";
+  const base = API_BASE_URL + "/api";
   const resp = await fetch(`${base}/conversation/export`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

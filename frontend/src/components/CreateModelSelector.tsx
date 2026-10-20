@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { Check } from "lucide-react";
+import { API_BASE_URL } from "../config/api";
 
-const API = (import.meta.env.VITE_URL_BASE || "http://localhost:8000") + "/api";
+const API = API_BASE_URL + "/api";
 
 /** Provider entry returned by GET /api/config/providers. */
 interface ProviderEntry {

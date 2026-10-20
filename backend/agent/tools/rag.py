@@ -50,6 +50,19 @@ class RagMixin:
                 _rag_t0 = time.time()
                 results = db.query(collection, query, n_results=5)
                 _rag_duration = round(time.time() - _rag_t0, 2)
+                # Never send raw HTML to the LLM: documents are already
+                # chunked (500 chars), metadata keeps only source/url info.
+                try:
+                    clean_metas: list[dict] = []
+                    for meta in (results.get("metadatas") or [[]])[0] or []:
+                        if not isinstance(meta, dict):
+                            clean_metas.append({})
+                            continue
+                        clean_metas.append({k: v for k, v in meta.items() if k != "html"})
+                    if results.get("metadatas"):
+                        results["metadatas"] = [clean_metas]
+                except Exception:
+                    pass
                 prompt_tokens = db.embed_func.count_tokens([query])
                 # Track the query-embedding call in SQLite. Never breaks the flow.
                 try:
