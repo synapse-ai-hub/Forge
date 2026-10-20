@@ -39,14 +39,14 @@ function isErrorText(text: string): boolean {
   return /^\s*\{\s*"error"\s*:/.test(body);
 }
 
-function TypingIndicator() {
+function TypingIndicator({ label = "Trabajando..." }: { label?: string }) {
   return (
     <div className="flex items-center gap-1.5 px-1" role="status" aria-label="Escribiendo...">
       <span className="typing-dot h-2 w-2 rounded-full bg-app-primary" />
       <span className="typing-dot h-2 w-2 rounded-full bg-app-primary" />
       <span className="typing-dot h-2 w-2 rounded-full bg-app-primary" />
       <span className="text-xs text-app-text-secondary ml-1">
-        Trabajando...
+        {label}
       </span>
     </div>
   );
@@ -732,10 +732,12 @@ function MessageRow({
               Verbose OFF — typing while no text block yet (tools are invisible, user needs feedback).
               Verbose ON  — typing en lapsos muertos (sin actividad reciente) y sin tool en calling. */}
           {message.isStreaming && (
-            verboseMode
-              ? (!isCallingTool && (!message.blocks || message.blocks.length === 0 || deadTyping))
-              : (!message.blocks || !message.blocks.some(b => b.type === "text"))
-          ) && <TypingIndicator />}
+            !!message.retryNotice || (
+              verboseMode
+                ? (!isCallingTool && (!message.blocks || message.blocks.length === 0 || deadTyping))
+                : (!message.blocks || !message.blocks.some(b => b.type === "text"))
+            )
+          ) && <TypingIndicator label={message.retryNotice || undefined} />}
         </div>
       </div>
     );

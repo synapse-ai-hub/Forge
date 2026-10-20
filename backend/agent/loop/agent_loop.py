@@ -892,7 +892,6 @@ class AgentLoop:
                                 LLM_BACKOFF_BASE_SECONDS * (2 ** llm_attempt),
                                 get_retry_delay(e, LLM_BACKOFF_BASE_SECONDS, 60.0),
                             )
-                            await asyncio.sleep(delay)
                             logger.warning(
                                 "LLM %s error (attempt %d/%d): %s — retrying in %.0fs",
                                 error_category, llm_attempt + 1, MAX_LLM_RETRIES + 1,
@@ -900,10 +899,14 @@ class AgentLoop:
                             )
                             log_error(str(e), source="loop.py:run(llm_retry)")
                             if error_category == "rate_limit":
-                                retry_msg = f"\n\n*Rate limit alcanzado, reintentando (intento {llm_attempt + 1} de {MAX_LLM_RETRIES})...*"
+                                retry_msg = f"Rate limit alcanzado, reintentando (intento {llm_attempt + 1} de {MAX_LLM_RETRIES})..."
                             else:
-                                retry_msg = "\n\n*Error transitorio, reintentando...*"
-                            yield f"data: {json.dumps({'type': 'chunk', 'content': retry_msg}, ensure_ascii=False)}\n\n"
+                                retry_msg = "Error transitorio, reintentando..."
+                            # Transient notice, not part of the answer: the UI shows it
+                            # as the activity indicator and drops it on the next event.
+                            # Emitted before the back-off so it is visible while waiting.
+                            yield f"data: {json.dumps({'type': 'retry', 'content': retry_msg}, ensure_ascii=False)}\n\n"
+                            await asyncio.sleep(delay)
                             # Fold the failed attempt into the step accumulators
                             # exactly once (mirrors the spend record for this
                             # attempt) before retrying.

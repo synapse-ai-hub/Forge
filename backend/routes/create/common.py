@@ -59,10 +59,20 @@ class CreateToolRequest(BaseModel):
     name: str | None = None
     mensajes: list[dict] | None = None  # [{"role": "user"|"assistant", "content": "..."}]
     parametros: list[dict] | None = None  # [{"name", "type", "description", "required"}]
-    datos: list[str] | None = None  # Lista de env vars / datos externos
+    datos: list[str | dict] | None = None  # env vars / datos externos: texto o {"name", "type", "description", "required"}
     model: str | None = None  # Modelo cloud elegido para esta tarea (efímero)
     provider: str | None = None  # Provider cloud elegido para esta tarea (efímero)
     iterate: bool = False  # True = fase de iteración (modificar creación existente)
+
+
+def _formatear_dato(d: str | dict) -> str:
+    """Render one declared external datum (plain string or field dict) as a line of text."""
+    if isinstance(d, dict):
+        nombre = d.get("name", "?")
+        desc = d.get("description", "")
+        req = "obligatorio" if d.get("required", True) else "opcional"
+        return f"{nombre} ({d.get('type', 'string')}, {req})" + (f": {desc}" if desc else "")
+    return str(d)
 
 
 class CreateAgentRequest(BaseModel):
