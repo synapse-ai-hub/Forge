@@ -44,7 +44,7 @@ from backend.agent.utils.error_logger import log_error
 
 logger = logging.getLogger(__name__)
 
-_GROUP_ARG = {"task": "agent_name", "workflow": "name"}
+_GROUP_ARG = {"task": "agent_name", "workflow": "name", "rag": "collection"}
 """Discriminating argument of the tools whose permission is a nested group.
 
 ``tasks: {explorer: allow}`` constrains ``task(agent_name=...)`` and
@@ -359,7 +359,10 @@ def list_agents() -> dict:
             continue
 
         fm = _parse_frontmatter(content)
-        name = fm.get("name", entry[:-3])
+        # ``task`` and the permissions resolve an agent by its file name, so
+        # that is the name the LLM must see (a different ``name`` in the
+        # frontmatter would make ``task`` fail or open another agent).
+        name = entry[:-3]
         description = fm.get("description", "")
         result.append({"name": name, "description": description})
 

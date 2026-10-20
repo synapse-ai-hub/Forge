@@ -31,6 +31,7 @@ _project_root = os.path.dirname(os.path.dirname(os.path.dirname(_current_dir)))
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
+from backend.agent.permissions import is_tool_allowed
 from backend.agent.utils import provider_keys
 from backend.instances import agent
 
@@ -276,7 +277,10 @@ async def stream_interview_loop(
             yield {"type": "tool_call", "content": {"name": tc_name, "args": tc_args}}
 
             try:
-                result = await agent.tools._execute_tool(tc_name, **tc_args)
+                if not is_tool_allowed(_INTERVIEW_TOOLS_PERMS, tc_name, tc_args):
+                    result = {"status": "error", "message": f"Permission denied for tool '{tc_name}'."}
+                else:
+                    result = await agent.tools._execute_tool(tc_name, **tc_args)
             except Exception as e:
                 logger.exception("Tool '%s' failed during interview", tc_name)
                 result = {"status": "error", "message": str(e)}
@@ -345,6 +349,8 @@ async def stream_tool_calling_loop(
     """
     if model is None or provider is None:
         model, provider = _resolve_create_model_provider()
+    # Only the tools offered to the LLM may run (deny by default).
+    offered_tools = {(t.get("function") or {}).get("name") for t in tools}
     iteration = 0
     while iteration < max_iter:
         iteration += 1
@@ -425,7 +431,10 @@ async def stream_tool_calling_loop(
                 yield {"type": "tool_call", "content": {"name": tc_name, "args": tc_args}}
 
                 try:
-                    result = await agent.tools._execute_tool(tc_name, **tc_args)
+                    if tc_name not in offered_tools:
+                        result = {"status": "error", "message": f"Permission denied for tool '{tc_name}'."}
+                    else:
+                        result = await agent.tools._execute_tool(tc_name, **tc_args)
                 except Exception as e:
                     logger.exception("Tool '%s' failed", tc_name)
                     result = {"status": "error", "message": str(e)}
