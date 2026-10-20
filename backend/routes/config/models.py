@@ -101,14 +101,8 @@ async def list_models(provider: str | None = None) -> JSONResponse:
     models = cached["models"]
     provider_label = cached["label"]
 
-    previous_provider = agent.provider if agent is not None else None
-    if agent is not None and agent.provider != provider:
-        agent.provider = provider
-
-    selected_model = None
-    if agent is not None and previous_provider == provider:
-        selected_model = agent._resolved_model
-
+    # Listing never changes the active provider: only
+    # ``POST /config/models/select`` (Apply) does.
     return JSONResponse(
         status_code=200,
         content={
@@ -116,7 +110,12 @@ async def list_models(provider: str | None = None) -> JSONResponse:
             "provider": provider,
             "provider_label": provider_label,
             "models": models,
-            "model": agent._resolved_model if agent is not None else None,
+            # The active model only belongs to the active provider.
+            "model": (
+                agent._resolved_model
+                if agent is not None and agent.provider == provider
+                else None
+            ),
         },
     )
 
