@@ -420,8 +420,8 @@ async def post_create_agent_stream(req: CreateAgentRequest):
             return
 
         yield _sse({"type": "agent_result_final", "content": {
-            "status": "success",
-            "message": f"Agente '{name or 'agente'}' creado exitosamente.",
+            "status": "error",
+            "message": f"No se pudo verificar la creación del agente '{name or 'agente'}'.",
             "data": {"exist": "No", "agent": name or "agente", "agent_path": str(_AGENTS_DIR / f"{name or 'agente'}.md")},
         }})
 
