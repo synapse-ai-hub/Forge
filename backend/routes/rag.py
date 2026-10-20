@@ -340,7 +340,7 @@ async def upload_files(name: str, files: list[UploadFile] = File(...)):
             ]
 
             _upload_t0 = time.time()
-            db.add_documents(name, ids=ids, documents=documents, metadatas=metadatas)
+            await asyncio.to_thread(db.add_documents, name, ids=ids, documents=documents, metadatas=metadatas)
             _upload_duration = round(time.time() - _upload_t0, 2)
             # Track the embedding-model call in SQLite (one row with the
             # embedded chunk count). Never breaks the upload flow.
@@ -374,8 +374,8 @@ async def upload_files(name: str, files: list[UploadFile] = File(...)):
 async def add_url(name: str, req: AddUrlRequest):
     """Add a web page to a collection.
 
-    Fetches the content, chunks it and stores it. The URL is stored in the
-    metadata of every chunk and the raw HTML in the first chunk.
+    Fetches the content, chunks it like any other data and stores it.
+    The URL is stored in the metadata of every chunk.
 
     Args:
         name: Target collection name.
@@ -402,7 +402,7 @@ async def add_url(name: str, req: AddUrlRequest):
             )
 
         try:
-            text, html = await fetch_url_content(url)
+            text, _html = await fetch_url_content(url)
         except ValueError as exc:
             return make_error_response(message=str(exc))
         except httpx.HTTPError:
@@ -425,21 +425,17 @@ async def add_url(name: str, req: AddUrlRequest):
         ids = [c["chunk_id"] for c in chunks]
         documents = [c["chunk_text"] for c in chunks]
         metadatas = []
-        for i, c in enumerate(chunks):
+        for c in chunks:
             meta: dict[str, Any] = {
                 "source": "url",
                 "url": url,
                 "chunk_number": c["chunk_number"],
                 "byte_size": c["byte_size"],
             }
-            # Store the raw HTML only in the first chunk to avoid duplicating
-            # it N times and hitting Chroma metadata limits.
-            if i == 0:
-                meta["html"] = html
             metadatas.append(meta)
 
         _url_t0 = time.time()
-        db.add_documents(name, ids=ids, documents=documents, metadatas=metadatas)
+        await asyncio.to_thread(db.add_documents, name, ids=ids, documents=documents, metadatas=metadatas)
         _url_duration = round(time.time() - _url_t0, 2)
         # Track the embedding-model call in SQLite (one row with the
         # embedded chunk count). Never breaks the flow.

@@ -207,6 +207,31 @@ def validar_nombre_coleccion(name: str) -> str | None:
     return None
 
 
+def list_collections() -> list[str]:
+    """List available RAG collection names.
+
+    Returns:
+        List of collection names, empty on error.
+    """
+    try:
+        from backend.agent.utils.vector_db import get_vector_db
+
+        db = get_vector_db()
+        cols = db.list_collections() or []
+        names: list[str] = []
+        for entry in cols:
+            if isinstance(entry, dict):
+                name = entry.get("name")
+            else:
+                name = getattr(entry, "name", None)
+            if name:
+                names.append(str(name))
+        return names
+    except Exception as exc:
+        logger.warning("No se pudieron listar colecciones RAG: %s", exc)
+        return []
+
+
 def _is_private_ip(ip_str: str) -> bool:
     """Return ``True`` if an IP is private/loopback/link-local/metadata.
 
@@ -261,6 +286,8 @@ def _pin_host(url: str, pins: dict[str, str]) -> str:
         ValueError: If the host cannot be resolved or resolves to a private IP.
     """
     hostname = urlparse(url).hostname or ""
+    # getaddrinfo is blocking: run in thread when called from async context.
+    # Kept sync for compatibility; callers in async code use to_thread.
     infos = socket.getaddrinfo(hostname, None)
     public_ips: list[str] = []
     for info in infos:
@@ -299,7 +326,7 @@ async def fetch_url_content(url: str) -> tuple[str, str]:
         timeout=30, follow_redirects=False, transport=transport
     ) as client:
         for _ in range(MAX_REDIRECTS):
-            _pin_host(current, pins)
+            await asyncio.to_thread(_pin_host, current, pins)
             resp = await client.get(
                 current, headers={"User-Agent": "Mozilla/5.0"}
             )
@@ -481,7 +508,11 @@ def reindex_collection(db, name: str) -> dict:
 
     # 3. Recreate the collection with the current embedding model.
     db.delete_collection(name)
-    db.create_collection(name, metadata={"description": meta.get("description")})
+    safe_meta: dict = {}
+    desc = meta.get("description")
+    if desc is not None:
+        safe_meta["description"] = desc
+    db.create_collection(name, metadata=safe_meta)
 
     # 4. Re-insert in batches using the precomputed vectors (no further API
     #    calls, so this step cannot fail for rate-limit reasons).
