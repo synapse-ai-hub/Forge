@@ -28,6 +28,8 @@ import importlib.util
 import inspect
 import json
 import logging
+import threading
+import asyncio
 import os
 import re
 import sys
@@ -186,15 +188,29 @@ class ToolsBase:
                 now = time.time()
                 if now - getattr(self, "_last_mcp_selfheal", 0.0) > 30.0:
                     self._last_mcp_selfheal = now
+
+                    def _rebuild() -> None:
+                        try:
+                            self._tools_registry = self._build_tools_registry()
+                        except Exception as e:
+                            # Keep the previous registry on failure; never crash the
+                            # agent loop over a re-discovery attempt.
+                            logging.getLogger(__name__).exception(
+                                "tools_registry: MCP self-heal rebuild failed: %s", e
+                            )
+                            log_error(str(e), source="tools.py:tools_registry(self-heal)")
+
                     try:
-                        self._tools_registry = self._build_tools_registry()
-                    except Exception as e:
-                        # Keep the previous registry on failure; never crash the
-                        # agent loop over a re-discovery attempt.
-                        logging.getLogger(__name__).exception(
-                            "tools_registry: MCP self-heal rebuild failed: %s", e
-                        )
-                        log_error(str(e), source="tools.py:tools_registry(self-heal)")
+                        asyncio.get_running_loop()
+                        in_loop = True
+                    except RuntimeError:
+                        in_loop = False
+                    if in_loop:
+                        # Discovery can take minutes with a hung server: never
+                        # block the event loop. The next call sees the result.
+                        threading.Thread(target=_rebuild, daemon=True).start()
+                    else:
+                        _rebuild()
             return filter_tools(self._tools_registry, tool_permissions)
     def _has_mcp_tools(self) -> bool:
             """Return ``True`` if the current registry contains MCP tools.
