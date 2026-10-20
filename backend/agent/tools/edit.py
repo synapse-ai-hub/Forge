@@ -29,13 +29,18 @@ class EditMixin:
                         message=f"File not found: {file_path}",
                         usage=zero_usage(),
                     )
+                if not old_string:
+                    return make_error_response(
+                        message="old_string cannot be empty.",
+                        usage=zero_usage(),
+                    )
                 if old_string == new_string:
                     return make_error_response(
                         message="old_string and new_string are identical.",
                         usage=zero_usage(),
                     )
 
-                with open(file_path, "r", encoding="utf-8") as f:
+                with open(file_path, "r", encoding="utf-8", newline="") as f:
                     content = f.read()
 
                 if replace_all:
@@ -60,7 +65,7 @@ class EditMixin:
                         )
                     new_content = content.replace(old_string, new_string)
 
-                with open(file_path, "w", encoding="utf-8") as f:
+                with open(file_path, "w", encoding="utf-8", newline="") as f:
                     f.write(new_content)
 
                 return make_success_response(

@@ -36,7 +36,15 @@ class ShellMixin:
                 dict with ``{status, message, data, usage}``.
                 ``data`` contains ``output``, ``returncode``, and ``truncated``.
             """
-            cancel_event = getattr(self, "_stream_cancel_event", None)
+            # The per-call snapshot (ContextVar) wins over the shared attribute:
+            # the attribute can hold the event of an unrelated, earlier chat.
+            from backend.agent.utils.loop_helpers import _tool_call_ctx
+
+            snapshot = _tool_call_ctx.get()
+            if snapshot is not None:
+                cancel_event = snapshot.get("stream_cancel_event")
+            else:
+                cancel_event = getattr(self, "_stream_cancel_event", None)
             try:
                 cwd = workdir or os.getcwd()
                 timeout_s = timeout / 1000
@@ -53,6 +61,8 @@ class ShellMixin:
                         cwd=cwd,
                         capture_output=True,
                         text=True,
+                        encoding="utf-8",
+                        errors="replace",
                         timeout=timeout_s,
                     )
 

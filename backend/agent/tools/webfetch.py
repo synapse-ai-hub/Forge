@@ -1,5 +1,6 @@
 """WebfetchMixin — native tool webfetch."""
 
+import asyncio
 import logging
 import re
 
@@ -24,7 +25,33 @@ class WebfetchMixin:
                 dict with ``{status, message, data, usage}``.
             """
             try:
-                url = url.replace("http://", "https://")
+                url = (url or "").strip()
+                if not url:
+                    return make_error_response(message="La URL es obligatoria.", usage=zero_usage())
+                if "://" not in url:
+                    url = "https://" + url
+                if url.startswith("http://"):
+                    url = "https://" + url[len("http://"):]
+                # Basic SSRF protection: reuse RAG validators (scheme + private IP).
+                try:
+                    from backend.agent.utils.rag_helpers import _is_private_ip, _validate_url
+                    from urllib.parse import urlparse as _urlparse
+                    import socket as _socket
+
+                    url = _validate_url(url)
+                    hostname = _urlparse(url).hostname or ""
+                    try:
+                        infos = await asyncio.to_thread(_socket.getaddrinfo, hostname, None)
+                        for info in infos:
+                            if _is_private_ip(info[4][0]):
+                                return make_error_response(
+                                    message="No se permiten URLs a direcciones internas.",
+                                    usage=zero_usage(),
+                                )
+                    except Exception:
+                        pass
+                except ImportError:
+                    pass
                 async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
                     resp = await client.get(url, headers={"User-Agent": "Mozilla/5.0"})
                     resp.raise_for_status()

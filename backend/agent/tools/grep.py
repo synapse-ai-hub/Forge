@@ -27,10 +27,22 @@ class GrepMixin:
             try:
                 search = path or os.getcwd()
                 results: list[str] = []
+                include_patterns: list[str] = []
+                if include:
+                    # fnmatch does not support braces: expand *.{ts,tsx} manually.
+                    if "{" in include and "}" in include:
+                        try:
+                            prefix, rest = include.split("{", 1)
+                            inner, suffix = rest.split("}", 1)
+                            include_patterns = [f"{prefix}{opt.strip()}{suffix}" for opt in inner.split(",")]
+                        except ValueError:
+                            include_patterns = [include]
+                    else:
+                        include_patterns = [include]
 
                 for root, _dirs, files in os.walk(search):
-                    if include:
-                        files = [f for f in files if fnmatch.fnmatch(f, include)]
+                    if include_patterns:
+                        files = [f for f in files if any(fnmatch.fnmatch(f, pat) for pat in include_patterns)]
                     for f in files:
                         fpath = os.path.join(root, f)
                         try:

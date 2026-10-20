@@ -64,6 +64,20 @@ class ReadMixin:
                 with open(file_path, "r", encoding="utf-8", errors="replace") as f:
                     lines = f.readlines()
 
+                if not lines:
+                    output = f"<path>{file_path}</path>\n<type>file</type>\n<content>\n"
+                    output += "\n(End of file - total 0 lines)"
+                    output += "\n</content>"
+                    return make_success_response(
+                        message="File read successfully.",
+                        data=output,
+                        usage=zero_usage(),
+                    )
+                if offset < 1:
+                    return make_error_response(
+                        message="Offset must be >= 1.",
+                        usage=zero_usage(),
+                    )
                 if offset > len(lines):
                     return make_error_response(
                         message=f"Offset {offset} is out of range ({len(lines)} lines).",
