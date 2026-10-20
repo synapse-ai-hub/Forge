@@ -187,8 +187,10 @@ class TaskMixin:
                     parent_provider=parent_provider,
                     stream_cancel_event=stream_cancel_event,
                 ):
+                    # Keep consuming after [DONE]: the loop still runs its
+                    # closing steps (e.g. freeing the sub-agent's model).
                     if sse.strip() == "data: [DONE]":
-                        break
+                        continue
                     if sse.startswith("data: "):
                         try:
                             payload = json.loads(sse[len("data: "):].strip())

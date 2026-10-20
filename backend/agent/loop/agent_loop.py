@@ -61,6 +61,7 @@ from backend.agent.permissions import (
     get_tool_permissions,
     get_skill_permissions,
     get_agent_parameters,
+    wildcard_match,
 )
 from backend.agent.utils.clean_memory import liberar_modelo
 from backend.instances import agent, session_manager
@@ -93,7 +94,11 @@ from backend.agent.utils.frontier_helpers import (
     set_task_child,
 )
 from backend.agent.utils.spend_handler import check_spend_limit
-from backend.agent.utils.rate_limit_handler import classify_error_category, get_retry_delay
+from backend.agent.utils.rate_limit_handler import (
+    RATE_LIMIT_MESSAGES,
+    classify_error_category,
+    get_retry_delay,
+)
 from backend.agent.loop.constants import (
     BLOCKED_USER_TEXT,
     LLM_BACKOFF_BASE_SECONDS,
@@ -245,6 +250,9 @@ class AgentLoop:
             budget_tokens = None
             response_format = None  # Optional structured output (e.g. {"type": "json_object"})
             max_tokens = 8192
+            # True when the agent's frontmatter pins its own model: a sub-agent
+            # run must never replace it with the global model.
+            model_from_frontmatter = False
             if parameters:
                 if parameters.get("temperature") is not None:
                     temperature = parameters["temperature"]
@@ -265,6 +273,7 @@ class AgentLoop:
                 # model override from frontmatter (optional)
                 if parameters.get("model"):
                     model = parameters["model"]
+                    model_from_frontmatter = True
                 max_tokens = parameters.get("max_tokens", max_tokens)
 
             # Explicit global overrides win over frontmatter values; a "null"
@@ -425,6 +434,11 @@ class AgentLoop:
                         if agent_name is None
                         else None
                     ),
+                    task_perms=(
+                        (tool_permissions or {}).get("task")
+                        if agent_name is None
+                        else None
+                    ),
                 )
 
             # Sub-agents get their skills/agents appended (the router lists its
@@ -441,7 +455,10 @@ class AgentLoop:
                 task_perms = (tool_permissions or {}).get("task", {})
                 agents = [
                     a for a in all_agents
-                    if a["name"] in task_perms and task_perms[a["name"]] == "allow"
+                    if isinstance(task_perms, dict) and any(
+                        action == "allow" and wildcard_match(key, a["name"])
+                        for key, action in task_perms.items()
+                    )
                 ]
                 system_prompt = (
                     f"{system_prompt}\n\n"
@@ -656,16 +673,20 @@ class AgentLoop:
             step = 0
             empty_response_retries = 0
             empty_response_hint: dict[str, str] | None = None
+            # Usage of an empty response that is retried: it gets no row of
+            # its own, so the next step's row carries it.
+            carried_usage: dict[str, float] = {"prompt": 0, "completion": 0, "total": 0, "time": 0.0}
             while iteration < self.max_iterations:
                 iteration += 1
                 step += 1
                 # Accumulate usage across the inner retry loop so the single
                 # messages row saved for this step carries the sum of every
                 # LLM attempt (SUM(messages) == SUM(spend) per provider/model).
-                step_prompt = 0
-                step_completion = 0
-                step_total = 0
-                step_time = 0.0
+                step_prompt = int(carried_usage["prompt"])
+                step_completion = int(carried_usage["completion"])
+                step_total = int(carried_usage["total"])
+                step_time = float(carried_usage["time"])
+                carried_usage = {"prompt": 0, "completion": 0, "total": 0, "time": 0.0}
                 # Drain non-blocking title generation result (if ready)
                 if title_queue is not None and not title_queue.empty():
                     try:
@@ -713,7 +734,15 @@ class AgentLoop:
                             )
                             session_manager.save_message(
                                 session_id, "assistant", content=budget_msg,
-                                model=model, turn_number=turn_number, step=step,
+                                model=model, provider=effective_provider,
+                                turn_number=turn_number, step=step,
+                                status="error", message="spend_limit",
+                                usage={
+                                    "prompt_tokens": step_prompt,
+                                    "completion_tokens": step_completion,
+                                    "total_tokens": step_total,
+                                    "total_time": round(step_time, 2),
+                                },
                             )
                             yield f"data: {json.dumps({'type': 'chunk', 'content': budget_msg}, ensure_ascii=False)}\n\n"
                             yield "data: [DONE]\n\n"
@@ -807,8 +836,13 @@ class AgentLoop:
                                 )
                             yield "data: [DONE]\n\n"
                             return
-                        # Fatal and budget errors keep the current behavior: no retry.
-                        if error_category in ("fatal", "budget"):
+                        # Fatal, budget and too-large errors: no retry.
+                        if error_category in ("fatal", "budget", "too_large"):
+                            error_msg = (
+                                RATE_LIMIT_MESSAGES["413"]
+                                if error_category == "too_large"
+                                else "Ocurrió un error al procesar la solicitud. Por favor, intentá de nuevo."
+                            )
                             # Guardar respuesta parcial antes de terminar con error
                             # The failed attempt never reached the agent's
                             # spend record: count it here (zero tokens when
@@ -840,11 +874,11 @@ class AgentLoop:
                                 )
                             else:
                                 session_manager.save_message(
-                                    session_id, "assistant", content="Ocurrió un error al procesar la solicitud. Por favor, intentá de nuevo.", model=model, provider=effective_provider, turn_number=turn_number, step=step,
+                                    session_id, "assistant", content=error_msg, model=model, provider=effective_provider, turn_number=turn_number, step=step,
                                     status="error", message=str(e)[:500],
                                     usage=_eff_usage,
                                 )
-                            yield f"data: {json.dumps({'type': 'chunk', 'content': 'Ocurrió un error al procesar la solicitud. Por favor, intentá de nuevo.'}, ensure_ascii=False)}\n\n"
+                            yield f"data: {json.dumps({'type': 'chunk', 'content': error_msg}, ensure_ascii=False)}\n\n"
                             yield "data: [DONE]\n\n"
                             _schedule_latency()
                             return
@@ -933,15 +967,8 @@ class AgentLoop:
                         _schedule_latency()
                         return
                     break  # Stream consumed successfully
-                # Fold this attempt into the step accumulators exactly once
-                # (mirrors the single spend record for this attempt).
-                try:
-                    step_prompt += int((usage_data or {}).get("prompt_tokens") or 0)
-                    step_completion += int((usage_data or {}).get("completion_tokens") or 0)
-                    step_total += int((usage_data or {}).get("total_tokens") or 0)
-                    step_time += float((usage_data or {}).get("total_time") or 0)
-                except (TypeError, ValueError):
-                    pass
+                # The step accumulators hold only failed attempts: every row
+                # saved below adds this successful attempt (usage_data) once.
 
                 # Emit token counter after each LLM call (prompt_tokens is cumulative)
                 if usage_data:
@@ -968,6 +995,15 @@ class AgentLoop:
                 
                 # ---- 6b. Process tool_calls (LLM wants to continue) ----
                 if tool_calls:
+                    # Id-less provider payloads (e.g. Ollama, Google wire
+                    # format) carry no call ids: synthesize a stable internal
+                    # id BEFORE saving, so the assistant row, the tool rows
+                    # and the frontier rows share it. Without it, parallel
+                    # same-tool calls share a NULL id and resolve to one result.
+                    for _idx, _tc in enumerate(tool_calls):
+                        if isinstance(_tc, dict) and not _tc.get("id"):
+                            _tc["id"] = f"tc-{turn_number}-{step}-{_idx}"
+
                     # Save assistant message with tool_calls (collected_content may be empty)
                     assistant_msg: dict[str, Any] = {
                         "role": "assistant",
@@ -1154,14 +1190,6 @@ class AgentLoop:
                     # flip to done on ordered commit and are only deleted
                     # when the step closes with a validated done signal.
                     # Never breaks the loop (the helper never raises).
-                    # Id-less provider payloads (e.g. Google wire format)
-                    # carry no call ids: synthesize a stable internal id so
-                    # dispatch rows and saved results join exactly. Without
-                    # it, parallel same-tool calls share a NULL id and all
-                    # resolve to one result.
-                    for _idx, _btc, _c, _q in pending:
-                        if isinstance(_btc, dict) and not _btc.get("id"):
-                            _btc["id"] = f"tc-{turn_number}-{step}-{_idx}"
                     record_block_dispatch(
                         session_id,
                         turn_number,
@@ -1223,6 +1251,9 @@ class AgentLoop:
                                                 agent.tools._temp_files.add(fp)
                                     yield f"data: {json.dumps(event_data, ensure_ascii=False)}\n\n"
                             await asyncio.sleep(0.05)
+                        # Let cancelled calls settle: a cancelled task that has
+                        # not finished yet has no result to read.
+                        await asyncio.gather(*block_tasks.values(), return_exceptions=True)
                         # Drain any remaining events after the block finishes
                         for idx, queue in block_queues.items():
                             while not queue.empty():
@@ -1260,7 +1291,8 @@ class AgentLoop:
                     # A subagent may have used a different model and liberated it.
                     # Parent needs to reload its model from persisted config.
                     # Once per block (not per call): same outcome, one reload.
-                    if any(btc.get("name") == "task" for _, btc, _c, _q in pending):
+                    # An agent with its own frontmatter model keeps it.
+                    if not model_from_frontmatter and any(btc.get("name") == "task" for _, btc, _c, _q in pending):
                         try:
                             # Read resolved model from agent singleton (persisted in SQLite via config endpoint)
                             nuevo_modelo = agent._resolved_model
@@ -1384,7 +1416,14 @@ class AgentLoop:
                         })
 
                     # Update assistant message with tool_results so frontend can display them on history load
-                    session_manager.update_message_tool_results(session_id, turn_number, tool_results)
+                    session_manager.update_message_tool_results(session_id, turn_number, tool_results, step=step)
+
+                    # Cancelled during the block: every call already has its
+                    # tool row, so the history stays valid. Stop here instead
+                    # of calling the LLM again.
+                    if stream_cancel_event is not None and stream_cancel_event.is_set():
+                        yield "data: [DONE]\n\n"
+                        return
 
                     continue  # back to while loop
 
@@ -1422,6 +1461,12 @@ class AgentLoop:
                             ),
                         }
                         messages.append(empty_response_hint)
+                        carried_usage = {
+                            "prompt": step_prompt + int((usage_data or {}).get("prompt_tokens") or 0),
+                            "completion": step_completion + int((usage_data or {}).get("completion_tokens") or 0),
+                            "total": step_total + int((usage_data or {}).get("total_tokens") or 0),
+                            "time": step_time + float((usage_data or {}).get("total_time") or 0),
+                        }
                         continue
 
                     final_msg = "*El modelo devolvió una respuesta vacía después de varios intentos. Probá reformular tu mensaje.*"
@@ -1542,7 +1587,23 @@ class AgentLoop:
 
             # ---- Max iterations ----
             logger.warning("Agent loop reached max_iterations (%d)", self.max_iterations)
-            yield f"data: {json.dumps({'type': 'chunk', 'content': '\n\n*El agente alcanzó el límite de iteraciones.*'})}\n\n"
+            max_iter_msg = "*El agente alcanzó el límite de iteraciones.*"
+            # Persisted like any other closing message so the history shows
+            # why the turn ended (and carries a pending empty-response usage).
+            session_manager.save_message(
+                session_id, "assistant", content=max_iter_msg,
+                model=model,
+                provider=effective_provider,
+                turn_number=turn_number, step=step + 1,
+                status="error", message="max_iterations",
+                usage={
+                    "prompt_tokens": int(carried_usage["prompt"]),
+                    "completion_tokens": int(carried_usage["completion"]),
+                    "total_tokens": int(carried_usage["total"]),
+                    "total_time": round(float(carried_usage["time"]), 2),
+                },
+            )
+            yield f"data: {json.dumps({'type': 'chunk', 'content': '\n\n' + max_iter_msg})}\n\n"
             yield "data: [DONE]\n\n"
             _schedule_latency()
             if parent_model and model != parent_model and parent_is_local and child_is_local:
@@ -1577,6 +1638,11 @@ class AgentLoop:
                     except Exception as exc:
                         logger.warning("Failed to clean up temp file %s: %s", fp, exc)
                 agent.tools._temp_files = set()
+
+            # A finished top-level run leaves no cancel event behind: tools
+            # called outside a chat (workflow nodes, creators) must not see it.
+            if depth == 0:
+                agent.tools._stream_cancel_event = None
 
             # Cleanup agent's temp markdown file ({agent_name}_temp.md in config dir)
             if agent_name is not None:

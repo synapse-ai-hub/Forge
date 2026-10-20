@@ -160,8 +160,10 @@ async def generate_workflow_endpoint(payload: dict[str, Any]) -> JSONResponse:
                 user_message=f"Descripción del workflow: {description}",
                 system_prompt=system_prompt,
             ):
+                # Keep consuming after [DONE]: the loop still runs its
+                # closing steps.
                 if sse.strip() == "data: [DONE]":
-                    break
+                    continue
                 if sse.startswith("data: "):
                     try:
                         event = _json.loads(sse[len("data: "):].strip())

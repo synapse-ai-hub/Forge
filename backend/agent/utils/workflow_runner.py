@@ -406,8 +406,10 @@ class WorkflowRunner:
                 parent_id=session_id,
                 stream_cancel_event=cancel_event,
             ):
+                # Keep consuming after [DONE]: the loop still runs its
+                # closing steps (e.g. freeing the agent's model).
                 if sse.strip() == "data: [DONE]":
-                    break
+                    continue
                 if sse.startswith("data: "):
                     try:
                         payload = _json.loads(sse[len("data: "):].strip())

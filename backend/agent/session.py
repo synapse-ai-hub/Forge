@@ -744,13 +744,17 @@ class SessionManager:
         finally:
             conn.close()
 
-    def update_message_tool_results(self, session_id: str, turn_number: int, tool_results: list) -> dict:
-        """Update the assistant message's tool_results for a given turn.
+    def update_message_tool_results(
+        self, session_id: str, turn_number: int, tool_results: list, step: int | None = None
+    ) -> dict:
+        """Update the assistant message's tool_results for a given turn step.
 
         Args:
             session_id: The session identifier.
             turn_number: The turn number of the assistant message.
             tool_results: List of tool result objects to store.
+            step: Step of the assistant message that made the calls. ``None``
+                updates every assistant message of the turn.
 
         Returns:
             A contract response dict indicating success or failure.
@@ -760,7 +764,7 @@ class SessionManager:
             with self._lock:
                 conn.execute(
                     load_query("messages/update_tool_results.sql"),
-                    (json.dumps(tool_results), session_id, turn_number),
+                    (json.dumps(tool_results), session_id, turn_number, step, step),
                 )
                 conn.commit()
             return make_success_response(message="Tool results updated.", usage=zero_usage())

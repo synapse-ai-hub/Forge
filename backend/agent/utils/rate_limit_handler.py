@@ -536,7 +536,10 @@ def classify_error_category(exception: Exception) -> str:
     """Classify an exception into a retry category.
 
     Categories:
-        - "rate_limit": Rate limit errors (429, 413) - should retry
+        - "rate_limit": Rate limit errors (429) - should retry
+        - "too_large": The request does not fit the model or its per-minute
+          token limit (413, context length) - should NOT retry: the same
+          request fails again
         - "budget": Budget/spend limit exceeded - should NOT retry
         - "transient": Temporary errors (timeouts, connection) - should retry
         - "fatal": Other errors - should NOT retry
@@ -550,6 +553,8 @@ def classify_error_category(exception: Exception) -> str:
     if isinstance(exception, RateLimitError):
         if exception.error_type == "budget":
             return "budget"
+        if exception.error_type == "413":
+            return "too_large"
         return "rate_limit"
 
     message = str(exception).lower()
@@ -558,6 +563,18 @@ def classify_error_category(exception: Exception) -> str:
     budget_patterns = ["budget", "spend limit", "presupuesto", "límite de gasto"]
     if any(p in message for p in budget_patterns):
         return "budget"
+
+    # Requests larger than the model or its per-minute limit: retrying
+    # sends the same request again.
+    too_large_patterns = [
+        r"request\s*too\s*large",
+        r"\b413\b",
+        r"maximum\s*context\s*length",
+        r"context\s*length\s*exceeded",
+        r"context_length_exceeded",
+    ]
+    if any(re.search(p, message) for p in too_large_patterns):
+        return "too_large"
 
     # Check for rate limit patterns
     if any(re.search(p, message) for p in _RATE_LIMIT_PATTERNS):
