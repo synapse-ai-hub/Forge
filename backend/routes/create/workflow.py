@@ -84,6 +84,26 @@ class CreateWorkflowRequest(BaseModel):
     model: str | None = None
     provider: str | None = None
     iterate: bool = False
+    agentes: list[str] | None = None
+    tools: list[str] | None = None
+    rag: list[str] | None = None
+
+
+def _formatear_recursos(req: "CreateWorkflowRequest") -> str:
+    """Render the resources the user picked in the setup form for the prompts."""
+    secciones = (
+        ("Agentes", req.agentes),
+        ("Tools", req.tools),
+        ("Colecciones RAG", req.rag),
+    )
+    lineas = [
+        f"- {titulo}: {', '.join(nombres)}"
+        for titulo, nombres in secciones
+        if nombres
+    ]
+    if not lineas:
+        return "(El usuario no eligió recursos. Elegí los que hagan falta entre los existentes.)"
+    return "\n".join(lineas)
 
 
 _WORKFLOW_INTERVIEW_TOOL: dict[str, Any] = {
@@ -247,6 +267,7 @@ async def post_create_workflow_stream(req: CreateWorkflowRequest):
                     "interview_workflow",
                     descripcion=descripcion,
                     nombre=nombre or "(inferir)",
+                    recursos=_formatear_recursos(req),
                     mensajes=_formatear_mensajes(mensajes),
                 )
             except FileNotFoundError:
@@ -319,6 +340,7 @@ async def post_create_workflow_stream(req: CreateWorkflowRequest):
                     descripcion=task,
                     conversacion=conversacion,
                     archivo=archivo,
+                    recursos=_formatear_recursos(req),
                 )
             except FileNotFoundError:
                 logger.exception("Prompt create_workflow.jinja no encontrado.")
@@ -329,7 +351,7 @@ async def post_create_workflow_stream(req: CreateWorkflowRequest):
             yield _sse({"type": "error", "content": _FRIENDLY_ERROR_WORKFLOW})
             return
 
-        user_msg = "Creá el workflow. Pasos OBLIGATORIOS en orden: 1) Escribí el archivo <nombre>.yaml con write en la carpeta de workflows. 2) Validá el YAML. 3) Cuando valide, pedime aprobación. Si el workflow necesita prompts propios, guardalos sueltos en workflows/prompts/."
+        user_msg = "Creá el workflow. Pasos OBLIGATORIOS en orden: 1) Escribí el archivo <nombre>.yaml con write en la carpeta de workflows. 2) Validá el YAML. 3) Cuando valide, pedime aprobación. Cada nodo agent lleva su prompt en un toml dentro de workflows/prompts/, referenciado con prompt_file."
 
         try:
             tools = list(agent.tools.tools_registry(_AGENT_TOOLS_PERMS))
