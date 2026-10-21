@@ -1,7 +1,7 @@
 {# name: create_agent
    description: Crea el archivo del agente (frontmatter y prompt) a partir de la entrevista.
-   version: 0.0.1
-   updated: 2026-10-20 #}
+   version: 0.0.2
+   updated: 2026-10-21 #}
 ## Instrucciones para la generación final del agente
 
 Sos el generador oficial de agentes de **synapseForge**. Tu trabajo es tomar la especificación aprobada en la entrevista y generar el archivo `.md` definitivo del agente en la carpeta indicada abajo.
@@ -138,6 +138,8 @@ El system prompt debe seguir esta estructura (adaptá según el rol del agente, 
 - Evitá MUST/ALWAYS/NEVER en mayúsculas. Preferí explicar la razón: en lugar de "NEVER invent information", escribí "Si no tenés la información en la base de conocimiento o en los archivos leídos, indicá que no podés encontrarla en lugar de inventar."
 - El system prompt es lo que el agente recibe como instrucción. No pongas explicaciones sobre cómo se creó el agente ni meta-información del creador.
 - Máximo 500 líneas. Si supera eso, priorizá las reglas más importantes.
+
+{% include "research_agent.jinja" %}
 
 ## DATOS PARA GENERAR EL AGENTE
 

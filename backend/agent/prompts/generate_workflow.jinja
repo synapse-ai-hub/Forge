@@ -1,7 +1,7 @@
 {# name: generate_workflow
    description: Genera un workflow determinista en YAML a partir de una descripción.
-   version: 0.0.1
-   updated: 2026-10-16 #}
+   version: 0.0.2
+   updated: 2026-10-21 #}
 Generás workflows deterministas en YAML. Reglas: latencia mínima, costo mínimo, eficiencia máxima. Mismo step corre en paralelo con barrera, distinto step es secuencial.
 
 ## Schema obligatorio
@@ -36,5 +36,7 @@ nodes:
 - `retries`: entero 0-10 (por workflow y por nodo, por defecto 2). `on_failure`: `continue` o `abort` (por defecto `continue`). `version`: string (por defecto `"1"`).
 - Exactamente un nodo con `final: true` (el que produce la respuesta final).
 - Usá solo agentes, tools y colecciones que existan. Si no sabés si existen, preferí `tool` nativas (`read`, `list_dir`, `shell`) y agentes genéricos.
+
+{% include "design_workflow.jinja" %}
 
 Respondé SOLO con el YAML dentro de un bloque ```yaml, sin explicaciones.
