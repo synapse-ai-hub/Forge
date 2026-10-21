@@ -138,7 +138,7 @@ Contiene módulos de soporte genéricos para el funcionamiento del agente:
 - `workflow_loader.py`, `workflow_validator.py`, `workflow_runner.py`, `workflows_helpers.py` — Carga, validación, ejecución y helpers de workflows.
 - `workflow_service.py`, `workflow_db.py`, `workflow_judge.py` — Ejecuciones de workflows (inicio, reintentos, cancelación, reanudación), su persistencia y el juez/explicador con LLM.
 - `notifications_helpers.py` — Notificaciones persistidas de workflows y tareas programadas.
-- `creator_runs.py` — Registro de las corridas de los creadores: envuelve el stream SSE de cada endpoint `/api/create/*` y suma a la corrida el uso de cada llamada que registra `record_creator_call`.
+- `creators.py` — Conversaciones de los creadores: envuelve el stream SSE de cada endpoint `/api/create/*`, guarda en `creators` lo que pasa (mensaje del usuario, texto, tool calls y cómo terminó), registra cada llamada de `record_creator_call` bajo su conversación y reconstruye una conversación para reabrirla desde el historial del creador.
 - `provider_keys.py` — Gestión de API keys (cifrado Fernet en SQLite).
 - `skill_loader.py` — Carga y formateo de skills para el system prompt.
 - `skills_helpers.py` — Helpers de evaluación y creación de skills.
@@ -189,15 +189,14 @@ Directorio que contiene el archivo `agent.db` con las tablas:
 - `error_log` — Registro de excepciones del backend (session_id, turn_number, exception, source, created_at).
 - `step_frontier` — Tool calls despachadas del paso en curso (`open` / `done`).
 - `workflows` — Registro de workflows; el nombre es el id y el YAML es la definición.
-- `workflow_runs` — Una fila por ejecución: estado (`running`, `success`, `error`, `cancelled`), intento actual, sesión, resultado y explicación del error.
-- `workflow_run_steps` — Commits por nodo (`open`, `done`, `failed`, `stale`) con el resultado completo, para retomar desde el último nodo confirmado.
-- `workflow_usage` — Gasto de los LLM propios del workflow (juez y explicación de fallos).
+- `workflow_runs` — Como `messages`: la fila de la corrida (`kind` `run`: estado, intento, sesión, resultado y explicación del error), una fila por ejecución de nodo (`node`, con `step` y `substep`) y una por llamada del motor (`decision`, `judge` con `approved`/`rejected`, `output`, `explain`), cada una con su resultado, modelo, tokens, tiempo y costo.
+- `workflow_run_steps` — Commits por nodo (`open`, `done`, `failed`, `stale`) con el resultado completo, para retomar desde el último nodo confirmado. Se borran cuando la corrida termina bien; solo una corrida fallida o cortada los deja.
 - `notifications` — Notificaciones de workflows y tareas programadas, con FK al workflow o a la tarea y estado de lectura.
 - `message_feedback` — Pulgar arriba o abajo del usuario sobre una respuesta, una fila por `(session_id, turn_number)`. Guarda también el modelo y el proveedor que respondió, y se borra con la sesión.
 - `turn_latency` — Latencia de cada turno.
 - `scheduled_tasks` y `task_runs` — Tareas programadas y sus ejecuciones.
-- `spend`, `spend_limits`, `billing`, `external_usage` y `creator_calls` — Gasto y uso por proveedor y modelo, límites de presupuesto y cada llamada al LLM de los creadores.
-- `creator_runs` — Una fila por corrida de un creador (agente, skill, tool o workflow): qué hizo (`question`, `create`, `iterate` o `exists`), el elemento que creó o modificó, el resultado (`success`, `error` o `aborted`), el modelo, la fecha y los tokens y el gasto de todas las llamadas de la corrida. El detalle de cada llamada sigue en `creator_calls`.
+- `spend`, `spend_limits`, `billing` y `external_usage` — Gasto y uso por proveedor y modelo y límites de presupuesto.
+- `creators` — Todo lo que hacen los creadores (agente, skill, tool y workflow), con la forma de `messages`: una conversación (`creator_id`) es una cadena de filas `user`, `assistant`, `tool` y `result` (qué hizo, el elemento que creó o modificó y el resultado), más una fila `call` por cada llamada al LLM con sus tokens y gasto. El historial de cada creador reabre las conversaciones para seguir modificando lo creado.
 
 El esquema se crea de forma idempotente en `ddl_setup.py` (`CREATE TABLE IF NOT EXISTS`).
 
@@ -249,7 +248,7 @@ Flujos deterministas definidos en archivos planos `~/.config/synapseForge/workfl
   - Reintenta hasta 3 intentos en total, con espera exponencial (2 s y 4 s). Cada intento retoma desde el primer nodo sin resultado confirmado; un nodo que estaba en vuelo cuenta como fallido y se vuelve a ejecutar.
   - Al arrancar el backend retoma las ejecuciones que quedaron en `running`; las que llamó un agente se cierran como interrumpidas.
   - Al cancelar, la ejecución queda como `cancelled` y no genera notificación.
-- `workflow_judge.py` — Cuando todos los nodos terminan, decide si el workflow terminó bien con los resultados de los nodos: con el modelo de decisión si está listo, o con el modelo de chat si no (un solo prompt, `judge_workflow.jinja`, que según `decision` trae la pregunta o el formato de respuesta y los datos). Si una ejecución falla definitivamente, un LLM redacta una explicación en lenguaje simple (`explain_workflow_error.jinja`); el error técnico va a `error_log`. El gasto de estas llamadas queda en `workflow_usage`.
+- `workflow_judge.py` — Cuando todos los nodos terminan, decide si el workflow terminó bien con los resultados de los nodos: con el modelo de decisión si está listo, o con el modelo de chat si no (un solo prompt, `judge_workflow.jinja`, que según `decision` trae la pregunta o el formato de respuesta y los datos). Si una ejecución falla definitivamente, un LLM redacta una explicación en lenguaje simple (`explain_workflow_error.jinja`); el error técnico va a `error_log`. Cada una de estas llamadas queda como una fila de `workflow_runs`, con su veredicto o texto y su gasto.
 - `workflow_db.py` — Persistencia de ejecuciones, commits por nodo y gasto.
 - `notifications_helpers.py` — Persiste cada notificación y la empuja a la interfaz por el bus de eventos. Solo notifican las ejecuciones lanzadas con play y las tareas programadas.
 - `workflows_helpers.py` — Listado y evaluación de workflows para el creador y `verificar_refs`, que comprueba que existan los agentes, tools y colecciones que el workflow referencia antes de ejecutarlo.
