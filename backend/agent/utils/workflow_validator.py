@@ -52,6 +52,9 @@ def _valid_run_workdir(workdir: str) -> bool:
 def validate_workflow(data: dict[str, Any]) -> dict[str, Any]:
     """Validate a parsed workflow YAML dict.
 
+    Args:
+        data: Parsed YAML of the workflow.
+
     Returns:
         Contract dict ``{status, message, data, usage}``. On success,
         ``data`` holds the normalized workflow.

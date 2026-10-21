@@ -64,7 +64,16 @@ POLL_SECONDS = 0.5
 
 
 def _find_run(base_url: str, name: str, run_id: str) -> dict[str, Any] | None:
-    """Return the run row of ``run_id`` from the runs listing, if present."""
+    """Return the run row of ``run_id`` from the runs listing, if present.
+
+    Args:
+        base_url: Base URL of the backend.
+        name: Workflow name.
+        run_id: Id of the run.
+
+    Returns:
+        The run, or ``None`` when it is not listed.
+    """
     try:
         response = requests.get(
             f"{base_url}/api/workflows/runs", params={"name": name, "limit": 50}, timeout=30
@@ -201,7 +210,12 @@ def verify_workflow_listed(base_url: str, expected: dict[str, Any]) -> list[str]
 
 
 def cleanup_scenario(base_url: str, tracked: dict[str, set[str]]) -> None:
-    """Best-effort removal of what a scenario created (never affects the verdict)."""
+    """Best-effort removal of what a scenario created (never affects the verdict).
+
+    Args:
+        base_url: Base URL of the backend.
+        tracked: Workflow names and session ids the scenario created, under ``names`` and ``sessions``.
+    """
     try:
         notifications = requests.get(f"{base_url}/api/notifications", timeout=30).json().get(
             "notifications"

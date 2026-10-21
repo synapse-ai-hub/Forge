@@ -29,7 +29,14 @@ _NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 
 
 def _safe_name(name: str) -> bool:
-    """Check workflow or agent names reject traversal."""
+    """Check that a workflow or agent name does not allow path traversal.
+
+    Args:
+        name: Name to check.
+
+    Returns:
+        ``True`` when the name is lowercase letters, numbers, ``_`` and ``-`` only.
+    """
     if not name or not _NAME_RE.match(name):
         return False
     if ".." in name or "/" in name or "\\" in name:
@@ -38,7 +45,11 @@ def _safe_name(name: str) -> bool:
 
 
 def list_workflows() -> list[str]:
-    """List workflow names from flat ``<nombre>.yaml`` files."""
+    """List workflow names from flat ``<name>.yaml`` files.
+
+    Returns:
+        The names of the workflows, sorted.
+    """
     try:
         workflows_dir = get_workflows_dir()
         names: list[str] = []
@@ -57,7 +68,14 @@ def list_workflows() -> list[str]:
 
 
 def load_workflow(name: str) -> dict[str, Any]:
-    """Load and validate a workflow by name with realpath containment."""
+    """Load and validate a workflow by name with realpath containment.
+
+    Args:
+        name: Workflow name.
+
+    Returns:
+        Contract dict ``{status, message, data, usage}``; ``data`` holds the normalized workflow.
+    """
     usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "total_time": 0}
     if not _safe_name(name):
         return {"status": "error", "message": f"Workflow '{name}' inválido.", "data": None, "usage": usage}
@@ -79,7 +97,15 @@ def load_workflow(name: str) -> dict[str, Any]:
 
 
 def _render_toml(value: Any, level: int) -> str:
-    """Render a parsed TOML value as readable text (tables become sections)."""
+    """Render a parsed TOML value as readable text (tables become sections).
+
+    Args:
+        value: Parsed TOML value (table, list or scalar).
+        level: Markdown heading level of the keys of a table.
+
+    Returns:
+        The text of the value.
+    """
     if isinstance(value, dict):
         parts = []
         for key, item in value.items():

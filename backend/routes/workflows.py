@@ -34,7 +34,14 @@ _STATUS_BY_CODE = {
 
 
 def _public_run(run: dict | None) -> dict | None:
-    """Return the fields of a run the UI needs."""
+    """Pick the fields of a run the UI needs.
+
+    Args:
+        run: The run row, or ``None``.
+
+    Returns:
+        The public fields, or ``None`` when there is no run.
+    """
     if not run:
         return None
     return {
@@ -53,7 +60,11 @@ def _public_run(run: dict | None) -> dict | None:
 
 @router.get("/workflows")
 async def list_workflows_with_state() -> JSONResponse:
-    """List every workflow with its running state and its latest run."""
+    """List every workflow with its running state and its latest run.
+
+    Returns:
+        JSON response with the workflows.
+    """
     try:
         from backend.agent.utils.workflows_helpers import _listar_workflows_locales
 
@@ -80,7 +91,14 @@ async def list_workflows_with_state() -> JSONResponse:
 
 @router.post("/workflows/{name}/run")
 async def run_workflow(name: str) -> JSONResponse:
-    """Start a run of a workflow in the background (the play button)."""
+    """Start a run of a workflow in the background (the play button).
+
+    Args:
+        name: Workflow name.
+
+    Returns:
+        JSON response with the run id, or the reason it could not start.
+    """
     try:
         started = await workflow_service.start_run(name, source="play")
         if not started.get("ok"):
@@ -106,7 +124,14 @@ async def run_workflow(name: str) -> JSONResponse:
 
 @router.delete("/workflows/{name}")
 async def delete_workflow(name: str) -> JSONResponse:
-    """Delete a workflow: its YAML, its runs, commits, spend and notifications."""
+    """Delete a workflow: its YAML, its runs, commits, spend and notifications.
+
+    Args:
+        name: Workflow name.
+
+    Returns:
+        JSON response with the result.
+    """
     if not _NAME_RE.match(name):
         return JSONResponse(
             status_code=400,
@@ -141,7 +166,14 @@ async def delete_workflow(name: str) -> JSONResponse:
 
 @router.post("/workflows/runs/{run_id}/cancel")
 async def cancel_workflow_run(run_id: str) -> JSONResponse:
-    """Cancel a running run (persisted as ``cancelled``)."""
+    """Cancel a running run (persisted as ``cancelled``).
+
+    Args:
+        run_id: Run identifier.
+
+    Returns:
+        JSON response with the result, or 404 when the run is not in progress.
+    """
     try:
         if not await workflow_service.cancel(run_id):
             return JSONResponse(
@@ -162,6 +194,14 @@ async def cancel_workflow_run(run_id: str) -> JSONResponse:
 
 @router.get("/workflows/runs")
 async def list_workflow_runs(name: str | None = None, limit: int = 50) -> JSONResponse:
-    """Return the most recent runs, newest first (optionally of one workflow)."""
+    """List the most recent runs, newest first (optionally of one workflow).
+
+    Args:
+        name: Restrict to one workflow, or ``None`` for all.
+        limit: Maximum number of runs (1..200).
+
+    Returns:
+        JSON response with the runs.
+    """
     runs = [_public_run(r) for r in workflow_db.list_runs(name, max(1, min(limit, 200)))]
     return JSONResponse(status_code=200, content={"status": "success", "runs": runs})

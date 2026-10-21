@@ -1,2 +1,3 @@
 -- Runs still marked as running (active now, or cut by a backend crash).
-SELECT * FROM workflow_runs WHERE status = 'running' ORDER BY started_at ASC;
+SELECT run_id AS id, workflow_name, session_id, parent_session_id, source, status, attempt, started_at, finished_at, result, error_text
+FROM workflow_runs WHERE kind = 'run' AND status = 'running' ORDER BY started_at ASC;
