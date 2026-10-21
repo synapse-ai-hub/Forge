@@ -27,7 +27,7 @@ from backend.agent.utils.create_helpers import (
 )
 from backend.instances import agent
 from backend.agent.utils.error_logger import log_error
-from backend.agent.utils.creator_runs import track_creator_run
+from backend.agent.utils.creators import track_creator_run
 from backend.routes.create.common import (
     _AGENT_TOOLS_PERMS,
     _AGENTS_DIR,
@@ -114,11 +114,14 @@ _AGENT_INTERVIEW_TOOL: dict[str, Any] = {
 
 
 @router.post("/agent")
-async def post_create_agent_stream(req: CreateAgentRequest):
-    """Streaming endpoint to create a specialized agent via an LLM interview.
+async def post_create_agent_stream(req: CreateAgentRequest) -> StreamingResponse:
+    """Stream the creation of a specialized agent via an LLM interview.
 
     Same contract as ``POST /api/create/skill`` but emits ``agent_action``
     and ``agent_result`` events instead of ``skill_action`` / ``skill_result``.
+
+    Args:
+        req: The creation request.
 
     Returns:
         A StreamingResponse with SSE events.
@@ -134,7 +137,11 @@ async def post_create_agent_stream(req: CreateAgentRequest):
         )
 
     async def event_stream() -> AsyncGenerator[str, None]:
-        """Generate SSE events for the agent creation flow."""
+        """Generate SSE events for the agent creation flow.
+
+        Yields:
+            SSE ``data:`` lines.
+        """
         _create_model, _create_provider = resolve_create_model_provider(req.model, req.provider)
 
         # ════════════════════════════════════════════════════════════════

@@ -33,7 +33,7 @@ from backend.agent.utils.create_helpers import (
 from backend.instances import agent
 from backend.routes.file_text_extractor import extract_text_from_bytes
 from backend.agent.utils.error_logger import log_error
-from backend.agent.utils.creator_runs import track_creator_run
+from backend.agent.utils.creators import track_creator_run
 from backend.routes.create.common import (
     _AGENT_TOOLS_PERMS,
     _FRIENDLY_ERROR,
@@ -126,11 +126,22 @@ async def post_create_skill_stream(
     model: str | None = Form(None),
     provider: str | None = Form(None),
     iterate: bool = Form(False),
+    creator_id: str | None = Form(None),
     files: Optional[list[UploadFile]] = File(None),
-):
-    """Streaming endpoint to create a skill via an LLM interview.
+) -> StreamingResponse:
+    """Stream the creation of a skill via an LLM interview.
 
     Streams Server-Sent Events back to the client as the interview progresses.
+
+    Args:
+        descripcion: Description of the skill the user wants.
+        name: Name for the skill, when the user chose one.
+        mensajes: JSON with the conversation so far.
+        model: Model to use, or None for the default.
+        provider: Provider of that model, or None for the default.
+        iterate: True to modify an existing skill instead of creating one.
+        creator_id: Conversation of the creator, when the page already has one.
+        files: Files the user attached.
 
     Returns:
         A StreamingResponse with SSE events.
@@ -194,7 +205,11 @@ async def post_create_skill_stream(
         )
 
     async def event_stream() -> AsyncGenerator[str, None]:
-        """Generate SSE events for the skill creation flow."""
+        """Generate SSE events for the skill creation flow.
+
+        Yields:
+            SSE ``data:`` lines.
+        """
         _create_model, _create_provider = resolve_create_model_provider(model, provider)
 
         # ════════════════════════════════════════════════════════════════
@@ -416,8 +431,8 @@ async def post_create_skill_stream(
         track_creator_run(
             "skill",
             SimpleNamespace(
-                descripcion=descripcion, name=name, model=model,
-                provider=provider, iterate=iterate,
+                descripcion=descripcion, name=name, model=model, provider=provider,
+                iterate=iterate, mensajes=mensajes, creator_id=creator_id,
             ),
             event_stream(),
         ),

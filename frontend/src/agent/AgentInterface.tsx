@@ -13,6 +13,8 @@ import { CreateModelSelector } from "../components/CreateModelSelector";
 import type { Message, ContentBlock } from "../App";
 import { saveFileWithPicker, fetchConversationMarkdown } from "../utils/conversationExport";
 import { API_BASE_URL } from "../config/api";
+import { CreatorHistory } from "../components/CreatorHistory";
+import { newCreatorId, type CreatorConversation } from "../services/creatorHistoryService";
 
 const API = API_BASE_URL + "/api";
 
@@ -45,6 +47,9 @@ export function AgentInterface() {
 
   const [messages, setMessages] = useState<Message[]>([]);
   const historialRef = useRef<HistorialMsg[]>([]);
+  /* Conversation of the creator: the history sidebar reopens it later. */
+  const creatorIdRef = useRef<string>(newCreatorId());
+  const [historyKey, setHistoryKey] = useState(0);
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
@@ -204,6 +209,7 @@ export function AgentInterface() {
             descripcion,
             name: nombre || null,
             mensajes: historialRef.current,
+            creator_id: creatorIdRef.current,
             model: createModel,
             provider: createProvider,
             iterate,
@@ -439,6 +445,7 @@ export function AgentInterface() {
       } finally {
         setIsStreaming(false);
         abortRef.current = null;
+        setHistoryKey((k) => k + 1);
       }
     },
     [isStreaming, descripcion, nombre, createModel, createProvider, isIterating],
@@ -498,6 +505,43 @@ export function AgentInterface() {
     [],
   );
 
+  /* ---- historial del creador: empezar una conversación nueva o reabrir una ---- */
+  const resetConversation = useCallback(() => {
+    abortRef.current?.abort();
+    creatorIdRef.current = newCreatorId();
+    historialRef.current = [];
+    setMessages([]);
+    setSetupDone(false);
+    setNombre("");
+    setDescripcion("");
+    setInput("");
+    setChatError(null);
+    setResultMsg(null);
+    setResultType(null);
+    setIsIterating(false);
+    setHistoryKey((k) => k + 1);
+  }, []);
+
+  const restoreConversation = useCallback((c: CreatorConversation) => {
+    abortRef.current?.abort();
+    const setup = c.setup as Record<string, any>;
+    creatorIdRef.current = c.creator_id;
+    historialRef.current = c.historial;
+    setNombre(typeof setup.name === "string" ? setup.name : "");
+    setDescripcion(typeof setup.descripcion === "string" ? setup.descripcion : "");
+    setMessages(c.messages.map((m) => ({ ...m, id: generateId(), isStreaming: false }) as Message));
+    const answered = c.result && c.result.action !== "question" ? c.result : null;
+    setResultType(answered ? (answered.status === "success" ? "success" : "error") : null);
+    setResultMsg(
+      answered ? (answered.status === "success" ? answered.message : "Error: " + answered.message) : null,
+    );
+    setInput("");
+    setChatError(null);
+    setIsIterating(false);
+    setSetupDone(true);
+    setHistoryKey((k) => k + 1);
+  }, []);
+
   /* ---- render ---- */
   return (
     <div className="h-screen bg-app-bg flex flex-col overflow-hidden">
@@ -524,6 +568,18 @@ export function AgentInterface() {
 
         <div className="sm:w-44"></div>
       </header>
+
+      <div className="flex flex-1 min-h-0 overflow-hidden">
+        <CreatorHistory
+          kind="agent"
+          activeId={creatorIdRef.current}
+          refreshKey={historyKey}
+          onSelect={restoreConversation}
+          onNew={resetConversation}
+          onDeletedActive={resetConversation}
+          disabled={isStreaming}
+        />
+        <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
 
       {!setupDone ? (
         /* ========== SETUP FORM ========== */
@@ -779,6 +835,8 @@ export function AgentInterface() {
           </div>
         </div>
       )}
+        </div>
+      </div>
     </div>
   );
 }

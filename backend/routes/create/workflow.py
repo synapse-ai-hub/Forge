@@ -32,7 +32,7 @@ from backend.agent.utils.create_helpers import (
 )
 from backend.instances import agent
 from backend.agent.utils.error_logger import log_error
-from backend.agent.utils.creator_runs import track_creator_run
+from backend.agent.utils.creators import track_creator_run
 from backend.routes.create.common import (
     _AGENT_TOOLS_PERMS,
     _formatear_mensajes,
@@ -76,7 +76,7 @@ def _validar_nombre_workflow(name: str | None) -> str | None:
 
 
 class CreateWorkflowRequest(BaseModel):
-    """Request para crear un workflow con iteración."""
+    """Request to create a workflow with iteration."""
 
     descripcion: str
     name: str | None = None
@@ -84,13 +84,21 @@ class CreateWorkflowRequest(BaseModel):
     model: str | None = None
     provider: str | None = None
     iterate: bool = False
+    creator_id: str | None = None
     agentes: list[str] | None = None
     tools: list[str] | None = None
     rag: list[str] | None = None
 
 
 def _formatear_recursos(req: "CreateWorkflowRequest") -> str:
-    """Render the resources the user picked in the setup form for the prompts."""
+    """Render the resources the user picked in the setup form for the prompts.
+
+    Args:
+        req: The creation request with the picked agents, tools and RAG collections.
+
+    Returns:
+        One line per kind of resource, or a note saying the user picked none.
+    """
     secciones = (
         ("Agentes", req.agentes),
         ("Tools", req.tools),
@@ -145,11 +153,14 @@ _WORKFLOW_INTERVIEW_TOOL: dict[str, Any] = {
 
 
 @router.post("/workflow")
-async def post_create_workflow_stream(req: CreateWorkflowRequest):
-    """Streaming endpoint to create a workflow via an LLM interview.
+async def post_create_workflow_stream(req: CreateWorkflowRequest) -> StreamingResponse:
+    """Stream the creation of a workflow via an LLM interview.
 
     Same contract as ``POST /api/create/skill`` but emits ``workflow_action``
     and ``workflow_result_final`` events.
+
+    Args:
+        req: The creation request.
 
     Returns:
         A StreamingResponse with SSE events.
@@ -165,7 +176,11 @@ async def post_create_workflow_stream(req: CreateWorkflowRequest):
         )
 
     async def event_stream() -> AsyncGenerator[str, None]:
-        """Generate SSE events for the workflow creation flow."""
+        """Generate SSE events for the workflow creation flow.
+
+        Yields:
+            SSE ``data:`` lines.
+        """
         try:
             _create_model, _create_provider = resolve_create_model_provider(req.model, req.provider)
         except Exception as exc:
@@ -378,7 +393,14 @@ async def post_create_workflow_stream(req: CreateWorkflowRequest):
             import yaml as _yaml
 
             def _try_validate_file(file_name: str) -> tuple[str | None, str | None, str | None]:
-                """Validate one flat workflow file, returning (name, path, error)."""
+                """Validate one flat workflow file.
+
+                Args:
+                    file_name: Name of the file in the workflows directory.
+
+                Returns:
+                    ``(name, path, error)``; ``error`` is ``None`` when the workflow is valid.
+                """
                 try:
                     candidate = _workflow_file_path(file_name)
                 except ValueError as exc:
