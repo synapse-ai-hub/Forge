@@ -21,10 +21,13 @@ class DecisionMixin:
 
     @property
     def decision_ready(self) -> bool:
-        """True when ``decision`` would make a real call.
+        """Check whether ``decision`` would make a real call.
 
         Same conditions as ``decision``: enabled, provider and model
         selected, API key stored and ``typesafe-sdk`` installed.
+
+        Returns:
+            True when a decision call can be made.
         """
         try:
             provider_id = (self.decision_provider or '').strip().lower()

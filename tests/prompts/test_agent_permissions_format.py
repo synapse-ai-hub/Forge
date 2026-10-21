@@ -17,13 +17,18 @@ from pathlib import Path
 
 from backend.agent.permissions import get_skill_permissions, get_tool_permissions
 from backend.agent.utils.scheduler_helpers import _ensure_scheduler_agent
+from collections.abc import Iterator
 
 PROMPTS = Path(__file__).resolve().parents[2] / "backend" / "agent" / "prompts"
 
 
 @contextlib.contextmanager
-def _config_dir():
-    """Point the app's config dir to an empty temp folder; yield its agents dir."""
+def _config_dir() -> Iterator[Path]:
+    """Point the app's config dir to an empty temp folder.
+
+    Yields:
+        The ``agents`` folder inside the temporary config dir.
+    """
     with tempfile.TemporaryDirectory() as tmp:
         agents = Path(tmp) / "synapseForge" / "agents"
         agents.mkdir(parents=True)
@@ -39,19 +44,35 @@ def _config_dir():
 
 
 def _example_agent(prompt_file: str) -> tuple[str, str]:
-    """First ```markdown example of an agent prompt: (agent name, file text)."""
+    """Take the first ```markdown example of an agent prompt.
+
+    Args:
+        prompt_file: File name of the prompt inside the prompts folder.
+
+    Returns:
+        ``(agent_name, example_text)``.
+    """
     text = (PROMPTS / prompt_file).read_text(encoding="utf-8")
     example = re.search(r"```markdown\n(.*?)```", text, re.S).group(1)
     return re.search(r"^name:\s*(\S+)", example, re.M).group(1), example
 
 
 def _resolved(name: str) -> tuple[dict, dict]:
+    """Resolve the tool and skill permissions of an agent.
+
+    Args:
+        name: Agent name.
+
+    Returns:
+        ``(tool_permissions, skill_permissions)``.
+    """
     tools = json.loads(get_tool_permissions(name)["data"])
     skills = json.loads(get_skill_permissions(name)["data"])
     return tools, skills
 
 
-def test_create_and_iterate_examples_are_read_by_the_runtime():
+def test_create_and_iterate_examples_are_read_by_the_runtime() -> None:
+    """Create and iterate examples are read by the runtime."""
     for prompt_file in ("create_agent.jinja", "iterate_agent.jinja"):
         name, example = _example_agent(prompt_file)
         with _config_dir() as agents:
@@ -61,14 +82,16 @@ def test_create_and_iterate_examples_are_read_by_the_runtime():
         assert any(v == "allow" for v in skills.values()), prompt_file
 
 
-def test_prompts_do_not_teach_the_singular_keys():
+def test_prompts_do_not_teach_the_singular_keys() -> None:
+    """Prompts do not teach the singular keys."""
     for prompt_file in ("create_agent.jinja", "iterate_agent.jinja"):
         text = (PROMPTS / prompt_file).read_text(encoding="utf-8")
         assert not re.search(r"^\s*permission:", text, re.M), prompt_file
         assert not re.search(r"^\s*skill:", text, re.M), prompt_file
 
 
-def test_scheduler_agent_file_is_read_by_the_runtime():
+def test_scheduler_agent_file_is_read_by_the_runtime() -> None:
+    """Scheduler agent file is read by the runtime."""
     task = {
         "name": "tarea-prueba",
         "tool_permissions": {"read": "allow", "task": {"explorador": "allow"}},

@@ -34,15 +34,39 @@ CASES = {
 
 
 def _names(router_perms: dict | None) -> list[str]:
+    """List the tool names that remain enabled for a router permission set.
+
+    Args:
+        router_perms: Router permissions, or ``None`` for the defaults.
+
+    Returns:
+        One name per enabled tool.
+    """
     perms = _router_tool_permissions(router_perms)
     return [t["function"]["name"] for t in agent.tools.tools_registry(perms)]
 
 
 def _without_security(prompt: str) -> str:
+    """Remove the ``## Seguridad`` section from a system prompt.
+
+    Args:
+        prompt: System prompt.
+
+    Returns:
+        The prompt without that section.
+    """
     return SEP.join(p for p in prompt.split(SEP) if not p.startswith("## Seguridad"))
 
 
 def main(model: str = MODEL) -> None:
+    """Count the tokens of each system prompt variant with the Gemini tokenizer and print the table.
+
+    Args:
+        model: Gemini model used to count the tokens.
+
+    Raises:
+        SystemExit: If there is no Google API key configured.
+    """
     from google import genai
 
     from backend.agent.utils.provider_keys import resolve_api_key

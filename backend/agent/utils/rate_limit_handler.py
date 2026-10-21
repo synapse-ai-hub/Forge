@@ -94,7 +94,11 @@ class RateLimitInfo:
     user_message: str
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for serialization."""
+        """Convert to a dictionary for serialization.
+
+        Returns:
+            The fields of the rate limit as a dict.
+        """
         return {
             "error_type": self.error_type,
             "provider": self.provider,
@@ -124,7 +128,15 @@ class RateLimitError(Exception):
         error_type: str = "429",
         provider: str | None = None,
         retry_after: int | None = None,
-    ):
+    ) -> None:
+        """Create the error.
+
+        Args:
+            message: Description of the rate limit.
+            error_type: Kind of limit (the HTTP code or the provider's code).
+            provider: Provider that rejected the request.
+            retry_after: Seconds the provider asks to wait, when known.
+        """
         super().__init__(message)
         self.error_type = error_type
         self.provider = provider
@@ -151,6 +163,9 @@ class RateLimitAdapter:
 
         Returns:
             A RateLimitInfo object if rate limit detected, None otherwise.
+
+        Raises:
+            NotImplementedError: Always; each provider adapter implements it.
         """
         raise NotImplementedError
 
@@ -181,6 +196,13 @@ class OpenRouterAdapter(RateLimitAdapter):
 
         OpenRouter error format:
         {"error": {"message": "...", "code": "rate_limit_exceeded", "type": "rate_limit_error"}}
+
+        Args:
+            response_body: The response body (string or dict).
+            status_code: The HTTP status code.
+
+        Returns:
+            A RateLimitInfo object if rate limit detected, None otherwise.
         """
         try:
             if isinstance(response_body, str):
@@ -211,7 +233,14 @@ class OpenRouterAdapter(RateLimitAdapter):
 
     @staticmethod
     def _extract_retry_after(message: str) -> int | None:
-        """Extract retry_after value from error message."""
+        """Extract the retry_after value from an error message.
+
+        Args:
+            message: Error message of the provider.
+
+        Returns:
+            Seconds to wait, rounded up, or None when the message has none.
+        """
         match = re.search(r"retry\s*after[:\s]*(\d+)", message, re.IGNORECASE)
         if match:
             return int(match.group(1))
@@ -233,6 +262,13 @@ class GoogleAdapter(RateLimitAdapter):
 
         Google error format:
         {"error": {"code": 429, "message": "...", "status": "RESOURCE_EXHAUSTED"}}
+
+        Args:
+            response_body: The response body (string or dict).
+            status_code: The HTTP status code.
+
+        Returns:
+            A RateLimitInfo object if rate limit detected, None otherwise.
         """
         try:
             if isinstance(response_body, str):
@@ -264,7 +300,14 @@ class GoogleAdapter(RateLimitAdapter):
 
     @staticmethod
     def _extract_retry_after(message: str) -> int | None:
-        """Extract retry_after value from error message."""
+        """Extract the retry_after value from an error message.
+
+        Args:
+            message: Error message of the provider.
+
+        Returns:
+            Seconds to wait, rounded up, or None when the message has none.
+        """
         match = re.search(r"retry\s*after[:\s]*(\d+)", message, re.IGNORECASE)
         if match:
             return int(match.group(1))
@@ -282,6 +325,13 @@ class OpenAIAdapter(RateLimitAdapter):
 
         OpenAI error format:
         {"error": {"message": "...", "type": "rate_limit_error", "code": "rate_limit_exceeded"}}
+
+        Args:
+            response_body: The response body (string or dict).
+            status_code: The HTTP status code.
+
+        Returns:
+            A RateLimitInfo object if rate limit detected, None otherwise.
         """
         try:
             if isinstance(response_body, str):
@@ -312,7 +362,14 @@ class OpenAIAdapter(RateLimitAdapter):
 
     @staticmethod
     def _extract_retry_after(message: str) -> int | None:
-        """Extract retry_after value from error message."""
+        """Extract the retry_after value from an error message.
+
+        Args:
+            message: Error message of the provider.
+
+        Returns:
+            Seconds to wait, rounded up, or None when the message has none.
+        """
         match = re.search(r"retry\s*after[:\s]*(\d+)", message, re.IGNORECASE)
         if match:
             return int(match.group(1))
@@ -447,7 +504,14 @@ def _parse_generic(response_body: str | dict | None, status_code: int) -> RateLi
 
 
 def _extract_retry_after(message: str) -> int | None:
-    """Extract retry_after value from an error message."""
+    """Extract the retry_after value from an error message.
+
+    Args:
+        message: Error message of the provider.
+
+    Returns:
+        Seconds to wait, rounded up, or None when the message has none.
+    """
     # Seconds may be decimal ("retry in 46.3s", Gemini) or come as a
     # ``retryDelay: "46s"`` field; rounded up so the wait is never short.
     patterns = [

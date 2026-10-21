@@ -42,7 +42,7 @@ except ImportError as e:
     logger.debug("backend.agent.session not yet available")
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> type[AgentLoop]:
     """Lazily resolve attributes that cannot be imported eagerly.
 
     ``AgentLoop`` is resolved lazily because ``backend.agent.loop``

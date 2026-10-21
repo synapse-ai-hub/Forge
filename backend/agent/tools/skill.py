@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 class SkillMixin:
+    """Native tool ``skill``: load a skill by name from the skills directory."""
     async def skill(self, name: str) -> dict:
             """Load a skill by name from the skills directory.
 

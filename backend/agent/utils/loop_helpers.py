@@ -19,6 +19,12 @@ import urllib.request
 from datetime import datetime
 from typing import Any, Iterable
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from backend.agent.agent import Agent
+    from backend.agent.session import SessionManager
+
 # ---------------------------------------------------------------------------
 # Ensure the project root is in sys.path so absolute imports (backend.*)
 # resolve correctly regardless of how the file is invoked.
@@ -101,12 +107,23 @@ def _security_block(tools: Iterable[str], decision: bool = False) -> str:
 
 
 def _all_tool_names() -> list[str]:
-    """Names of every tool in the registry (what an unrestricted agent gets)."""
+    """List every tool of the registry (what an unrestricted agent gets).
+
+    Returns:
+        The tool names.
+    """
     return [t["function"]["name"] for t in agent.tools.tools_registry({"*": "allow"})]
 
 
 def _agent_tool_names(agent_name: str) -> list[str]:
-    """Names of the tools a sub-agent gets (same filter as the agent loop)."""
+    """List the tools a sub-agent gets (same filter as the agent loop).
+
+    Args:
+        agent_name: Name of the sub-agent.
+
+    Returns:
+        The tool names.
+    """
     try:
         result = get_tool_permissions(agent_name)
         perms = json.loads(result["data"]) if result.get("status") == "success" else {}
@@ -183,9 +200,10 @@ def load_context_text() -> str:
 def fetch_context_window_turns() -> int:
     """Query the config endpoint for the current context-window setting.
 
-    Returns the ``max_turns`` value reported by
-    ``GET /api/config/context-window``.  Falls back to ``-1`` (all
-    turns) if the endpoint is unreachable.
+    Falls back to ``-1`` (all turns) if the endpoint is unreachable.
+
+    Returns:
+        The ``max_turns`` value reported by ``GET /api/config/context-window``.
     """
     try:
         url = f"{_CONFIG_BASE_URL}/context-window"
@@ -364,7 +382,7 @@ def build_system_prompt(
 
 
 def build_initial_messages(
-    session_manager,
+    session_manager: SessionManager,
     session_id: str,
     system_prompt: str,
     user_message: str,
@@ -428,7 +446,7 @@ def build_initial_messages(
     return messages
 
 
-async def execute_tool(agent, tc: dict[str, Any]) -> Any:
+async def execute_tool(agent: Agent, tc: dict[str, Any]) -> Any:
     """Execute a tool call by name, enforcing runtime permissions.
 
     Defense in depth: ``filter_tools`` decides which tools are *shown* to

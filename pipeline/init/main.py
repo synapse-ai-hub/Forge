@@ -131,7 +131,11 @@ def _cleanup(target: Path, created_dir: bool) -> None:
 
 
 def _run_npm_install(target: Path) -> None:
-    """Run ``npm install`` in the frontend directory."""
+    """Run ``npm install`` in the frontend directory.
+
+    Args:
+        target: Project root directory.
+    """
     frontend_dir = target / "frontend"
     if not (frontend_dir / "package.json").is_file():
         print("  WARNING: package.json not found, skipping npm install")
@@ -152,7 +156,12 @@ def _run_npm_install(target: Path) -> None:
 
 
 def _run_generate_ico(venv_path: Path, logo_png: Path) -> None:
-    """Generate ``.ico`` from the logo PNG using Pillow (inline)."""
+    """Generate ``.ico`` from the logo PNG using Pillow (inline).
+
+    Args:
+        venv_path: Path to the virtual environment root.
+        logo_png: Logo to convert.
+    """
     if not logo_png.is_file():
         print("  WARNING: logo PNG not found, skipping .ico generation")
         return
@@ -174,7 +183,12 @@ def _run_generate_ico(venv_path: Path, logo_png: Path) -> None:
 
 
 def _resolve_colors(config: dict, logo_png: Path) -> None:
-    """Validate that all 4 color fields exist in config."""
+    """Validate that all 4 color fields exist in config.
+
+    Args:
+        config: User configuration dict.
+        logo_png: Logo the colors come from.
+    """
     keys = ["primary", "secondary", "primary_text", "gradient_secondary"]
     colors = config.setdefault("colors", {})
     missing = [k for k in keys if not colors.get(k)]

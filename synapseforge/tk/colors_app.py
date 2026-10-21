@@ -36,6 +36,7 @@ COLOR_FIELDS = [
 # Fijar el AppUserModelID ANTES de crear cualquier ventana
 # ──────────────────────────────────────────────────────────────
 def _set_app_user_model_id() -> None:
+    """Set the Windows AppUserModelID so the taskbar shows the icon of the app."""
     if sys.platform != "win32":
         return
     try:
@@ -52,6 +53,12 @@ class ColorsApp:
     """GUI for editing runtime colors.json."""
 
     def __init__(self, colors_path: Path, current: Dict[str, str]) -> None:
+        """Build the window of the colors editor.
+
+        Args:
+            colors_path: File where the colors are saved.
+            current: Current value of each color.
+        """
         self.colors_path = colors_path
         self.current = current
         self.result: Optional[Dict[str, str]] = None
@@ -144,7 +151,7 @@ class ColorsApp:
     # Configuración robusta del ícono usando ctypes
     # ──────────────────────────────────────────────────────────────────
     def _set_icon(self) -> None:
-        """Asigna el ícono de la ventana y de la barra de tareas usando ctypes."""
+        """Set the icon of the window and of the taskbar using ctypes."""
         if not _ICO_PATH.is_file():
             return
 
@@ -178,7 +185,7 @@ class ColorsApp:
     # Logo (cargado desde archivo local)
     # ------------------------------------------------------------------
     def _load_logo_local(self) -> None:
-        """Carga el logo desde logo_transparente.png (local) y lo muestra en la ventana."""
+        """Load the logo from logo_transparente.png (local) and show it in the window."""
         if Image is None or ImageTk is None:
             return
         if not _LOGO_PNG_PATH.is_file():
@@ -196,6 +203,11 @@ class ColorsApp:
     # Color helpers
     # ------------------------------------------------------------------
     def _pick_color(self, key: str) -> None:
+        """Open OS color chooser, fill entry and update preview.
+
+        Args:
+            key: Name of the color being edited.
+        """
         result = colorchooser.askcolor(
             title=key,
             color=self._entries[key].get() or None,
@@ -207,6 +219,11 @@ class ColorsApp:
             self._update_preview(key)
 
     def _update_preview(self, key: str) -> None:
+        """Update the preview square for the given color key.
+
+        Args:
+            key: Name of the color being previewed.
+        """
         cv = self._previews[key]
         raw = self._entries[key].get().strip()
         cv.delete("all")
@@ -228,6 +245,7 @@ class ColorsApp:
     # Save / Cancel
     # ------------------------------------------------------------------
     def _on_save(self) -> None:
+        """Validate the colors, write them to the file and close the window."""
         updated: Dict[str, str] = {}
         errors: list[str] = []
         usar_gradiente = self._usar_gradiente_var.get()
@@ -263,6 +281,7 @@ class ColorsApp:
                                  parent=self.root)
 
     def _on_cancel(self) -> None:
+        """Close the window without saving."""
         self.result = None
         self.root.destroy()
 
@@ -270,6 +289,12 @@ class ColorsApp:
     # Window utils
     # ------------------------------------------------------------------
     def _center(self, w: int, h: int) -> None:
+        """Center the window on the screen.
+
+        Args:
+            w: Width of the window.
+            h: Height of the window.
+        """
         sw = self.root.winfo_screenwidth()
         sh = self.root.winfo_screenheight()
         x = (sw - w) // 2

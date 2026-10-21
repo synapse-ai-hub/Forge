@@ -19,7 +19,14 @@ server = MCPServer("echo")
 
 @server.tool()
 def echo(text: str) -> str:
-    """Return the text it receives."""
+    """Return the text it receives.
+
+    Args:
+        text: Text to repeat.
+
+    Returns:
+        The text prefixed with ``echo: ``.
+    """
     return f"echo: {text}"
 
 

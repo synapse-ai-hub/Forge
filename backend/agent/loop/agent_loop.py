@@ -86,7 +86,6 @@ from backend.agent.utils.decision import (
 from backend.agent.utils.frontier_helpers import (
     build_resume_message,
     clear_session,
-    clear_turn,
     collect_garbage,
     extract_task_child_id,
     mark_call_done,
@@ -603,6 +602,7 @@ class AgentLoop:
                     title_queue = asyncio.Queue()
 
                     async def _generate_title() -> None:
+                        """Generate the title of the session from the first message and store it."""
                         try:
                             title_result = await agent.llm_process(
                                 model=model,
@@ -1060,7 +1060,17 @@ class AgentLoop:
                         btc_cfg: dict | None,
                         btc_queue: Any,
                     ) -> Any:
-                        """Run one block call under its own ContextVar snapshot."""
+                        """Run one block call under its own ContextVar snapshot.
+
+                        Args:
+                            btc_idx: Position of the call inside the block.
+                            btc: The tool call.
+                            btc_cfg: Resolved configuration of a ``task`` call, or None.
+                            btc_queue: Queue where the events of the sub-agent are put.
+
+                        Returns:
+                            The result of the call.
+                        """
                         snap = {
                             "parent_session_id": session_id,
                             "depth": depth,
@@ -1529,9 +1539,13 @@ class AgentLoop:
                 # Validated done signal (final content, no tool_calls):
                 # the step closes only when the decision accepts it
                 # (LLM signal alone, or JEV verdict when configured).
-                # Otherwise the frontier stays for the next turn.
+                # Otherwise the frontier stays for the next turn. The
+                # rows of earlier turns that were left pending were handed
+                # to the model in the resume message of this turn, so a
+                # validated close finishes them too: the whole session
+                # frontier is deleted, not only this turn's.
                 if await should_close_step(session_id, turn_number, cleaned, step=step):
-                    clear_turn(session_id, turn_number)
+                    clear_session(session_id)
 
                 # Emit the session title before [DONE] so the sidebar refreshes
                 # with the generated title even if it finished after the loop.
@@ -1590,6 +1604,9 @@ class AgentLoop:
 
             # ---- Max iterations ----
             logger.warning("Agent loop reached max_iterations (%d)", self.max_iterations)
+            if depth > 0:
+                # A sub-agent session is never resumed: its task is over.
+                clear_session(session_id)
             max_iter_msg = "*El agente alcanzó el límite de iteraciones.*"
             # Persisted like any other closing message so the history shows
             # why the turn ended (and carries a pending empty-response usage).
@@ -1671,6 +1688,7 @@ class AgentLoop:
 
 if __name__ == "__main__":
     async def _main() -> None:
+        """Run the loop once from the command line, for manual testing."""
         from backend.instances import agent, session_manager
 
         session_id = sys.argv[1] if len(sys.argv) > 1 else "test-session"

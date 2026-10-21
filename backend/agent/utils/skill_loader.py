@@ -31,7 +31,13 @@ def _parse_frontmatter_line(line: str, key: str) -> str | None:
     """Extract the value of *key* from a simple frontmatter line.
 
     Handles both ``key: value`` and ``key: "value"`` formats.
-    Returns ``None`` if the line does not contain *key*.
+
+    Args:
+        line: A line of the frontmatter.
+        key: Key to look for.
+
+    Returns:
+        The value, or ``None`` if the line does not contain *key*.
     """
     stripped = line.strip()
     if not stripped.startswith(key + ":"):
@@ -43,8 +49,13 @@ def _parse_frontmatter_line(line: str, key: str) -> str | None:
 def _parse_frontmatter(content: str) -> dict[str, str]:
     """Parse the YAML frontmatter block of a SKILL.md file.
 
-    Returns a dict with at most ``description`` and ``triggers`` keys.
     Both values are plain strings (triggers is a comma-separated list).
+
+    Args:
+        content: Text of the SKILL.md file.
+
+    Returns:
+        A dict with at most ``description`` and ``triggers`` keys.
     """
     result: dict[str, str] = {}
     in_frontmatter = False
@@ -110,6 +121,8 @@ def format_skills_section(
             the config directory ``~/.config/synapseForge/skills/``.
         agent_name: Optional selected agent name. ``None`` means no
             filtering.
+        skill_permissions: The ``skill`` sub-dict of the agent frontmatter. When given it is used
+            as it is instead of resolving the permissions from ``agent_name``.
 
     Returns:
         The formatted section string, or an empty string if the folder does

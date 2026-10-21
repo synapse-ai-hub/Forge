@@ -62,7 +62,11 @@ class SchedulerCommandsMixin:
         return sorted(days) if days else None
 
     async def _cmd_agenda(self, chat_id: int) -> None:
-        """Handle ``/agenda``: list every scheduled task."""
+        """Handle ``/agenda``: list every scheduled task.
+
+        Args:
+            chat_id: Telegram chat id.
+        """
         from backend.agent.utils import scheduler_helpers as scheduler_db
 
         tasks = scheduler_db.list_tasks()
@@ -188,7 +192,12 @@ class SchedulerCommandsMixin:
         )
 
     async def _horario_num(self, chat_id: int, text: str) -> None:
-        """Resolve the selected task number of the ``/horario`` flow."""
+        """Resolve the selected task number of the ``/horario`` flow.
+
+        Args:
+            chat_id: Telegram chat id.
+            text: Number the user answered.
+        """
         from backend.agent.utils import scheduler_helpers as scheduler_db
 
         tasks = scheduler_db.list_tasks()
@@ -277,7 +286,12 @@ class SchedulerCommandsMixin:
         )
 
     async def _eliminar_tarea_num(self, chat_id: int, text: str) -> None:
-        """Delete the task selected by number in the ``/eliminar_tarea`` flow."""
+        """Delete the task selected by number in the ``/eliminar_tarea`` flow.
+
+        Args:
+            chat_id: Telegram chat id.
+            text: Number the user answered.
+        """
         from backend.agent.utils import scheduler_helpers as scheduler_db
 
         tasks = scheduler_db.list_tasks()

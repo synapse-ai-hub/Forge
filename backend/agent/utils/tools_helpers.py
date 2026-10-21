@@ -83,16 +83,16 @@ async def _evaluar_si_existe(
     model: str | None = None,
     provider: str | None = None,
 ) -> dict | None:
-    """Pregunta al LLM si alguna tool local cubre la tarea.
+    """Ask the LLM whether any local tool covers the task.
 
     Args:
-        tarea: Lo que el usuario quiere hacer.
-        tools_locales: Lista de tools existentes.
-        model: Modelo elegido por el usuario (opcional).
-        provider: Provider elegido por el usuario (opcional).
+        tarea: What the user wants to do.
+        tools_locales: List of the existing tools.
+        model: Model chosen by the user (optional).
+        provider: Provider chosen by the user (optional).
 
     Returns:
-        ``{"exist": "Sí", "tool": ...}`` o ``{"exist": "No", "tool": None}``.
+        ``{"exist": "Sí", "tool": ...}`` or ``{"exist": "No", "tool": None}``.
     """
     eval_model, eval_provider = resolve_create_model_provider(model, provider)
     if not eval_model:
@@ -129,7 +129,7 @@ async def _evaluar_si_existe(
         cleaned_output=True,
     )
 
-    # Contemplate this evaluator LLM call (tracked in creator_calls
+    # Contemplate this evaluator LLM call (tracked in creators
     # since it never produces messages rows).
     try:
         from backend.agent.utils.spend_handler import record_creator_call

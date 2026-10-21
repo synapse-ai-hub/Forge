@@ -1,12 +1,11 @@
-"""
-Script para sincronizar repositorio con fetch + rebase.
+"""Sync the repository with fetch + rebase.
 
-Uso:
-    python .commands/commands/quick_sync.py           # Sync con main
-    python .commands/commands/quick_sync.py -b develop # Sync con develop
-    
-Parámetros:
-    -b : Rama con la que sincronizar (opcional, default: main)
+Usage:
+    python .commands/commands/quick_sync.py           # Sync with main
+    python .commands/commands/quick_sync.py -b develop # Sync with develop
+
+Parameters:
+    -b: Branch to sync with (optional, default: main).
 """
 import sys
 import subprocess
@@ -14,15 +13,14 @@ import argparse
 
 
 def run_command(command: str, description: str) -> bool:
-    """
-    Ejecuta un comando git y maneja errores.
-    
+    """Run a git command and handle errors.
+
     Args:
-        command: Comando a ejecutar
-        description: Descripción para mostrar
-        
+        command: Command to run.
+        description: Description to show.
+
     Returns:
-        True si exitoso, False si falla
+        True if it succeeded, False if it fails.
     """
     print(f"→ {description}...")
     
@@ -45,8 +43,12 @@ def run_command(command: str, description: str) -> bool:
         return False
 
 
-def main():
-    """Función principal"""
+def main() -> bool:
+    """Parse the arguments and sync the branch with fetch + rebase.
+
+    Returns:
+        True if the sync succeeded, False otherwise.
+    """
     parser = argparse.ArgumentParser(
         description='Sincronizar con fetch + rebase',
         formatter_class=argparse.RawDescriptionHelpFormatter,

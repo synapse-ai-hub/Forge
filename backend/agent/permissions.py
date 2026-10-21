@@ -70,7 +70,9 @@ def _locate_agents_dir() -> str | None:
     """Locate the external ``agents/`` folder.
 
     Uses the config directory ``~/.config/synapseForge/agents/``.
-    Returns ``None`` (no error) if the folder does not exist.
+
+    Returns:
+        The path as text, or ``None`` (no error) if the folder does not exist.
     """
     agents_dir = get_agents_dir()
     if agents_dir.is_dir():

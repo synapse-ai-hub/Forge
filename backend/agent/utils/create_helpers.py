@@ -288,7 +288,7 @@ async def stream_interview_loop(
             continue
         llm_attempt = 0
 
-        # Contemplate this interview LLM call (tracked in creator_calls
+        # Contemplate this interview LLM call (tracked in creators
         # since it never produces messages rows).
         try:
             from backend.agent.utils.spend_handler import record_creator_call
@@ -461,7 +461,7 @@ async def stream_tool_calling_loop(
             continue
         llm_attempt = 0
 
-        # Contemplate this generation LLM call (tracked in creator_calls
+        # Contemplate this generation LLM call (tracked in creators
         # since it never produces messages rows).
         try:
             from backend.agent.utils.spend_handler import record_creator_call

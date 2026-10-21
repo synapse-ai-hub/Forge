@@ -33,6 +33,11 @@ import time
 import urllib.request
 from pathlib import Path
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from types import FrameType
+
 
 HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
@@ -242,7 +247,11 @@ Not preserved (overwritten):
 
 
 def _init(target_dir: str) -> None:
-    """Open tkinter GUI to collect config, then run pipeline.init.main.run()."""
+    """Open tkinter GUI to collect config, then run pipeline.init.main.run().
+
+    Args:
+        target_dir: Directory where the project is created.
+    """
     try:
         from synapseforge.tk.init_app import InitApp
     except ImportError as exc:
@@ -258,7 +267,11 @@ def _init(target_dir: str) -> None:
 
 
 def _update(project_dir: str) -> None:
-    """Import and run pipeline.update.main.run_update()."""
+    """Import and run pipeline.update.main.run_update().
+
+    Args:
+        project_dir: Directory of the project to update.
+    """
     try:
         from pipeline.update.main import run_update
     except ImportError as exc:
@@ -274,7 +287,15 @@ def _launch(
     no_embed: bool,
     compile_backend: bool = False,
 ) -> None:
-    """Import and run pipeline.launch.forge.build()."""
+    """Import and run pipeline.launch.forge.build().
+
+    Args:
+        repo_path: Path of the repository.
+        exe_name: Name of the executable.
+        skip_frontend: Reuse the existing frontend build.
+        no_embed: Use a venv instead of the embedded Python.
+        compile_backend: Compile the backend to .pyc.
+    """
     try:
         from pipeline.launch.forge import build
     except ImportError as exc:
@@ -290,7 +311,11 @@ def _launch(
 
 
 def _colors(project_dir: str) -> None:
-    """Open tkinter GUI for editing frontend/public/colors.json."""
+    """Open tkinter GUI for editing frontend/public/colors.json.
+
+    Args:
+        project_dir: Directory of the project.
+    """
     try:
         from synapseforge.tk.colors_app import ColorsApp
     except ImportError as exc:
@@ -337,7 +362,14 @@ def _wait_for_backend(proc: subprocess.Popen, host: str, port: int, timeout: flo
 
 
 def _run(project_dir: str) -> None:
-    """Start uvicorn + npm run dev and open the browser."""
+    """Start uvicorn + npm run dev and open the browser.
+
+    Args:
+        project_dir: Directory of the project.
+
+    Raises:
+        RuntimeError: If no virtual environment is active.
+    """
     import os
 
     # ── Verificar que el entorno virtual esté activado ────────────────
@@ -391,17 +423,17 @@ def _run(project_dir: str) -> None:
 
     print("\nPresioná Ctrl+C para detener ambos servidores.\n")
 
-    def _stop(signum=None, frame=None) -> None:
+    def _stop(signum: int | None = None, frame: FrameType | None = None) -> None:
         """Force-kill both process trees and exit.
 
         ``shell=True`` wraps each command in ``cmd.exe``, so ``terminate()``
         alone would leave the real uvicorn/node children alive. We use
         ``taskkill /F /T`` to kill the whole tree. This also force-kills
-        uvicorn even when it is stuck in a graceful shutdown waiting for open
-        SSE connections.
+        uvicorn even when it is stuck in a graceful shutdown.
 
-        Before force-killing, we give the backend a chance to run its graceful
-        shutdown (which frees the local Ollama model) by hitting ``/api/shutdown``.
+        Args:
+            signum: Signal number, when called as a signal handler.
+            frame: Current stack frame, when called as a signal handler.
         """
         print("\nDeteniendo servidores...")
         # Darle chance al backend de liberar el modelo antes de matarlo

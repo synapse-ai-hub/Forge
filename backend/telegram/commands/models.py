@@ -13,6 +13,12 @@ class ModelCommandsMixin:
     """``/proveedor`` and ``/modelo``."""
 
     async def _cmd_proveedor(self, chat_id: int, provider: str | None = None) -> None:
+        """Answer ``/proveedor``: select the provider.
+
+        Args:
+            chat_id: Telegram chat id.
+            provider: Provider to select; when None the bot asks for it.
+        """
         from backend.agent.utils import provider_keys
 
         valid = ["LOCAL"] + [e["provider"] for e in provider_keys.list_supported()]
@@ -39,6 +45,12 @@ class ModelCommandsMixin:
         await self.send_message(chat_id, f"Proveedor cambiado a {provider}.")
 
     async def _cmd_modelo(self, chat_id: int, model: str | None = None) -> None:
+        """Answer ``/modelo``: select the model of the current provider.
+
+        Args:
+            chat_id: Telegram chat id.
+            model: Model to select; when None the bot asks for it.
+        """
         from backend.agent.utils.model_resolver import get_ollama_models
         from backend.agent.utils import model_catalog
         try:

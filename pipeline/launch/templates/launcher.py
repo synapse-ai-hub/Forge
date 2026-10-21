@@ -19,7 +19,12 @@ EXE_NAME = "{{EXE_NAME}}"
 
 
 def _open_browser(url: str, delay: int = 4) -> None:
-    """Open the browser after a short delay to let the server start."""
+    """Open the browser after a short delay to let the server start.
+
+    Args:
+        url: Address to open.
+        delay: Seconds to wait before opening it.
+    """
     import webbrowser
     time.sleep(delay)
     webbrowser.open(url)
@@ -27,6 +32,7 @@ def _open_browser(url: str, delay: int = 4) -> None:
 
 def main() -> None:
     # Determine project root: exe location when frozen
+    """Start the embedded Python server of the packaged app and open the browser."""
     if getattr(sys, "frozen", False):
         base_dir = os.path.dirname(sys.executable)
     else:

@@ -64,19 +64,38 @@ def install_requirements(venv_path: Path, target: Path) -> None:
 
 
 def get_venv_python(venv_path: Path) -> Path:
-    """Return the path to the venv's Python executable."""
+    """Locate the Python executable of a virtual environment.
+
+    Args:
+        venv_path: Path to the virtual environment root.
+
+    Returns:
+        The path to the venv's Python executable.
+    """
     if sys.platform == "win32":
         return venv_path / "Scripts" / "python.exe"
     return venv_path / "bin" / "python"
 
 
 def _venv_python(venv_path: Path) -> Path:
-    """Return the path to the venv's Python executable (Windows)."""
+    """Locate the Python executable of a virtual environment on Windows.
+
+    Args:
+        venv_path: Path to the virtual environment root.
+
+    Returns:
+        The path to the venv's Python executable.
+    """
     return venv_path / "Scripts" / "python.exe"
 
 
 def run_seed_collections(target: Path, venv_path: Path) -> None:
-    """Load the internal ``help`` collection (already vectorized) into the knowledge dir."""
+    """Load the internal ``help`` collection (already vectorized) into the knowledge dir.
+
+    Args:
+        target: Project root directory.
+        venv_path: Path to the virtual environment root.
+    """
     python = get_venv_python(venv_path)
     if not python.is_file():
         python = Path(sys.executable)
@@ -104,7 +123,12 @@ def run_seed_collections(target: Path, venv_path: Path) -> None:
 
 
 def run_ddl_setup(target: Path, venv_path: Path) -> None:
-    """Run ddl_setup to initialize/update the SQLite database tables."""
+    """Run ddl_setup to initialize/update the SQLite database tables.
+
+    Args:
+        target: Project root directory.
+        venv_path: Path to the virtual environment root.
+    """
     db_path = target / "backend" / "agent" / "agent_db" / "agent.db"
     db_path.parent.mkdir(parents=True, exist_ok=True)
 

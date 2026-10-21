@@ -51,6 +51,9 @@ def db_transaction() -> Generator[sqlite3.Connection, None, None]:
     Usage:
         with db_transaction() as conn:
             conn.execute("INSERT INTO ...", (data,))
+
+    Yields:
+        The open connection.
     """
     conn = get_connection()
     try:

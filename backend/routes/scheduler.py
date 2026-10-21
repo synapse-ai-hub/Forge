@@ -42,7 +42,11 @@ router = APIRouter(tags=["scheduler"])
 
 @router.get("/scheduler/tasks")
 async def get_scheduled_tasks() -> JSONResponse:
-    """List every scheduled task sorted by time."""
+    """List every scheduled task sorted by time.
+
+    Returns:
+        JSON response with the tasks.
+    """
     return JSONResponse(
         status_code=200,
         content={"status": "success", "tasks": scheduler_db.list_tasks()},
@@ -56,6 +60,12 @@ async def create_scheduled_task(data: dict[str, Any]) -> JSONResponse:
     Body: ``{"name": str, "prompt": str, "time": "HH:MM", "days": [0-6, ...],
     "tool_permissions": {}, "skill_permissions": {}, "parameters": {},
     "repetitions": []}``.
+
+    Args:
+        data: Request body.
+
+    Returns:
+        JSON response with the created task.
     """
     result = scheduler_db.add_task(
         name=data.get("name"),
@@ -82,6 +92,13 @@ async def update_scheduled_task(task_id: str, data: dict[str, Any]) -> JSONRespo
     "days": [...], "enabled": bool, "tool_permissions": {},
     "skill_permissions": {}, "parameters": {}, "repetitions": []}``.
     Updating the schedule resets the daily dedup guard.
+
+    Args:
+        task_id: Task identifier.
+        data: Request body.
+
+    Returns:
+        JSON response with the updated task.
     """
     result = scheduler_db.update_task(
         task_id,
@@ -104,7 +121,14 @@ async def update_scheduled_task(task_id: str, data: dict[str, Any]) -> JSONRespo
 
 @router.delete("/scheduler/tasks/{task_id}")
 async def delete_scheduled_task(task_id: str) -> JSONResponse:
-    """Delete a scheduled task and its recorded runs."""
+    """Delete a scheduled task and its recorded runs.
+
+    Args:
+        task_id: Task identifier.
+
+    Returns:
+        JSON response with the result.
+    """
     result = scheduler_db.delete_task(task_id)
     if result["status"] == "error":
         log_error(result["message"], source="backend/routes/scheduler.py:delete")
@@ -115,7 +139,11 @@ async def delete_scheduled_task(task_id: str) -> JSONResponse:
 
 @router.get("/scheduler/runs")
 async def get_scheduler_runs() -> JSONResponse:
-    """Return the most recent task executions (newest first)."""
+    """List the most recent task executions (newest first).
+
+    Returns:
+        JSON response with the runs.
+    """
     return JSONResponse(
         status_code=200,
         content={"status": "success", "runs": scheduler_db.list_runs()},
@@ -127,7 +155,12 @@ async def craft_scheduled_prompt(data: dict[str, Any]) -> JSONResponse:
     """Refine a user's natural-language task description into a clear agent prompt.
 
     Body: ``{"prompt": "user text"}``.
-    Returns: ``{"status": "success", "message": "...", "data": {"prompt": "refined prompt"}, "usage": ...}``.
+
+    Args:
+        data: Request body.
+
+    Returns:
+        ``{"status": "success", "message": "...", "data": {"prompt": "refined prompt"}, "usage": ...}``.
     """
     raw = (data.get("prompt") or "").strip()
     if not raw:
@@ -151,7 +184,7 @@ async def craft_scheduled_prompt(data: dict[str, Any]) -> JSONResponse:
             top_p=0.7,
             seed=2603,
         )
-        # Contemplate this crafter LLM call (tracked in creator_calls
+        # Contemplate this crafter LLM call (tracked in creators
         # since it never produces messages rows).
         try:
             from backend.agent.utils.spend_handler import record_creator_call
@@ -184,10 +217,13 @@ async def craft_scheduled_prompt(data: dict[str, Any]) -> JSONResponse:
 
 @router.get("/scheduler/permissions/catalog")
 async def get_permissions_catalog() -> JSONResponse:
-    """Return the available tools, skills, sub-agents and workflows for permission selection.
+    """List the available tools, skills, sub-agents and workflows for permission selection.
 
     The frontend uses this to populate the permission checkboxes in the
     scheduler task form.
+
+    Returns:
+        JSON response with the catalog.
     """
     from backend.agent.utils.workflows_helpers import _listar_workflows_locales
 

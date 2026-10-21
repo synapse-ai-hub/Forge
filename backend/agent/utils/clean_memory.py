@@ -25,15 +25,15 @@ logger = logging.getLogger(__name__)
 
 
 def liberar_modelo(modelo: str, session_id: str | None = None, turn_number: int | None = None, parent_id: str | None = None, source: str = "clean_memory.py:liberar_modelo") -> None:
-    """Pide a ollama que descargue el modelo de RAM + GC de Python.
+    """Ask Ollama to unload the model from RAM and run the Python GC.
 
-    Usa dos mecanismos:
-    1. ollama stop via CLI
-    2. API REST /api/generate con keep_alive=0 (fuerza descarga)
-    Espera 3s para que la RAM se libere antes de continuar.
+    Uses two mechanisms:
+    1. ``ollama stop`` via CLI
+    2. REST API /api/generate with keep_alive=0 (forces the unload)
+    Waits 3s for the RAM to be released before continuing.
 
     Args:
-        modelo: Nombre del modelo a descargar.
+        modelo: Name of the model to unload.
         session_id: Optional session identifier for error logging.
         turn_number: Optional turn number for error logging.
         parent_id: Optional parent session ID for error logging.
@@ -86,6 +86,11 @@ def liberar_modelo(modelo: str, session_id: str | None = None, turn_number: int 
 def ollama_server_vivo(session_id: str | None = None, turn_number: int | None = None, parent_id: str | None = None) -> bool:
     """Check whether the local Ollama server is running and responding.
 
+    Args:
+        session_id: Optional session identifier for error logging.
+        turn_number: Optional turn number for error logging.
+        parent_id: Optional parent session ID for error logging.
+
     Returns:
         True if the server responds with HTTP 200, False otherwise.
     """
@@ -99,16 +104,21 @@ def ollama_server_vivo(session_id: str | None = None, turn_number: int | None = 
 
 
 def liberar_todos_los_modelos(session_id: str | None = None, turn_number: int | None = None, parent_id: str | None = None) -> None:
-    """Libera TODOS los modelos de VRAM y mata procesos zombie de llama-server.
-    
-    Útil antes de cargar un modelo nuevo para asegurar VRAM disponible.
-    
-    Pasos:
-    1. Matar todos los procesos de llama-server.exe (zombies)
-    2. Obtener lista de modelos cargados via API
-    3. Liberar cada modelo con keep_alive=0
-    4. GC de Python
-    5. Esperar 3s para que se libere VRAM
+    """Unload ALL models from VRAM and kill zombie llama-server processes.
+
+    Useful before loading a new model to make sure VRAM is available.
+
+    Steps:
+    1. Kill every llama-server.exe process (zombies)
+    2. Get the list of loaded models via the API
+    3. Unload each model with keep_alive=0
+    4. Python GC
+    5. Wait 3s for the VRAM to be released
+
+    Args:
+        session_id: Optional session identifier for error logging.
+        turn_number: Optional turn number for error logging.
+        parent_id: Optional parent session ID for error logging.
     """
     # 1. Matar procesos zombie de llama-server
     try:
@@ -157,7 +167,16 @@ def liberar_todos_los_modelos(session_id: str | None = None, turn_number: int | 
 
 
 def reiniciar_llama_server(session_id: str | None = None, turn_number: int | None = None, parent_id: str | None = None) -> bool:
-    """Intenta reiniciar llama-server si esta caido."""
+    """Try to restart llama-server if it is down.
+
+    Args:
+        session_id: Optional session identifier for error logging.
+        turn_number: Optional turn number for error logging.
+        parent_id: Optional parent session ID for error logging.
+
+    Returns:
+        True if the server is responding (it already was, or it recovered), False otherwise.
+    """
     if ollama_server_vivo(session_id=session_id, turn_number=turn_number, parent_id=parent_id):
         return True
 

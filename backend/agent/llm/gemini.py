@@ -136,6 +136,12 @@ class GeminiMixin:
         id_to_name: dict[str, str] = {}
 
         def _append(role: str, part: types.Part) -> None:
+            """Add a part to the last content when it has the same role, or start a new one.
+
+            Args:
+                role: Gemini role of the part.
+                part: The part to add.
+            """
             if contents and contents[-1].role == role:
                 contents[-1].parts.append(part)
             else:

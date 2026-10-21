@@ -105,16 +105,16 @@ async def _evaluar_si_existe(
     model: str | None = None,
     provider: str | None = None,
 ) -> dict | None:
-    """Pregunta al LLM si alguna skill local sirve.
+    """Ask the LLM whether any local skill fits the task.
 
     Args:
-        tarea: Lo que el usuario quiere hacer.
-        skills_locales: Lista de skills existentes.
-        model: Modelo elegido por el usuario (opcional).
-        provider: Provider elegido por el usuario (opcional).
+        tarea: What the user wants to do.
+        skills_locales: List of the existing skills.
+        model: Model chosen by the user (optional).
+        provider: Provider chosen by the user (optional).
 
     Returns:
-        ``{"exist": "Sí", "skill": ...}`` o ``{"exist": "No", "skill": None}``.
+        ``{"exist": "Sí", "skill": ...}`` or ``{"exist": "No", "skill": None}``.
     """
     eval_model, eval_provider = resolve_create_model_provider(model, provider)
     if not eval_model:
@@ -148,7 +148,7 @@ async def _evaluar_si_existe(
         cleaned_output=True,
     )
 
-    # Contemplate this evaluator LLM call (tracked in creator_calls
+    # Contemplate this evaluator LLM call (tracked in creators
     # since it never produces messages rows).
     try:
         from backend.agent.utils.spend_handler import record_creator_call
@@ -194,16 +194,16 @@ async def _explain_skill(
     model: str | None = None,
     provider: str | None = None,
 ) -> str | None:
-    """Pide al LLM una breve explicación de qué hace la skill.
+    """Ask the LLM for a short explanation of what the skill does.
 
     Args:
-        tarea: Lo que el usuario quiere resolver.
-        skill_dir: Directorio de la skill.
-        model: Modelo elegido por el usuario (opcional).
-        provider: Provider elegido por el usuario (opcional).
+        tarea: What the user wants to solve.
+        skill_dir: Directory of the skill.
+        model: Model chosen by the user (optional).
+        provider: Provider chosen by the user (optional).
 
     Returns:
-        Explicación breve, o None si falla.
+        A short explanation, or None if it fails.
     """
     eval_model, eval_provider = resolve_create_model_provider(model, provider)
     if not eval_model:
@@ -231,7 +231,7 @@ async def _explain_skill(
         cleaned_output=True,
     )
 
-    # Contemplate this explainer LLM call (tracked in creator_calls
+    # Contemplate this explainer LLM call (tracked in creators
     # since it never produces messages rows).
     try:
         from backend.agent.utils.spend_handler import record_creator_call
@@ -277,10 +277,10 @@ async def _create_skill(
         provider: Provider chosen by the user (optional).
 
     Returns:
-        ``{"name": ..., "content": ...}``.
+        The generated skill as a dict.
 
     Raises:
-        RuntimeError: If the LLM fails or no model is available.
+        RuntimeError: If the LLM does not produce a skill.
     """
     eval_model, eval_provider = resolve_create_model_provider(model, provider)
     if not eval_model:
@@ -307,7 +307,7 @@ async def _create_skill(
         cleaned_output=True,
     )
 
-    # Contemplate this generator LLM call (tracked in creator_calls
+    # Contemplate this generator LLM call (tracked in creators
     # since it never produces messages rows).
     try:
         from backend.agent.utils.spend_handler import record_creator_call

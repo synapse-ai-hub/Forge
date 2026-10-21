@@ -77,6 +77,11 @@ _CONFIG_FILE = "config.json"
 
 
 def _config_path() -> Path:
+    """Locate the main config file.
+
+    Returns:
+        Path of ``config.json`` in the config directory.
+    """
     return get_config_dir() / _CONFIG_FILE
 
 
@@ -155,7 +160,11 @@ _MCP_CONFIG_FILE = "mcp.json"
 
 
 def _mcp_path() -> Path:
-    """Return the path to ~/.config/synapseForge/mcp.json."""
+    """Locate the MCP config file.
+
+    Returns:
+        Path to ``~/.config/synapseForge/mcp.json``.
+    """
     return get_config_dir() / _MCP_CONFIG_FILE
 
 
@@ -236,36 +245,60 @@ def save_mcp_servers(servers: list[dict[str, Any]]) -> bool:
 # ---------------------------------------------------------------------------
 
 def get_skills_dir() -> Path:
-    """Return the skills directory path."""
+    """Locate the skills directory.
+
+    Returns:
+        Path of the skills directory.
+    """
     return get_config_dir() / "skills"
 
 
 def get_tools_dir() -> Path:
-    """Return the external tools directory path."""
+    """Locate the external tools directory.
+
+    Returns:
+        Path of the tools directory.
+    """
     return get_config_dir() / "tools"
 
 
 def get_agents_dir() -> Path:
-    """Return the agents directory path."""
+    """Locate the agents directory.
+
+    Returns:
+        Path of the agents directory.
+    """
     return get_config_dir() / "agents"
 
 
 def get_workflows_dir() -> Path:
-    """Return the workflows directory path."""
+    """Locate the workflows directory, creating it if needed.
+
+    Returns:
+        Path of the workflows directory.
+    """
     workflows_dir = get_config_dir() / "workflows"
     workflows_dir.mkdir(parents=True, exist_ok=True)
     return workflows_dir
 
 
 def get_workflow_prompts_dir() -> Path:
-    """Return the shared workflow prompts directory path."""
+    """Locate the directory with the prompts (toml) of the workflow agent nodes.
+
+    Returns:
+        Path of the prompts directory, created if needed.
+    """
     prompts_dir = get_workflows_dir() / "prompts"
     prompts_dir.mkdir(parents=True, exist_ok=True)
     return prompts_dir
 
 
 def get_knowledge_dir() -> Path:
-    """Return the knowledge (vector store) directory path."""
+    """Locate the knowledge (vector store) directory.
+
+    Returns:
+        Path of the knowledge directory.
+    """
     return get_config_dir() / "knowledge"
 
 # ---------------------------------------------------------------------------
@@ -278,7 +311,7 @@ workspace_ctx: ContextVar[str | None] = ContextVar("workspace_ctx", default=None
 
 
 def get_workspace_dir(name: str | None = None) -> Path:
-    """Return the working folder of a workflow (created on demand).
+    """Locate the working folder of a workflow, creating it if needed.
 
     Commands of a workflow (``git clone``, downloads, reports) run here, never
     in the project root: a clone inside the project triggers the dev server's
@@ -286,6 +319,9 @@ def get_workspace_dir(name: str | None = None) -> Path:
 
     Args:
         name: Workflow name. ``None`` returns the parent folder.
+
+    Returns:
+        Path of the folder.
     """
     base = get_config_dir() / "workspace"
     if name:

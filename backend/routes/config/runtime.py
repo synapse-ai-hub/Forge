@@ -96,7 +96,11 @@ def detect_context_window_background() -> None:
 
 @router.get("/context-window")
 async def get_context_window() -> JSONResponse:
-    """Return the current context-window turn limit (``-1`` = all)."""
+    """Return the current context-window turn limit (``-1`` = all).
+
+    Returns:
+        JSON response with ``max_turns``.
+    """
     vram = _vram_gb
     return JSONResponse(
         status_code=200,
@@ -118,6 +122,12 @@ async def set_context_window(data: dict[str, Any]) -> JSONResponse:
         {"max_turns": 10}
 
     ``-1`` means *all turns*. The value must be ``-1`` or a positive integer.
+
+    Args:
+        data: Request body.
+
+    Returns:
+        JSON response with the stored value, or the validation error.
     """
     try:
         value = int(data.get("max_turns", -1))
@@ -167,7 +177,11 @@ async def set_context_window(data: dict[str, Any]) -> JSONResponse:
 
 @router.get("/verbose-mode")
 async def get_verbose_mode() -> JSONResponse:
-    """Return the current verbose-mode flag."""
+    """Return the current verbose-mode flag.
+
+    Returns:
+        JSON response with ``verbose_mode``.
+    """
     return JSONResponse(
         status_code=200,
         content={
@@ -183,6 +197,12 @@ async def set_verbose_mode(data: dict[str, Any]) -> JSONResponse:
     Request body::
 
         {"verbose_mode": true}
+
+    Args:
+        data: Request body.
+
+    Returns:
+        JSON response with the stored flag.
     """
     raw = data.get("verbose_mode", False)
     if not isinstance(raw, bool):
@@ -222,6 +242,9 @@ async def get_setup_completed() -> JSONResponse:
     The flag is persisted in ``config_kv`` and set when the user saves a
     valid API key or skips the initial setup screen, so the screen is only
     shown on first launch (regardless of whether Ollama is available).
+
+    Returns:
+        JSON response with ``completed``.
     """
     completed = False
     if session_manager is not None:
@@ -238,7 +261,11 @@ async def get_setup_completed() -> JSONResponse:
 
 @router.post("/setup-completed")
 async def set_setup_completed() -> JSONResponse:
-    """Mark the initial provider-setup screen as completed (or skipped)."""
+    """Mark the initial provider-setup screen as completed (or skipped).
+
+    Returns:
+        JSON response with the result.
+    """
     try:
         if session_manager is not None:
             session_manager.set_config("setup_completed", "true")

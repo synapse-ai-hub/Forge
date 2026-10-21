@@ -28,7 +28,12 @@ def save_config(target: Path, config: dict) -> None:
 
 
 def save_colors(target: Path, config: dict) -> None:
-    """Generate ``colors.json`` for runtime in ``frontend/public/``."""
+    """Generate ``colors.json`` for runtime in ``frontend/public/``.
+
+    Args:
+        target: Project root directory.
+        config: The user configuration.
+    """
     colors = config.get("colors", {})
     runtime_colors = {k: colors.get(k) for k in CONFIGURABLE_COLOR_KEYS if colors.get(k)}
     if runtime_colors:
@@ -41,7 +46,17 @@ def save_colors(target: Path, config: dict) -> None:
 
 
 def load_config(target: Path) -> dict:
-    """Load the user config from ``{target}/config/replace.json``."""
+    """Load the user config from ``{target}/config/replace.json``.
+
+    Args:
+        target: Project root directory.
+
+    Returns:
+        The configuration.
+
+    Raises:
+        FileNotFoundError: If the config file does not exist.
+    """
     dest = target / "config" / "replace.json"
     if not dest.is_file():
         raise FileNotFoundError(f"Configuration file not found: {dest}")

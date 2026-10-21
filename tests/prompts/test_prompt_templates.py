@@ -12,19 +12,28 @@ PROMPTS = Path(__file__).resolve().parents[2] / "backend" / "agent" / "prompts"
 
 
 def _context_for(name: str) -> dict:
-    """Dummy values for every variable the template declares."""
+    """Build dummy values for every variable the template declares.
+
+    Args:
+        name: Template name (without extension).
+
+    Returns:
+        The variables of the template with a placeholder value each.
+    """
     source = (PROMPTS / f"{name}.jinja").read_text(encoding="utf-8")
     variables = meta.find_undeclared_variables(agent._prompt_env.parse(source))
     flags = {"tools": ["read"], "decision": False}
     return {v: flags.get(v, f"<<{v}>>") for v in variables}
 
 
-def test_prompts_dir_only_has_jinja_templates():
+def test_prompts_dir_only_has_jinja_templates() -> None:
+    """Prompts dir only has jinja templates."""
     assert not list(PROMPTS.glob("*.md")), "los prompts viven como .jinja"
     assert list(PROMPTS.glob("*.jinja"))
 
 
-def test_every_template_renders_without_falling_back_to_raw_text():
+def test_every_template_renders_without_falling_back_to_raw_text() -> None:
+    """Every template renders without falling back to raw text."""
     for path in sorted(PROMPTS.glob("*.jinja")):
         name = path.stem
         context = _context_for(name)
@@ -36,7 +45,7 @@ def test_every_template_renders_without_falling_back_to_raw_text():
                 assert value in out, f"{name}: la variable {value} no llegó al texto"
 
 
-def test_missing_variable_does_not_break_the_chat():
+def test_missing_variable_does_not_break_the_chat() -> None:
     """A template that uses an unknown variable returns its raw text instead of raising."""
     out = agent.prompt("title")  # needs message and titles
     assert "{{ message }}" in out

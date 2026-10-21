@@ -9,7 +9,7 @@ Supports nested tags such as ``<nombre>nombre_proyecto</nombre>``,
 
 import re
 from pathlib import Path
-from typing import Dict, Pattern
+from typing import Any, Dict, Pattern
 
 # ---------------------------------------------------------------------------
 # Tag → config key mapping
@@ -83,7 +83,14 @@ def replace_all_placeholders(target: Path, config: dict) -> None:
 # ---------------------------------------------------------------------------
 
 def _build_replacement_map(config: dict) -> Dict[str, str]:
-    """Flatten the nested config into ``{tag: value}``."""
+    """Flatten the nested config into ``{tag: value}``.
+
+    Args:
+        config: The user configuration.
+
+    Returns:
+        The map from each placeholder tag to its value.
+    """
     replacements: Dict[str, str] = {}
 
     for tag, key_path in TAG_MAP.items():
@@ -98,8 +105,16 @@ def _build_replacement_map(config: dict) -> Dict[str, str]:
     return replacements
 
 
-def _deep_get(d: dict, dotted: str):
-    """Traverse a dict with a dotted path like ``colors.primary``."""
+def _deep_get(d: dict, dotted: str) -> Any:
+    """Traverse a dict with a dotted path like ``colors.primary``.
+
+    Args:
+        d: The dict to traverse.
+        dotted: The dotted path.
+
+    Returns:
+        The value at the path, or None when a key is missing.
+    """
     parts = dotted.split(".")
     current: object = d
     for part in parts:
@@ -113,10 +128,23 @@ def _deep_get(d: dict, dotted: str):
 def _replace_tags(text: str, replacements: Dict[str, str]) -> tuple:
     """Replace all ``<tag>...</tag>`` spans in *text* with the mapped value.
 
-    Returns ``(new_text, count)``.
+    Args:
+        text: Text with the placeholders.
+        replacements: Map from tag to value.
+
+    Returns:
+        ``(new_text, count)`` with the replaced text and the number of replacements.
     """
 
     def _replacer(m: re.Match) -> str:
+        """Pick the replacement of one matched span.
+
+        Args:
+            m: Regex match of a ``<tag>...</tag>`` span.
+
+        Returns:
+            The mapped value, or the span unchanged when its tag has no value.
+        """
         tag = m.group(1)
         if tag in replacements:
             return replacements[tag]
@@ -147,7 +175,14 @@ _SKIP_DIRS = frozenset({
 
 
 def _is_text_file(path: Path) -> bool:
-    """Check extension against known text types."""
+    """Check the extension against the known text types.
+
+    Args:
+        path: File to check.
+
+    Returns:
+        True when the file is a text file.
+    """
     return (
         path.suffix in _TEXT_EXTENSIONS
         or path.name == ".gitignore"
@@ -156,7 +191,14 @@ def _is_text_file(path: Path) -> bool:
 
 
 def _should_skip(path: Path) -> bool:
-    """Return True if the path is inside a directory that should be skipped."""
+    """Check whether a path is inside a directory that should be skipped.
+
+    Args:
+        path: Path to check.
+
+    Returns:
+        True if the path is inside a directory that should be skipped.
+    """
     for parent in path.parents:
         if parent.name in _SKIP_DIRS:
             return True

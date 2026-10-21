@@ -17,6 +17,10 @@ class AttachmentsMixin:
         The file is downloaded, its text is extracted with the same
         ``extract_text_from_bytes`` used by the backend, and the result is
         emitted to the frontend as a normal message so the agent processes it.
+
+        Args:
+            chat_id: Telegram chat id.
+            message: The Telegram message that carries the document or photo.
         """
         document = message.get("document")
         photo = message.get("photo")

@@ -12,6 +12,13 @@ class DispatchMixin:
     """Routes incoming updates and resolves per-chat "awaiting" replies."""
 
     async def _handle_update(self, update: dict) -> None:
+        """Dispatch one Telegram update: attachments, voice messages, commands and text.
+
+        Updates from chats that are not allowed are ignored.
+
+        Args:
+            update: The update received from Telegram.
+        """
         message = update.get("message") or update.get("edited_message")
         if not message:
             return
@@ -105,6 +112,12 @@ class DispatchMixin:
         })
 
     async def _handle_command(self, chat_id: int, text: str) -> None:
+        """Run a ``/command`` sent by the user.
+
+        Args:
+            chat_id: Telegram chat id.
+            text: Text of the message, starting with the command.
+        """
         parts = text.split()
         cmd = parts[0].lower()
         arg = " ".join(parts[1:]) if len(parts) > 1 else ""
@@ -174,7 +187,12 @@ class DispatchMixin:
             await self.send_message(chat_id, f"Comando desconocido: {cmd}")
 
     async def _process_awaiting(self, chat_id: int, text: str) -> None:
-        """Process a reply given while a command is awaiting an argument."""
+        """Process a reply given while a command is awaiting an argument.
+
+        Args:
+            chat_id: Telegram chat id.
+            text: Text the user answered.
+        """
         cmd = self._awaiting.pop(chat_id, None)
         if not cmd:
             return

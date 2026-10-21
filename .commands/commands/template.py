@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regenera pipeline/template.zip desde la carpeta template/ con procesos automáticos."""
+"""Regenerate pipeline/template.zip from the template/ folder with automatic steps."""
 
 import zipfile
 import shutil
@@ -18,12 +18,28 @@ _AGENT_DB_FILES = {"agent.db", "agent.db-shm", "agent.db-wal"}
 
 
 def _ignore_frontend(directory: str, names: list[str]) -> set[str]:
-    """Excluye de la copia lo que no va en el template del frontend."""
+    """Exclude from the copy what does not belong in the frontend template.
+
+    Args:
+        directory: Directory being copied.
+        names: Names inside that directory.
+
+    Returns:
+        The names to skip.
+    """
     return {n for n in names if n in ("node_modules", "__pycache__")}
 
 
 def _ignore_backend(directory: str, names: list[str]) -> set[str]:
-    """Excluye de la copia lo que no va en el template del backend."""
+    """Exclude from the copy what does not belong in the backend template.
+
+    Args:
+        directory: Directory being copied.
+        names: Names inside that directory.
+
+    Returns:
+        The names to skip.
+    """
     ignored = {n for n in names if n == "__pycache__"}
     if Path(directory).name == "agent_db":
         ignored |= _AGENT_DB_FILES & set(names)
@@ -31,6 +47,7 @@ def _ignore_backend(directory: str, names: list[str]) -> set[str]:
 
 
 def main() -> None:
+    """Rebuild the template folder from the backend and the frontend and zip it."""
     if not TEMPLATE_DIR.is_dir():
         print(f"ERROR: No existe {TEMPLATE_DIR}")
         return

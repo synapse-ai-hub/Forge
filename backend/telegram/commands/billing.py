@@ -10,7 +10,11 @@ class BillingCommandsMixin:
     """``/usage`` and ``/billing``."""
 
     async def _cmd_usage(self, chat_id: int) -> None:
-        """Show usage metrics per provider."""
+        """Show usage metrics per provider.
+
+        Args:
+            chat_id: Telegram chat id.
+        """
         try:
             from backend.agent.utils.spend_handler import get_all_spend
             spend = get_all_spend()
@@ -36,6 +40,9 @@ class BillingCommandsMixin:
         """Show or configure billing limits.
 
         Shows current limits and asks what to configure via question-response flow.
+
+        Args:
+            chat_id: Telegram chat id.
         """
         try:
             from backend.agent.utils.spend_handler import get_spend_config
@@ -73,7 +80,13 @@ class BillingCommandsMixin:
             await self.send_message(chat_id, "Error al obtener billing.")
 
     async def _process_billing_awaiting(self, chat_id: int, cmd: str, text: str) -> None:
-        """Process billing awaiting responses."""
+        """Process billing awaiting responses.
+
+        Args:
+            chat_id: Telegram chat id.
+            cmd: Command that is waiting for an answer.
+            text: Text the user answered.
+        """
         if text.strip().lower() == "cancelar":
             await self.send_message(chat_id, "Cancelado.")
             return
@@ -172,7 +185,14 @@ class BillingCommandsMixin:
             await self._apply_billing_limit(chat_id, provider, model, limit)
 
     async def _apply_billing_limit(self, chat_id: int, provider: str, model: str | None, limit: float) -> None:
-        """Apply a billing limit for a provider/model."""
+        """Apply a billing limit for a provider/model.
+
+        Args:
+            chat_id: Telegram chat id.
+            provider: Provider the limit applies to.
+            model: Model the limit applies to, or None for the whole provider.
+            limit: Monthly limit in USD.
+        """
         try:
             from backend.agent.utils.spend_handler import set_spend_limit
             success = set_spend_limit(provider.strip(), model, limit)

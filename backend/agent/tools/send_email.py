@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 class SendEmailMixin:
+    """Native tool ``send_email``: send an email response via SMTP with STARTTLS."""
     async def send_email(self, to: str, subject: str, body: str,
                              in_reply_to: str | None = None,
                              attachments: list[dict] | None = None) -> dict:
@@ -123,6 +124,7 @@ class SendEmailMixin:
                         outer_msg.attach(part)
 
                 def _smtp_send() -> None:
+                    """Send the message through the SMTP server (blocking, runs in a worker thread)."""
                     server = None
                     try:
                         server = smtplib.SMTP(smtp_server, smtp_port, timeout=30)

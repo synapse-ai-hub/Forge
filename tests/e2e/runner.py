@@ -197,12 +197,28 @@ def evaluate_chat_expectations(expect: dict[str, Any], obs: dict[str, Any]) -> l
 
 
 def _resolve_json_path(payload: Any, dotted_path: str) -> bool:
-    """Return whether a dotted path (e.g. ``data.collections``) exists."""
+    """Return whether a dotted path (e.g. ``data.collections``) exists.
+
+    Args:
+        payload: JSON payload.
+        dotted_path: Keys separated by dots.
+
+    Returns:
+        ``True`` when the path resolves to a value that is not ``None``.
+    """
     return _extract_json_path(payload, dotted_path) is not None
 
 
 def _extract_json_path(payload: Any, dotted_path: str) -> Any:
-    """Resolve a dotted path against a JSON payload (None when missing)."""
+    """Resolve a dotted path against a JSON payload.
+
+    Args:
+        payload: JSON payload.
+        dotted_path: Keys separated by dots.
+
+    Returns:
+        The value at the path, or ``None`` when it is missing.
+    """
     current = payload
     for part in dotted_path.split("."):
         if isinstance(current, dict) and part in current:

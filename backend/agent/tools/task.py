@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 class TaskMixin:
+    """Native tool ``task``: delegate work to a sub-agent."""
     async def task(self, agent_name: str, prompt: str) -> dict:
             """Delegate work to a sub-agent.
 

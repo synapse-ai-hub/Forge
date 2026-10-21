@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 class WebsearchMixin:
+    """Native tool ``websearch``: search the web using the configured provider."""
     async def websearch(self, query: str, num_results: int = 8) -> dict:
             """Search the web using the configured provider.
 

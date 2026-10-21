@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 
 
 class SearchMemoryMixin:
+    """Native tool ``search_memory``: search the past conversations of the user (long-term memory)."""
     async def search_memory(self, query: str, limit: int = 5) -> dict:
             """Search the user's past conversations (long-term memory).
 

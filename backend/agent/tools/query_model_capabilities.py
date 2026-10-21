@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 
 
 class QueryModelCapabilitiesMixin:
+    """Native tool ``query_model_capabilities``: query model capabilities from the local catalog."""
     async def query_model_capabilities(self, provider: str, model: str) -> dict:
             """Query model capabilities from the local catalog without huge context.
 

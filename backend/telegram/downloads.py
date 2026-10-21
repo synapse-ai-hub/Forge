@@ -61,7 +61,11 @@ class DownloadsMixin:
         await self._close_create_window(chat_id, kind)
 
     def _default_download_path(self) -> str:
-        """Return the default Windows Downloads folder path for the file."""
+        """Build the default Windows Downloads folder path for the file.
+
+        Returns:
+            The path as text.
+        """
         return str(Path.home() / "Downloads" / "conversacion.md")
 
     async def _export_conversation(self, mensajes: list, title: str) -> str:
@@ -91,7 +95,12 @@ class DownloadsMixin:
         return conversation_to_markdown(msgs, title)
 
     def _write_file(self, path: str, content: str) -> None:
-        """Write content to a file, creating parent directories if needed."""
+        """Write content to a file, creating parent directories if needed.
+
+        Args:
+            path: File to write.
+            content: Text to write.
+        """
         target = Path(path)
         if target.suffix.lower() != ".md":
             target = target.with_suffix(".md")

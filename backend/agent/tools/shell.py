@@ -14,12 +14,20 @@ logger = logging.getLogger(__name__)
 
 
 class ShellMixin:
+    """Native tool ``shell``: run a terminal command."""
     @staticmethod
     def _pip_install(specs: list[str], error: str) -> dict:
         """Run a ``pip install`` request through the controlled installer.
 
         Returns the same shape as a normal command (``output``/``returncode``)
         so a ``run`` node of a workflow fails on a non-zero code.
+
+        Args:
+            specs: Packages to install.
+            error: Reason the command was rejected, empty when it was accepted.
+
+        Returns:
+            Contract dict whose ``data`` holds ``output``, ``returncode``, ``truncated`` and ``workdir``.
         """
         if error:
             return make_success_response(
@@ -89,6 +97,11 @@ class ShellMixin:
                 # ``asyncio.create_subprocess_shell`` which is unsupported on
                 # Windows ``SelectorEventLoop``).
                 def _run() -> subprocess.CompletedProcess:
+                    """Run the command in the worker thread.
+
+                    Returns:
+                        The finished process.
+                    """
                     return subprocess.run(
                         command,
                         shell=True,

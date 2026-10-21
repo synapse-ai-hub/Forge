@@ -85,6 +85,9 @@ def _build_stdio_params(config: McpServerConfig) -> StdioServerParameters:
 
     Returns:
         ``StdioServerParameters`` ready for ``stdio_client``.
+
+    Raises:
+        ValueError: If the config has no ``command``.
     """
     cmd_raw = config.get("command", [])
     if isinstance(cmd_raw, list):
@@ -230,7 +233,8 @@ async def _discover_server_tools(
         List of ``mcp.types.Tool`` objects.
 
     Raises:
-        asyncio.TimeoutError: If the server does not respond in time.
+        Exception: The error of the last attempt (for example ``asyncio.TimeoutError`` when the
+            server does not respond in time) once every attempt failed.
     """
     timeout = _server_timeout(config)
     last_exc: Exception | None = None
@@ -333,7 +337,14 @@ def _mcp_tool_to_function_schema(
 
 
 def _server_has_http_url(server: McpServerConfig) -> bool:
-    """Check if server config has a valid HTTP/SSE URL."""
+    """Check if server config has a valid HTTP/SSE URL.
+
+    Args:
+        server: The MCP server configuration.
+
+    Returns:
+        True when its URL is an http(s) address.
+    """
     url = server.get("server_url") or server.get("url")
     if not url:
         return False
@@ -395,9 +406,17 @@ def _run_discovery(servers: list[McpServerConfig]) -> list[dict[str, Any]]:
 
     Returns:
         Freshly discovered function schemas.
+
+    Raises:
+        Exception: The error the discovery failed with, when it ran on the dedicated thread.
     """
 
     def _worker() -> list[dict[str, Any]]:
+        """Run the discovery coroutine in a fresh event loop.
+
+        Returns:
+            The discovered tools.
+        """
         loop = asyncio.new_event_loop()
         try:
             asyncio.set_event_loop(loop)
@@ -417,6 +436,7 @@ def _run_discovery(servers: list[McpServerConfig]) -> list[dict[str, Any]]:
     error: Exception | None = None
 
     def _thread_worker() -> None:
+        """Run the discovery in a thread and keep its result."""
         nonlocal result, error
         try:
             result = _worker()
@@ -682,7 +702,15 @@ async def check_mcp_server_health(label: str, timeout: float = 10.0) -> dict[str
 async def _check_server_health(
     config: McpServerConfig, timeout: float
 ) -> dict[str, Any]:
-    """Check a server with a real MCP handshake, whatever its transport."""
+    """Check a server with a real MCP handshake, whatever its transport.
+
+    Args:
+        config: The MCP server configuration.
+        timeout: Seconds to wait for the handshake.
+
+    Returns:
+        A dict with the connection status of the server.
+    """
     label = config.get("label", "unknown")
     try:
         async with _open_session(config, timeout):

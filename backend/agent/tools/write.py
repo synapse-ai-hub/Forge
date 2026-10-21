@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 
 
 class WriteMixin:
+    """Native tool ``write``: write a file."""
     async def write(self, file_path: str, content: str) -> dict:
             """Writes content to a file on the local filesystem.
 

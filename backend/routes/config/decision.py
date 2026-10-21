@@ -25,8 +25,9 @@ async def list_decision_models() -> JSONResponse:
     /config/models/decision/select``. Until then the response carries
     ``model: null`` and decision calls stay gracefully unavailable.
 
-    Returns the decision providers (with their model ids from the
-    ``decision_catalog`` table) and the current selection (or nulls).
+    Returns:
+        JSON response with the decision providers (with their model ids from
+        the ``decision_catalog`` table) and the current selection (or nulls).
     """
     from backend.agent.utils import provider_keys
 
@@ -54,13 +55,13 @@ async def select_decision_model(data: dict[str, Any]) -> JSONResponse:
         {"model": "inception/mercury-decide:free", "provider": "openrouter"}
 
     The model must exist in the ``decision_catalog`` table for the given
-    provider (the lists in ``GET /config/models/decision`` read from that
-    table). The selection is stored in the agent
-    singleton / persisted in SQLite (``config_kv`` keys
-    ``decision_provider``, ``decision_model``). It only takes effect when
-    the decision section is enabled (``POST
-    /config/models/decision/enabled``); otherwise decision calls stay
-    gracefully unavailable.
+    provider (the lists in ``GET /config/models/decision`` read from it).
+
+    Args:
+        data: Request body.
+
+    Returns:
+        JSON response with the selection, or the reason it was rejected.
     """
     model = str(data.get("model") or "").strip()
     provider = str(data.get("provider") or "").strip()
@@ -146,7 +147,13 @@ async def set_decision_enabled(data: dict[str, Any]) -> JSONResponse:
     The flag is stored in the agent singleton / persisted in SQLite
     (``config_kv`` key ``decision_enabled``). When disabled (or when no
     provider + model is selected), decision calls stay gracefully
-    unavailable and the current flow is kept unchanged.
+    unavailable.
+
+    Args:
+        data: Request body.
+
+    Returns:
+        JSON response with the new flag.
     """
     enabled = data.get("enabled")
     if not isinstance(enabled, bool):
@@ -196,9 +203,12 @@ async def get_decision_capabilities(model: str, provider: str) -> JSONResponse:
     limits, costs), read from the ``decision_catalog`` table synced from
     ``models.dev?type=decision``.
 
-    Query params:
-        model: Decision model ID
-        provider: Decision provider id
+    Args:
+        model: Decision model ID.
+        provider: Provider name.
+
+    Returns:
+        JSON response with the catalog row, or 404 when the model is not in the catalog.
     """
     if not model or not provider:
         return JSONResponse(
@@ -222,6 +232,14 @@ async def get_decision_capabilities(model: str, provider: str) -> JSONResponse:
         import json as _json
 
         def _parse_list(raw: object) -> list[str] | None:
+            """Parse a JSON list column of the catalog.
+
+            Args:
+                raw: The stored value (JSON text or a list).
+
+            Returns:
+                The list of strings, or None when it cannot be read.
+            """
             if not raw:
                 return None
             try:

@@ -370,6 +370,7 @@ def save_report(filename: str | None, state: str,
             test report dir). A timestamped default is used when ``None``.
         state: Exact text sent as ``state`` to ``Agent.decision`` (shown
             raw, as plain text, without any transformation).
+        questions: Questions sent to ``Agent.decision`` (see ``build_questions``).
         response: Raw ``Agent.decision`` response (stored verbatim).
         elapsed: Seconds the ``Agent.decision`` call took.
         compare_runs: Optional list of compare runs (each with
@@ -381,8 +382,8 @@ def save_report(filename: str | None, state: str,
             and ``.json`` are saved inside it.
 
     Returns:
-        Absolute path of the written report. A ``.json`` file with the
-        same name (comparison table data) is saved next to it.
+        Tuple of (absolute path of the written report, table-data row mappings). A ``.json``
+        file with the same name (comparison table data) is saved next to the report.
     """
     target_dir = REPORT_DIR
     if subfolder:
@@ -515,6 +516,7 @@ async def run_scenario(name: str, scenario: dict[str, Any],
     Raises:
         DecisionRateLimited: If the decision model answers with a
             rate-limit error (the scenario must be skipped).
+        ValueError: If the questions of the scenario cannot be built (see ``build_questions``).
     """
     mode = scenario.get("mode")
     questions = build_questions(scenario)
