@@ -40,6 +40,31 @@ _RESULT_NOTIFICATION_LIMIT = 1000
 """Characters of the final answer carried by the success notification."""
 
 
+def _shorten(text: str, limit: int = _RESULT_NOTIFICATION_LIMIT) -> str:
+    """Cut ``text`` to ``limit`` characters at a line or word boundary, marking the cut."""
+    text = text.strip()
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    boundary = max(cut.rfind("\n"), cut.rfind(" "))
+    if boundary >= limit // 2:
+        cut = cut[:boundary]
+    return cut.rstrip() + "…"
+
+
+def _workspace_note(name: str) -> str:
+    """Return a line with the workflow's working folder when it has files, else ``""``."""
+    try:
+        from backend.agent.utils.config_dir import get_workspace_dir
+
+        folder = get_workspace_dir(name)
+        if any(folder.iterdir()):
+            return f"Carpeta de trabajo: {folder}"
+    except Exception as exc:
+        log_error(str(exc), source="workflow_service.py:workspace_note")
+    return ""
+
+
 class _ActiveRun:
     """Handle of a run executing in this process."""
 
@@ -215,6 +240,14 @@ class WorkflowService:
         """
         active = self._active.get(run_id)
         if active is None or active.task is None:
+            # Not executing in this process (the backend restarted while the
+            # run was open): close the orphan row so the UI stops waiting.
+            run = workflow_db.get_run(run_id)
+            if run and run.get("status") == "running":
+                await self._finalize_cancelled(
+                    run_id, run["workflow_name"], run.get("session_id") or run_id
+                )
+                return True
             return False
         active.cancel_event.set()
         active.task.cancel()
@@ -338,7 +371,7 @@ class WorkflowService:
         start_attempt: int,
     ) -> dict[str, Any]:
         """Run attempts with exponential backoff until success or exhaustion."""
-        from backend.agent.utils.workflow_judge import explain_failure, judge_run
+        from backend.agent.utils.workflow_judge import explain_failure, generate_output, judge_run
         from backend.agent.utils.workflow_runner import WorkflowRunner
         from backend.instances import agent, session_manager
 
@@ -369,6 +402,14 @@ class WorkflowService:
             return await self._finalize_cancelled(run_id, name, session_id)
 
         if outcome["status"] == "success":
+            # The output of the run is generated from the results of every node;
+            # if it cannot be, the result of the final node is kept.
+            generated = await generate_output(
+                agent, name, run_id, str(workflow.get("description", "")),
+                workflow.get("nodes", []), outcome["results"],
+            )
+            if generated:
+                outcome = {**outcome, "final_text": generated}
             ok, reason = await judge_run(
                 agent, name, run_id, str(workflow.get("description", "")),
                 workflow.get("nodes", []), outcome["results"], outcome["final_text"],
@@ -428,13 +469,18 @@ class WorkflowService:
     ) -> dict[str, Any]:
         """Close a run as successful and notify."""
         answer = final_text.strip() or "Workflow completado sin respuesta final."
-        self._save_final_message(session_id, workflow, answer, "success")
+        note = _workspace_note(name)
+        self._save_final_message(
+            session_id, workflow, f"{answer}\n\n{note}" if note else answer, "success"
+        )
         workflow_db.finish_run(run_id, "success", answer, None)
+        workflow_db.delete_run_steps(run_id)
         if source == "play":
+            summary = _shorten(answer)
             await notify(
                 kind="workflow", workflow_name=name, title=name, status="success",
-                message=answer[:_RESULT_NOTIFICATION_LIMIT], run_id=run_id,
-                session_id=session_id,
+                message=f"{note}\n\n{summary}" if note else summary,
+                run_id=run_id, session_id=session_id,
             )
         await self._emit_run(run_id, name, "success", None, session_id)
         return {"status": "success", "run_id": run_id, "session_id": session_id,

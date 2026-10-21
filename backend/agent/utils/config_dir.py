@@ -9,6 +9,7 @@ Structure:
 ├── tools/            # External tools (.py files)
 ├── agents/           # Agent definitions (.md files)
 ├── knowledge/        # Chroma vector store collections
+├── workspace/        # Working folders of the workflows (one per workflow)
 └── config.json       # Main config (MCP, UI prefs, etc.)
 """
 
@@ -18,6 +19,7 @@ import json
 import logging
 import os
 import sys
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
@@ -265,3 +267,29 @@ def get_workflow_prompts_dir() -> Path:
 def get_knowledge_dir() -> Path:
     """Return the knowledge (vector store) directory path."""
     return get_config_dir() / "knowledge"
+
+# ---------------------------------------------------------------------------
+# Workspace of the workflows
+# ---------------------------------------------------------------------------
+
+
+workspace_ctx: ContextVar[str | None] = ContextVar("workspace_ctx", default=None)
+"""Working folder of the workflow being run; ``shell`` uses it when no ``workdir`` is given."""
+
+
+def get_workspace_dir(name: str | None = None) -> Path:
+    """Return the working folder of a workflow (created on demand).
+
+    Commands of a workflow (``git clone``, downloads, reports) run here, never
+    in the project root: a clone inside the project triggers the dev server's
+    reload and leaves the repo with files that are not its own.
+
+    Args:
+        name: Workflow name. ``None`` returns the parent folder.
+    """
+    base = get_config_dir() / "workspace"
+    if name:
+        safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in name).strip(".") or "workflow"
+        base = base / safe
+    base.mkdir(parents=True, exist_ok=True)
+    return base

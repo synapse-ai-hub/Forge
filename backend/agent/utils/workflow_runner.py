@@ -27,6 +27,9 @@ from backend.agent.utils import workflow_db
 
 logger = logging.getLogger(__name__)
 
+CONTEXT_LIMIT = 24000
+"""Characters of previous results handed to an agent node, shared among the nodes."""
+
 NODE_MESSAGE_LIMIT = 2000
 """Characters of a node result stored in the run session (the commit row keeps it whole)."""
 
@@ -82,6 +85,7 @@ class WorkflowRunner:
             ``{"status": "success" | "error" | "cancelled", "results": {...},
             "failures": [{"node", "type", "error"}], "final_text": str}``.
         """
+        from backend.agent.utils.config_dir import get_workspace_dir, workspace_ctx
         from backend.agent.utils.error_logger import log_error
         from backend.agent.utils.loop_helpers import _tool_call_ctx, execute_tool
 
@@ -105,15 +109,20 @@ class WorkflowRunner:
         except Exception as exc:
             log_error(str(exc), source="workflow_runner.py:allowset")
         token = _tool_call_ctx.set({"tool_permissions": allowed})
+        # Every command of the run (run nodes and the shell of agent nodes)
+        # starts in the workflow's own folder, never in the project root.
+        workspace = get_workspace_dir(str(workflow.get("name", "") or "workflow"))
+        ws_token = workspace_ctx.set(str(workspace))
         try:
             return await self._attempt(
                 run_id, session_id, workflow, nodes, attempt, cancel_event, execute_tool,
             )
         finally:
-            try:
-                _tool_call_ctx.reset(token)
-            except Exception:
-                pass
+            for ctx, tok in ((workspace_ctx, ws_token), (_tool_call_ctx, token)):
+                try:
+                    ctx.reset(tok)
+                except Exception:
+                    pass
 
     # ------------------------------------------------------------------
     # Attempt
@@ -321,6 +330,25 @@ class WorkflowRunner:
                     await asyncio.sleep(2 ** (attempt - 1))
         return {"status": "error", "message": last_error or "Nodo fallido.", "data": "", "child_id": child_id}
 
+    @staticmethod
+    def _build_context(results: dict[str, Any]) -> str:
+        """Render the results of the previous nodes as readable text.
+
+        Each node keeps its own share of ``CONTEXT_LIMIT``: a long result is
+        cut at the end of its own section (marked), never in the middle of a
+        JSON structure, and it cannot push the other nodes out of the prompt.
+        """
+        if not results:
+            return ""
+        share = max(CONTEXT_LIMIT // len(results), 500)
+        sections = []
+        for node_id, value in results.items():
+            text = _as_text(value).strip()
+            if len(text) > share:
+                text = text[:share].rstrip() + "\n[... resultado recortado ...]"
+            sections.append(f"### {node_id}\n{text}")
+        return "\n\n".join(sections)
+
     async def _run_agent_node(
         self,
         session_id: str,
@@ -350,10 +378,14 @@ class WorkflowRunner:
             log_error(str(exc), source="workflow_runner.py:agent_exists")
             return {"status": "error", "message": f"No se pudo verificar el agente '{agent_name}'.", "data": ""}
         prompt_template = node.get("prompt", "") or state.get("input", "")
-        try:
-            context = _json.dumps(state.get("results", {}), ensure_ascii=False)[:4000]
-        except Exception:
-            context = ""
+        if node.get("prompt_file"):
+            from backend.agent.utils.workflow_loader import load_prompt_file
+
+            loaded = load_prompt_file(str(node["prompt_file"]))
+            if loaded.get("status") != "success":
+                return {"status": "error", "message": str(loaded.get("message") or "No se pudo cargar el prompt."), "data": ""}
+            prompt_template = loaded["data"]
+        context = self._build_context(state.get("results", {}))
         has_context = bool(state.get("results"))
         prompt = (
             f"{prompt_template}\n\nContexto de steps previos:\n{context}"
@@ -473,7 +505,9 @@ class WorkflowRunner:
 
         Executes ``node["run"]`` through the ``shell`` tool so it inherits
         its sandbox (worker thread, timeout, 50 KB truncation, cancel).
-        ``workdir`` is confined to the project root when set.
+        It starts in the workspace of the workflow
+        (``~/.config/synapseForge/workspace/<name>``); ``workdir`` is a
+        subfolder of it and cannot leave it.
 
         Args:
             node: Normalized run node (``run``, ``timeout``, ``workdir``).
@@ -485,6 +519,7 @@ class WorkflowRunner:
         import json as _json
         import os as _os
 
+        from backend.agent.utils.config_dir import workspace_ctx
         from backend.agent.utils.error_logger import log_error
         from backend.agent.utils.workflow_validator import _valid_run_workdir
 
@@ -502,7 +537,7 @@ class WorkflowRunner:
             if not _valid_run_workdir(workdir):
                 return {"status": "error", "message": f"Nodo '{node.get('id', '')}' con 'workdir' inválido.", "data": ""}
             try:
-                base = _os.path.realpath(_os.getcwd())
+                base = _os.path.realpath(workspace_ctx.get() or _os.getcwd())
                 full = _os.path.realpath(_os.path.join(base, workdir.strip().replace("\\", "/")))
                 if _os.path.commonpath([base, full]) != base:
                     return {"status": "error", "message": f"Nodo '{node.get('id', '')}' con 'workdir' inválido.", "data": ""}

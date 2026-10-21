@@ -12,6 +12,7 @@ from typing import Any
 
 _NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 _REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+_PROMPT_FILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 _NODE_TYPES = ("agent", "tool", "rag", "run")
 _ON_FAILURE = ("continue", "abort")
 _RUN_TIMEOUT_MIN_MS = 1000
@@ -99,6 +100,9 @@ def validate_workflow(data: dict[str, Any]) -> dict[str, Any]:
             return {"status": "error", "message": f"Nodo '{nid}' tipo tool requiere 'tool' válido.", "data": None, "usage": usage}
         if ntype == "rag" and not _REF_RE.match(str(node.get("collection", "")).strip()):
             return {"status": "error", "message": f"Nodo '{nid}' tipo rag requiere 'collection' válida.", "data": None, "usage": usage}
+        prompt_file = str(node.get("prompt_file", "") or "").strip() if ntype == "agent" else ""
+        if prompt_file and not _PROMPT_FILE_RE.match(prompt_file):
+            return {"status": "error", "message": f"Nodo '{nid}' con 'prompt_file' inválido. Usá el nombre del archivo toml, sin extensión ni rutas.", "data": None, "usage": usage}
         run_raw = node.get("run", "")
         run_cmd = run_raw.strip() if isinstance(run_raw, str) else ""
         if ntype == "run" and not run_cmd:
@@ -124,6 +128,7 @@ def validate_workflow(data: dict[str, Any]) -> dict[str, Any]:
             "retries": nretries,
             "agent_name": str(node.get("agent_name", "")).strip(),
             "prompt": str(node.get("prompt", "")),
+            "prompt_file": prompt_file,
             "tool": str(node.get("tool", "")).strip(),
             "args": node.get("args") if isinstance(node.get("args"), dict) else {},
             "collection": str(node.get("collection", "")).strip(),

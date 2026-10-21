@@ -2,7 +2,7 @@
 
 Tables: ``workflows`` (name is the id), ``workflow_runs`` (one row per
 execution), ``workflow_run_steps`` (one commit row per node execution) and
-``workflow_usage`` (spend of the LLM calls the engine makes by itself).
+the spend of the LLM calls the engine makes by itself, kept in each run.
 
 Every function manages its own connection, never raises and logs failures:
 persisting a run must never break its execution. All timestamps are local
@@ -279,21 +279,23 @@ def record_usage(
     model: str | None,
     usage: dict[str, Any] | None,
 ) -> bool:
-    """Record the spend of an LLM call made by the workflow engine.
+    """Record the spend of an LLM call made by the workflow engine in its run.
 
-    ``spend`` is not touched here: ``llm_process`` already contemplates it.
+    The run row keeps the sums (tokens, time, cost) and ``usage_calls`` keeps
+    every call. ``spend`` is not touched here: ``llm_process`` already
+    contemplates it.
 
     Args:
         workflow_name: Workflow that made the call.
         run_id: Run that made the call.
-        purpose: ``"judge"`` or ``"explain"``.
+        purpose: ``"judge"``, ``"explain"`` or ``"output"``.
         provider: Provider used.
         model: Model used.
         usage: Usage report (``prompt_tokens``, ``completion_tokens``,
             ``total_tokens``, ``total_time``).
 
     Returns:
-        ``True`` when the row was stored.
+        ``True`` when the call was stored.
     """
     try:
         from backend.agent.utils.spend_handler import calculate_cost
@@ -304,21 +306,45 @@ def record_usage(
         prompt_tokens = int(usage.get("prompt_tokens") or 0)
         completion_tokens = int(usage.get("completion_tokens") or 0)
         total_tokens = int(usage.get("total_tokens") or 0) or (prompt_tokens + completion_tokens)
+        total_time = float(usage.get("total_time") or 0)
         cost_input, cost_output, cost_total = calculate_cost(
             provider_value, model_value, prompt_tokens, completion_tokens
         )
+        call = {
+            "purpose": purpose, "provider": provider_value, "model": model_value,
+            "prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens, "total_time": total_time,
+            "cost_input": cost_input, "cost_output": cost_output, "cost_total": cost_total,
+            "created_at": _now(),
+        }
         with db_transaction() as conn:
+            row = conn.execute("SELECT usage_calls FROM workflow_runs WHERE id = ?", (run_id,)).fetchone()
+            if row is None:
+                return False
+            calls = json.loads(row[0]) if row[0] else []
+            calls.append(call)
             conn.execute(
-                load_query("workflows/insert_usage.sql"),
+                load_query("workflows/set_usage.sql"),
                 (
-                    workflow_name, run_id, purpose, provider_value, model_value,
-                    prompt_tokens, completion_tokens, total_tokens,
-                    usage.get("total_time"), cost_input, cost_output, cost_total, _now(),
+                    prompt_tokens, completion_tokens, total_tokens, total_time,
+                    cost_input, cost_output, cost_total,
+                    json.dumps(calls, ensure_ascii=False), run_id,
                 ),
             )
         return True
     except Exception as exc:
         log_error(str(exc), source="workflow_db.py:record_usage")
+        return False
+
+
+def delete_run_steps(run_id: str) -> bool:
+    """Delete the node commits of a run that finished well (nothing left to resume)."""
+    try:
+        with db_transaction() as conn:
+            conn.execute(load_query("workflows/delete_run_steps.sql"), (run_id,))
+        return True
+    except Exception as exc:
+        log_error(str(exc), source="workflow_db.py:delete_run_steps")
         return False
 
 
@@ -336,7 +362,6 @@ def delete_workflow(name: str) -> bool:
     try:
         with db_transaction() as conn:
             conn.execute(load_query("notifications/delete_by_workflow.sql"), (name,))
-            conn.execute(load_query("workflows/delete_usage.sql"), (name,))
             conn.execute(load_query("workflows/delete_steps.sql"), (name,))
             conn.execute(load_query("workflows/delete_runs.sql"), (name,))
             conn.execute(load_query("workflows/delete_workflow.sql"), (name,))

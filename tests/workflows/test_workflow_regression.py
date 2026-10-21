@@ -13,6 +13,7 @@ judge and explainer, permissions, the chat, notifications and scheduled tasks.
 from __future__ import annotations
 
 import asyncio
+import json
 import sqlite3
 from types import SimpleNamespace
 
@@ -31,7 +32,7 @@ from backend.instances import agent, session_manager
 from tests.workflows.test_workflow_runs import PY, _run, _simple_flow, env  # noqa: F401 (env is a fixture)
 
 NEW_TABLES = {
-    "workflows", "workflow_runs", "workflow_run_steps", "workflow_usage",
+    "workflows", "workflow_runs", "workflow_run_steps",
     "notifications", "creator_runs",
 }
 
@@ -43,7 +44,7 @@ def test_an_existing_database_without_the_new_tables_gets_them(env):
     _, _, query, _ = env
     conn = session_manager._get_connection()
     try:
-        for table in ("notifications", "workflow_usage", "workflow_run_steps",
+        for table in ("notifications", "workflow_run_steps",
                       "workflow_runs", "workflows", "creator_runs"):
             conn.execute(f"DROP TABLE {table}")
         conn.commit()
@@ -211,13 +212,32 @@ def _judge(fake, **kwargs):
     return _run(judge_run(fake, "wf", "run-1", "hace algo", _NODES, {"a": "listo"}, "listo", **kwargs))
 
 
+def _open_run_1():
+    """Register workflow ``wf`` and its run ``run-1`` (the spend of the engine calls lives in the run)."""
+    workflow_db.ensure_workflow("wf")
+    conn = session_manager._get_connection()
+    try:
+        conn.execute(
+            "insert or ignore into workflow_runs (id, workflow_name, started_at) values ('run-1', 'wf', '2026-01-01T00:00:00')"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def _usage_rows(query):
-    return query("select purpose,provider,model,total_tokens from workflow_usage")
+    rows = []
+    for run in query("select usage_calls from workflow_runs where usage_calls is not null"):
+        rows += [
+            {k: call[k] for k in ("purpose", "provider", "model", "total_tokens")}
+            for call in json.loads(run["usage_calls"])
+        ]
+    return rows
 
 
 def test_judge_uses_the_decision_model_when_it_is_ready(env):
     _, _, query, _ = env
-    workflow_db.ensure_workflow("wf")
+    _open_run_1()
     seen = {}
 
     async def decision(state, questions):
@@ -245,7 +265,7 @@ def test_decision_model_below_the_threshold_is_a_negative_verdict(env):
 
 def test_judge_falls_back_to_the_llm_when_the_decision_model_is_not_ready(env):
     _, _, query, _ = env
-    workflow_db.ensure_workflow("wf")
+    _open_run_1()
     prompts = []
 
     async def llm(**kwargs):
@@ -302,7 +322,7 @@ def test_judge_fails_open_when_the_llm_raises_or_there_is_no_model(env):
 
 def test_explainer_returns_the_llm_text_or_the_generic_one(env):
     _, _, query, _ = env
-    workflow_db.ensure_workflow("wf")
+    _open_run_1()
     failures = [{"node": "a", "type": "run", "error": "código 5"}]
 
     async def good(**kwargs):
@@ -337,7 +357,8 @@ def test_judge_prompt_renders_in_both_variants(decision):
 
 def test_router_workflows_permissions(env):
     assert _router_tool_permissions({"tools": {"read": "allow"}, "workflows": {"nightly": "allow"}}) == {
-        "read": "allow", "workflow": {"nightly": "allow"}}
+        "read": "allow", "workflow": {"nightly": "allow"},
+        "rag": {"help": "allow", "agent_conversations": "allow"}}
     assert "workflow" not in _router_tool_permissions({"tools": {"read": "allow"}})
     assert "workflow" not in _router_tool_permissions({"tools": {"read": "allow"}, "workflows": {}})
     assert "workflow" not in _router_tool_permissions(None), "the floor tools never include workflows"
@@ -431,7 +452,7 @@ def test_selecting_a_workflow_for_the_chat_is_not_an_endpoint():
 def test_notifications_api_unread_count_read_and_delete(env):
     import backend.routes.notifications as routes
 
-    workflow_db.ensure_workflow("wf")
+    _open_run_1()
     for i in range(3):
         notifications_helpers.add_notification(
             "workflow", f"t{i}", "success", "listo", run_id=f"r{i}", workflow_name="wf")
@@ -462,7 +483,7 @@ def test_deleting_a_scheduled_task_removes_only_its_notifications(env, tmp_path,
     monkeypatch.setattr(scheduler_helpers, "_agent_name_conflict", lambda name: False)
 
     task = scheduler_helpers.add_task("diaria", "resumen", "08:00", [1])["task"]
-    workflow_db.ensure_workflow("wf")
+    _open_run_1()
     notifications_helpers.add_notification("task", "diaria", "success", "ok", task_id=task["id"])
     notifications_helpers.add_notification("workflow", "wf", "success", "ok", workflow_name="wf")
 

@@ -1,6 +1,9 @@
 """LLM-backed judgement and failure explanation of workflow runs.
 
-Two gates, both fail-safe (they never raise):
+Three LLM-backed steps, all fail-safe (they never raise):
+
+- :func:`generate_output` writes the output of a run that completed every
+  node (a report, or the state of what ran) from the results of all of them.
 
 - :func:`judge_run` decides whether a run that completed every node really
   finished well. With the decision model ready it asks ``Agent.decision``
@@ -10,12 +13,13 @@ Two gates, both fail-safe (they never raise):
   why a run failed. The technical exception goes to ``error_log`` elsewhere;
   this text is what the user reads in the notification.
 
-The spend of both calls is stored in ``workflow_usage`` (purpose ``judge`` /
-``explain``).
+The spend of each call is stored in its run (``workflow_runs.usage_calls``;
+purpose ``output`` / ``judge`` / ``explain``).
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -69,6 +73,84 @@ def _parse_verdict(raw: str) -> tuple[bool, str] | None:
     if not isinstance(data, dict) or not isinstance(data.get("ok"), bool):
         return None
     return data["ok"], str(data.get("reason") or "").strip()
+
+
+OUTPUT_ATTEMPTS = 3
+"""Tries of the output call before the final node's result is used instead."""
+
+_OUTPUT_TOTAL_LIMIT = 120000
+"""Characters of node results sent to the output call (shared among the nodes)."""
+
+
+async def generate_output(
+    agent,
+    workflow_name: str,
+    run_id: str,
+    description: str,
+    nodes: list[dict[str, Any]],
+    results: dict[str, str],
+) -> str | None:
+    """Generate the output of a run from the results of all its nodes.
+
+    One ``llm_process`` call with the chat model. Each node contributes what
+    it returned (the ``data`` of its contract). Transient failures are tried
+    again with a growing wait.
+
+    Args:
+        agent: Agent singleton (LLM access).
+        workflow_name: Workflow name.
+        run_id: Run being closed (for the usage row).
+        description: Workflow description (what is expected of it).
+        nodes: Normalized workflow nodes.
+        results: Node id → committed result.
+
+    Returns:
+        The generated output, or ``None`` when it could not be produced (the
+        caller keeps the result of the final node).
+    """
+    try:
+        model, provider = _chat_model(agent)
+        if not model:
+            return None
+        items = [
+            (n.get("id", ""), n.get("type", ""), str(results.get(n.get("id", ""), "") or ""))
+            for n in nodes
+            if isinstance(n, dict)
+        ]
+        share = max(_OUTPUT_TOTAL_LIMIT // max(len(items), 1), 2000)
+        nodes_text = "\n\n".join(
+            f"#### {node_id} ({node_type})\n\n{_clip(text, share)}" for node_id, node_type, text in items
+        ) or "(sin nodos)"
+        prompt = agent.prompt(
+            "output_workflow",
+            name=workflow_name,
+            description=description or "(sin descripción)",
+            nodes_text=nodes_text,
+        )
+        for attempt in range(OUTPUT_ATTEMPTS):
+            response = await agent.llm_process(
+                model=model,
+                provider=provider,
+                prompt=prompt,
+                temperature=0.2,
+                top_p=0.7,
+                reasoning=False,
+            )
+            if isinstance(response, dict):
+                workflow_db.record_usage(
+                    workflow_name, run_id, "output", provider, model, response.get("usage"),
+                )
+                text = str(response.get("data") or "").strip()
+                if response.get("status") == "success" and text:
+                    return text
+            if attempt < OUTPUT_ATTEMPTS - 1:
+                await asyncio.sleep(2 ** (attempt + 1))
+        return None
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        log_error(str(exc), source="workflow_judge.py:generate_output")
+        return None
 
 
 async def judge_run(
