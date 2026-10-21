@@ -5,13 +5,41 @@ import logging
 import os
 import subprocess
 
+from backend.agent.utils.config_dir import workspace_ctx
 from backend.agent.utils.contract import make_error_response, make_success_response, zero_usage
 from backend.agent.utils.error_logger import log_error
+from backend.agent.utils.packages import backend_python_env, install_package, parse_pip_install
 
 logger = logging.getLogger(__name__)
 
 
 class ShellMixin:
+    @staticmethod
+    def _pip_install(specs: list[str], error: str) -> dict:
+        """Run a ``pip install`` request through the controlled installer.
+
+        Returns the same shape as a normal command (``output``/``returncode``)
+        so a ``run`` node of a workflow fails on a non-zero code.
+        """
+        if error:
+            return make_success_response(
+                message="Command rejected.",
+                data={"output": error, "returncode": 1, "truncated": False, "workdir": os.getcwd()},
+                usage=zero_usage(),
+            )
+        lines: list[str] = []
+        code = 0
+        for spec in specs:
+            result = install_package(spec)
+            lines.append(str(result.get("message", "")))
+            if result.get("status") != "success":
+                code = 1
+        return make_success_response(
+            message="Command executed.",
+            data={"output": "\n".join(lines), "returncode": code, "truncated": False, "workdir": os.getcwd()},
+            usage=zero_usage(),
+        )
+
     async def shell(self, command: str, timeout: int = 30000,
                         workdir: str | None = None) -> dict:
             """Run a terminal command in the system shell.
@@ -30,7 +58,8 @@ class ShellMixin:
             Args:
                 command: The command to execute (e.g. ``"dir"``, ``"python script.py"``).
                 timeout: Maximum execution time in milliseconds (default 30000).
-                workdir: Working directory for the command. If None, uses project root.
+                workdir: Working directory for the command. If None, uses the workspace
+                    of the running workflow, or the project root outside workflows.
 
             Returns:
                 dict with ``{status, message, data, usage}``.
@@ -45,8 +74,13 @@ class ShellMixin:
                 cancel_event = snapshot.get("stream_cancel_event")
             else:
                 cancel_event = getattr(self, "_stream_cancel_event", None)
+            # Installing a library is never a free-form command: it goes through
+            # ``install_package`` (backend's Python, project packages held, recorded).
+            pip_request = parse_pip_install(command)
+            if pip_request is not None:
+                return await asyncio.to_thread(self._pip_install, *pip_request)
             try:
-                cwd = workdir or os.getcwd()
+                cwd = workdir or workspace_ctx.get() or os.getcwd()
                 timeout_s = timeout / 1000
 
                 # Run the blocking subprocess call in a worker thread so the
@@ -59,6 +93,7 @@ class ShellMixin:
                         command,
                         shell=True,
                         cwd=cwd,
+                        env=backend_python_env(),
                         capture_output=True,
                         text=True,
                         encoding="utf-8",
