@@ -50,6 +50,7 @@ def render_outliers_figure(
         placeholder: Time filter placeholder used inside the script.
         filter_column: Column the time filter applies to.
         color: Figure color.
+        fig_size: Width and height of the figure, in inches.
         percentile: When set (0 < q < 1), the plotted values are capped
             at this quantile of the series (e.g. 0.95 keeps everything up
             to p95). ``None`` plots the full series.

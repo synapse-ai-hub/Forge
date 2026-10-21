@@ -9,6 +9,7 @@ import os
 import sys
 import time
 import asyncio
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Dict
@@ -204,8 +205,15 @@ async def _heartbeat_watchdog() -> None:
 # FastAPI application
 # ---------------------------------------------------------------------------
 @asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Application lifespan: startup and shutdown hooks."""
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Run the startup and shutdown hooks of the application.
+
+    Args:
+        app: The FastAPI application.
+
+    Yields:
+        Control to the application while it serves requests.
+    """
     logger.info("Starting <nombre>nombre_proyecto</nombre> API ...")
 
     # Ensure config directory exists (~/.config/synapseForge/)
@@ -219,6 +227,7 @@ async def lifespan(app: FastAPI):
     # Libraries the tools installed (tools/lib/requirements.txt) that this
     # machine or container lacks: reinstalled in the background.
     async def _restore_tool_packages() -> None:
+        """Reinstall the libraries of the tools that this machine or container lacks."""
         try:
             restored = await asyncio.to_thread(restore_missing)
             if restored:
@@ -367,7 +376,15 @@ app = FastAPI(
 
 @app.exception_handler(RequestValidationError)
 async def _validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
-    """Persist 422 validation failures in error_log and keep FastAPI's default response."""
+    """Persist 422 validation failures in error_log and keep FastAPI's default response.
+
+    Args:
+        request: The request that failed validation.
+        exc: The validation error.
+
+    Returns:
+        The default 422 JSON response.
+    """
     log_error(
         f"422 {request.method} {request.url.path}: {exc.errors()}",
         source="main.py:request_validation",
@@ -464,7 +481,11 @@ def health_check() -> Dict[str, object]:
 # ---------------------------------------------------------------------------
 @app.post("/api/shutdown")
 async def shutdown() -> Dict[str, str]:
-    """Shutdown the server gracefully. Only works when running as a desktop app."""
+    """Shut down the server gracefully. Only works when running as a desktop app.
+
+    Returns:
+        A status dict.
+    """
     import os
     import signal
     import sys
@@ -472,7 +493,8 @@ async def shutdown() -> Dict[str, str]:
     logger.info("Shutdown requested via /api/shutdown")
 
     # Give the response time to be sent before killing the process
-    async def _delayed_shutdown():
+    async def _delayed_shutdown() -> None:
+        """Stop the process after the response was sent."""
         await asyncio.sleep(0.5)
         if sys.platform == "win32":
             os.kill(os.getpid(), signal.CTRL_BREAK_EVENT)
@@ -488,7 +510,11 @@ async def shutdown() -> Dict[str, str]:
 # ---------------------------------------------------------------------------
 @app.post("/api/heartbeat")
 async def heartbeat() -> Dict[str, str]:
-    """Receive heartbeat from frontend. Updates last-seen timestamp."""
+    """Receive the heartbeat from the frontend and update the last-seen timestamp.
+
+    Returns:
+        A status dict.
+    """
     global _last_heartbeat
     _last_heartbeat = time.time()
     return {"status": "ok"}
@@ -513,13 +539,23 @@ if os.path.isdir(_frontend_dist):
 
     @app.get("/")
     async def serve_index() -> FileResponse:
-        """Serve the SPA entry point (index.html)."""
+        """Serve the SPA entry point (index.html).
+
+        Returns:
+            The index file.
+        """
         return FileResponse(os.path.join(_frontend_dist, "index.html"))
 
     @app.api_route("/{path:path}", methods=["GET"])
     async def serve_spa(path: str) -> FileResponse:
-        """Catch-all: sirve archivos reales del dist (skill.html, docs.html, ...)
-        o el index.html (SPA routing)."""
+        """Serve the real files of dist (skill.html, docs.html, ...) or index.html (SPA routing).
+
+        Args:
+            path: Requested path.
+
+        Returns:
+            The requested file, or index.html when it does not exist.
+        """
         if path.startswith("api/") or path in (
             "health",
             "openapi.json",

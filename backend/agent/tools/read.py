@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 
 
 class ReadMixin:
+    """Native tool ``read``: read a file."""
     async def read(self, file_path: str, offset: int = 1, limit: int = 2000) -> dict:
             """Read a file or directory from the local filesystem.
 

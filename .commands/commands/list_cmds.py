@@ -1,8 +1,10 @@
+"""List the commands of .commands/commands.json."""
+
 import json
 from pathlib import Path
 
-def list_commands():
-    """Muestra comandos disponibles con formato y colores"""
+def list_commands() -> None:
+    """Show the available commands with format and colors."""
     json_path = Path('.commands/commands.json')
     
     if not json_path.exists():

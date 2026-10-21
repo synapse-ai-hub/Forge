@@ -45,7 +45,7 @@ router = APIRouter(prefix="/api/context-files", tags=["context-files"])
 @router.post("")
 async def upload_context_file(
     file: UploadFile = File(...),
-):
+) -> dict:
     """Upload a context file, extract its text, and store it in SQLite.
 
     The endpoint receives an uploaded file, extracts its text content
@@ -101,7 +101,7 @@ async def upload_context_file(
 
 
 @router.get("")
-async def list_context_files():
+async def list_context_files() -> dict:
     """List all uploaded context files.
 
     Returns basic info (id, filename, created_at) without the full content
@@ -138,7 +138,7 @@ async def list_context_files():
 
 
 @router.delete("/{file_id}")
-async def delete_context_file(file_id: int):
+async def delete_context_file(file_id: int) -> dict:
     """Delete a context file from SQLite.
 
     Args:

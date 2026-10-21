@@ -61,23 +61,45 @@ _REPO_HEADER = "# Installed by tools"
 
 
 def project_requirements_file() -> Path | None:
-    """Return the project's ``requirements.txt`` when it exists."""
+    """Locate the ``requirements.txt`` of the project.
+
+    Returns:
+        Its path, or ``None`` when it does not exist.
+    """
     candidate = Path(__file__).resolve().parents[3] / "requirements.txt"
     return candidate if candidate.is_file() else None
 
 
 def tools_requirements_file() -> Path:
-    """Return ``tools/lib/requirements.txt`` (the persistent list of tool libraries)."""
+    """Locate the persistent list of the libraries the tools installed.
+
+    Returns:
+        Path of ``tools/lib/requirements.txt`` in the config directory.
+    """
     return get_tools_dir() / "lib" / "requirements.txt"
 
 
 def _normalize(name: str) -> str:
-    """Return the canonical form of a distribution name."""
+    """Convert a distribution name to its canonical form.
+
+    Args:
+        name: Distribution name.
+
+    Returns:
+        The name in lowercase with ``-`` as the only separator.
+    """
     return re.sub(r"[-_.]+", "-", name).lower()
 
 
 def _requirement_name(line: str) -> str | None:
-    """Return the distribution name of a requirements line, or ``None``."""
+    """Extract the distribution name of a requirements line.
+
+    Args:
+        line: Line of a requirements file.
+
+    Returns:
+        The name, or ``None`` for blank lines, comments and options.
+    """
     line = line.split("#", 1)[0].strip()
     if not line or line.startswith("-"):
         return None
@@ -86,7 +108,14 @@ def _requirement_name(line: str) -> str | None:
 
 
 def _installed_version(name: str) -> str | None:
-    """Return the installed version of a distribution, or ``None``."""
+    """Look up the installed version of a distribution.
+
+    Args:
+        name: Distribution name.
+
+    Returns:
+        The version, or ``None`` when it is not installed.
+    """
     try:
         return metadata.version(name)
     except metadata.PackageNotFoundError:
@@ -94,7 +123,14 @@ def _installed_version(name: str) -> str | None:
 
 
 def _read_lines(path: Path) -> list[str]:
-    """Return the lines of a text file (empty when it does not exist)."""
+    """Read the lines of a text file.
+
+    Args:
+        path: File to read.
+
+    Returns:
+        Its lines, or an empty list when it cannot be read.
+    """
     try:
         return path.read_text(encoding="utf-8").splitlines()
     except OSError:
@@ -107,15 +143,25 @@ def _read_lines(path: Path) -> list[str]:
 
 
 def is_valid_spec(spec: str) -> bool:
-    """Check ``spec`` is a plain requirement (``name``, ``name==1.2``, ``name[extra]>=1``).
+    """Check that a requirement is plain: ``name``, ``name==1.2`` or ``name[extra]>=1``.
 
     URLs, paths, VCS references and pip options are rejected.
+
+    Args:
+        spec: Requirement to check.
+
+    Returns:
+        ``True`` when it is a plain requirement.
     """
     return isinstance(spec, str) and bool(_SPEC_RE.match(spec.strip()))
 
 
 def _write_constraints() -> str | None:
-    """Write a constraints file pinning the project's packages at their installed version."""
+    """Write a constraints file that holds the project's packages at their installed version.
+
+    Returns:
+        The path of the temporary file, or ``None`` when there is nothing to hold.
+    """
     req = project_requirements_file()
     if req is None:
         return None
@@ -134,7 +180,15 @@ def _write_constraints() -> str | None:
 
 
 def _run_pip(specs: list[str], extra: list[str] | None = None) -> subprocess.CompletedProcess:
-    """Run ``python -m pip install`` for ``specs`` with the project's packages held."""
+    """Run ``python -m pip install`` with the project's packages held.
+
+    Args:
+        specs: Requirements to install.
+        extra: Additional pip options.
+
+    Returns:
+        The finished process.
+    """
     constraints = _write_constraints()
     cmd = [sys.executable, "-m", "pip", "install", "--disable-pip-version-check", *(extra or [])]
     if constraints:
@@ -154,7 +208,11 @@ def _run_pip(specs: list[str], extra: list[str] | None = None) -> subprocess.Com
 
 
 def _record(name: str) -> None:
-    """Record an installed library in the tools list and the project's requirements."""
+    """Record an installed library in the tools list and in the project's requirements.
+
+    Args:
+        name: Distribution name that was installed.
+    """
     version = _installed_version(name)
     if version is None:
         return
@@ -268,6 +326,9 @@ def restore_missing() -> list[str]:
 def parse_pip_install(command: str) -> tuple[list[str], str] | None:
     """Detect a ``pip install`` in a shell command.
 
+    Args:
+        command: Command line to inspect.
+
     Returns:
         ``None`` when the command has no ``pip install``. Otherwise
         ``(specs, error)``: ``specs`` are the packages to install and
@@ -305,10 +366,13 @@ def parse_pip_install(command: str) -> tuple[list[str], str] | None:
 
 
 def backend_python_env() -> dict[str, str]:
-    """Return the environment for shell commands: the backend's Python comes first in PATH.
+    """Build the environment for shell commands.
 
-    So ``python script.py`` runs with the same interpreter (and libraries)
-    as the backend, never with another Python that happens to be in PATH.
+    The folder of the backend's Python comes first in ``PATH``, so ``python
+    script.py`` runs with the same interpreter (and libraries) as the backend.
+
+    Returns:
+        A copy of the environment variables.
     """
     env = dict(os.environ)
     env["PATH"] = str(Path(sys.executable).parent) + os.pathsep + env.get("PATH", "")

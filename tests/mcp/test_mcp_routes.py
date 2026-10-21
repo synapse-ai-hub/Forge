@@ -25,10 +25,16 @@ client = TestClient(app)
 
 
 def _registry_names() -> list[str]:
+    """List the names of the tools in the registry of the agent.
+
+    Returns:
+        One name per registered tool.
+    """
     return [t["function"]["name"] for t in agent.tools._tools_registry]
 
 
-def test_toggle_endpoint_writes_the_json_and_updates_the_registry():
+def test_toggle_endpoint_writes_the_json_and_updates_the_registry() -> None:
+    """Toggle endpoint writes the json and updates the registry."""
     with _config_dir() as cfg:
         cfg.mkdir(parents=True)
         config_dir.save_mcp_servers([_stdio_config("echo-stdio")])
@@ -54,7 +60,8 @@ def test_toggle_endpoint_writes_the_json_and_updates_the_registry():
             agent.tools._tools_registry = agent.tools._build_tools_registry()
 
 
-def test_toggle_endpoint_validates_input():
+def test_toggle_endpoint_validates_input() -> None:
+    """Toggle endpoint validates input."""
     with _config_dir() as cfg:
         cfg.mkdir(parents=True)
         config_dir.save_mcp_servers([_stdio_config("echo-stdio")])
@@ -62,7 +69,8 @@ def test_toggle_endpoint_validates_input():
         assert client.put("/api/agent/mcp/nope/enabled", json={"enabled": False}).status_code == 404
 
 
-def test_listing_reports_a_broken_mcp_json():
+def test_listing_reports_a_broken_mcp_json() -> None:
+    """Listing reports a broken mcp json."""
     with _config_dir() as cfg:
         cfg.mkdir(parents=True)
         (cfg / "mcp.json").write_text("[ {broken", encoding="utf-8")

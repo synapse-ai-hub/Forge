@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 
 
 class RagMixin:
+    """Native tool ``rag``: query a knowledge base (RAG) collection."""
     async def rag(self, collection: str, query: str) -> dict:
             """Query a knowledge base (RAG) collection.
 

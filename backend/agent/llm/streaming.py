@@ -15,6 +15,11 @@ from backend.agent.utils.model_catalog import translate_reasoning, get_reasoning
 from backend.agent.llm.api_type import _resolve_api_type
 from backend.agent.llm.gemini import _signature_to_str
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
+
 class StreamingMixin:
     """Streaming completion."""
 
@@ -25,11 +30,11 @@ class StreamingMixin:
                              top_p: float = 0.5, max_tokens: int = 3000,
                              cleaned_output: bool = True,
                              tools: list | None = None,
-                             stream_cancel_event=None,
+                             stream_cancel_event: asyncio.Event | None = None,
                              provider: str | None = None,
                              reasoning: bool = True,
                              budget_tokens: int | None = None,
-                             **kwargs):
+                             **kwargs: Any) -> AsyncGenerator[dict[str, Any], None]:
         """Async generator that streams LLM response chunks.
 
         Accepts either ``prompt`` + ``system_content`` (backwards compatible)
@@ -54,7 +59,7 @@ class StreamingMixin:
             cleaned_output: Apply ``self.clean()`` to text chunks.
             tools: Tool definitions for function calling.
             stream_cancel_event: Optional event to cancel mid-stream.
-provider: Optional provider override (any curated provider id,
+            provider: Optional provider override (any curated provider id,
                         e.g. ``"OPENAI"``, ``"GOOGLE"``, or ``"LOCAL"``).
                         When ``None``, falls back to ``self.provider`` so existing
                         callers keep their current behavior. Pass an explicit value
@@ -263,8 +268,16 @@ provider: Optional provider override (any curated provider id,
                                format="json" if stream_format == "json" else None,
                                options=options, keep_alive=-1)
 
-            def _try_stream(use_think=False):
-                """Create a stream with or without the think flag, or with a specific level."""
+            def _try_stream(use_think: bool | str = False) -> Any:
+                """Create a stream with or without the think flag, or with a specific level.
+
+                Args:
+                    use_think: ``True``/``"on"``, ``False``/``"off"``, a level (``"low"``, ``"medium"``,
+                        ``"high"``, ``"max"``). Any other value uses the model default.
+
+                Returns:
+                    The Ollama stream.
+                """
                 if isinstance(use_think, str) and use_think in ("low", "medium", "high", "max"):
                     # String level for GPT-OSS / Qwen max
                     try:

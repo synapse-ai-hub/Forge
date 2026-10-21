@@ -104,7 +104,7 @@ def _get_all_provider_stats() -> list[dict[str, Any]]:
 @router.get("/usage-metrics")
 async def get_usage_metrics(
     provider: str | None = Query(default=None, description="Filter by provider name"),
-):
+) -> dict:
     """Return usage metrics aggregated by provider-model.
 
     Args:
@@ -166,7 +166,7 @@ async def get_usage_metrics(
 async def get_billing_config(
     provider: str | None = Query(default=None, description="Filter by provider name"),
     model: str | None = Query(default=None, description="Filter by model name"),
-):
+) -> dict:
     """Return the configured spend limits.
 
     Args:
@@ -205,7 +205,7 @@ async def create_billing_config(
     provider: str = Query(..., description="Provider name (e.g., 'openrouter', 'google')"),
     model: str | None = Query(default=None, description="Model name (optional for provider-level limit)"),
     limit_amount: float = Query(..., ge=0, description="Spend limit amount in USD"),
-):
+) -> dict:
     """Configure a spend limit for a provider or provider-model.
 
     Args:
@@ -244,7 +244,7 @@ async def create_billing_config(
 @router.get("/billing-stats")
 async def get_billing_statistics(
     provider: str | None = Query(default=None, description="Filter by provider name"),
-):
+) -> dict:
     """Return general billing statistics with totals by provider.
 
     Args:
@@ -308,7 +308,7 @@ async def get_billing_statistics(
 @router.get("/spend")
 async def get_spend(
     provider: str | None = Query(default=None, description="Filter by provider name"),
-):
+) -> dict:
     """Return per-model spend records.
 
     Args:

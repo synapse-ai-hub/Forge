@@ -27,22 +27,35 @@ router = APIRouter()
 
 
 class TogglePayload(BaseModel):
+    """Body of the request that enables or disables the Telegram bot."""
     enabled: bool
 
 
 class ActiveSessionPayload(BaseModel):
+    """Body of the request that sets the active session shared with Telegram."""
     session_id: str
 
 
 @router.get("/telegram/status")
 async def telegram_status() -> dict:
-    """Return whether the Telegram bot is currently enabled."""
+    """Report whether the Telegram bot is currently enabled.
+
+    Returns:
+        A dict with the ``enabled`` flag.
+    """
     return {"enabled": telegram_bot.enabled}
 
 
 @router.post("/telegram/toggle")
 async def telegram_toggle(payload: TogglePayload) -> dict:
-    """Enable/disable the Telegram bot and persist the choice."""
+    """Enable/disable the Telegram bot and persist the choice.
+
+    Args:
+        payload: Body with the new ``enabled`` value.
+
+    Returns:
+        A dict with the resulting ``enabled`` flag.
+    """
     telegram_bot.set_enabled(payload.enabled)
     session_manager.set_config("telegram_enabled", "true" if payload.enabled else "false")
     logger.info("Telegram toggle -> %s", payload.enabled)
@@ -51,14 +64,25 @@ async def telegram_toggle(payload: TogglePayload) -> dict:
 
 @router.get("/telegram/active-session")
 async def telegram_active_session() -> dict:
-    """Return the active session id shared between frontend and Telegram."""
+    """Get the active session id shared between frontend and Telegram.
+
+    Returns:
+        A dict with the ``session_id``.
+    """
     sid = session_manager.get_config("active_session")
     return {"session_id": sid}
 
 
 @router.post("/telegram/active-session")
 async def telegram_set_active_session(payload: ActiveSessionPayload) -> dict:
-    """Persist the active session id (single source of truth for front/Telegram)."""
+    """Persist the active session id (single source of truth for front/Telegram).
+
+    Args:
+        payload: Body with the new ``session_id``.
+
+    Returns:
+        A dict with the stored ``session_id``.
+    """
     session_manager.set_config("active_session", payload.session_id)
     logger.info("Active session -> %s", payload.session_id)
     return {"session_id": payload.session_id}

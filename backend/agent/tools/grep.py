@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 
 
 class GrepMixin:
+    """Native tool ``grep``: search file contents using regular expressions."""
     async def grep(self, pattern: str, path: str | None = None,
                        include: str | None = None) -> dict:
             """Search file contents using regular expressions.

@@ -224,6 +224,9 @@ def load_scenarios(scenarios_dir: Path) -> list[dict[str, Any]]:
 
     Returns:
         List of parsed scenario dicts.
+
+    Raises:
+        CheckpointError: If a document of a file has no ``scenario`` field.
     """
     scenarios: list[dict[str, Any]] = []
     for path in sorted(scenarios_dir.glob("*.yaml")):

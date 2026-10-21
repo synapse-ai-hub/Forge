@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 
 
 class CheckEmailMixin:
+    """Native tool ``check_email``: check the IMAP mailbox for unseen emails."""
     async def check_email(self, folder: str = "INBOX", sender: str | None = None, date: str = "1h", mark_read: bool = True) -> dict:
             """Check the IMAP mailbox for unseen emails and return them parsed.
 

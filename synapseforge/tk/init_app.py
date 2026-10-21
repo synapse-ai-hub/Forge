@@ -46,10 +46,20 @@ TOOLTIPS: dict[str, str] = {
 
 
 def _create_tooltip(widget: tk.Widget, text: str) -> None:
-    """Attach a hover tooltip to *widget* without affecting layout."""
+    """Attach a hover tooltip to *widget* without affecting layout.
+
+    Args:
+        widget: Widget that shows the tooltip.
+        text: Text of the tooltip.
+    """
     _tip = {"window": None}
 
-    def _show(event):
+    def _show(event: tk.Event) -> None:
+        """Show the tooltip near the pointer.
+
+        Args:
+            event: The enter event.
+        """
         if _tip["window"]:
             return
         tw = tk.Toplevel(widget)
@@ -63,7 +73,12 @@ def _create_tooltip(widget: tk.Widget, text: str) -> None:
         lbl.pack()
         _tip["window"] = tw
 
-    def _hide(_event):
+    def _hide(_event: tk.Event | None) -> None:
+        """Hide the tooltip.
+
+        Args:
+            _event: The leave event (unused).
+        """
         if _tip["window"]:
             _tip["window"].destroy()
             _tip["window"] = None
@@ -76,6 +91,7 @@ def _create_tooltip(widget: tk.Widget, text: str) -> None:
 # Fijar el AppUserModelID ANTES de crear cualquier ventana
 # ──────────────────────────────────────────────────────────────
 def _set_app_user_model_id() -> None:
+    """Set the Windows AppUserModelID so the taskbar shows the icon of the app."""
     if sys.platform != "win32":
         return
     try:
@@ -92,6 +108,11 @@ class InitApp:
     """GUI for collecting project configuration for synapseforge init."""
 
     def __init__(self, target_dir: str) -> None:
+        """Build the window of the init wizard.
+
+        Args:
+            target_dir: Directory where the project is created.
+        """
         self.target_dir = target_dir
         self.result: Optional[Dict[str, Any]] = None
 
@@ -134,7 +155,7 @@ class InitApp:
     # Configuración robusta del ícono usando ctypes
     # ──────────────────────────────────────────────────────────────────
     def _set_icon(self) -> None:
-        """Asigna el ícono de la ventana y de la barra de tareas usando ctypes."""
+        """Set the icon of the window and of the taskbar using ctypes."""
         if not _ICO_PATH.is_file():
             return
 
@@ -168,7 +189,7 @@ class InitApp:
     # Logo (cargado desde archivo local)
     # ------------------------------------------------------------------
     def _load_logo_local(self) -> None:
-        """Carga el logo desde logo_transparente.png (local) y lo muestra en la ventana."""
+        """Load the logo from logo_transparente.png (local) and show it in the window."""
         if Image is None or ImageTk is None:
             return
         if not _LOGO_PNG_PATH.is_file():
@@ -186,6 +207,7 @@ class InitApp:
     # Tab 1: Project info
     # ------------------------------------------------------------------
     def _build_project_tab(self) -> None:
+        """Build the tab with the name and the data of the project."""
         tab = ttk.Frame(self.notebook, padding=15)
         self.notebook.add(tab, text="Proyecto")
 
@@ -215,6 +237,7 @@ class InitApp:
     # Tab 2: Logos (file pickers)
     # ------------------------------------------------------------------
     def _build_logos_tab(self) -> None:
+        """Build the tab where the logos are chosen."""
         tab = ttk.Frame(self.notebook, padding=15)
         self.notebook.add(tab, text="Logos")
 
@@ -243,6 +266,7 @@ class InitApp:
         )
 
     def _browse_logo(self) -> None:
+        """Choose the company logo with a file dialog."""
         path = filedialog.askopenfilename(
             title="Seleccionar logo de la empresa",
             filetypes=[("Imágenes", "*.png *.jpg *.jpeg *.gif *.bmp"), ("Todos", "*.*")],
@@ -251,6 +275,7 @@ class InitApp:
             self._logo_path_var.set(path)
 
     def _browse_logo_cliente(self) -> None:
+        """Choose the client logo with a file dialog."""
         path = filedialog.askopenfilename(
             title="Seleccionar logo del cliente",
             filetypes=[("Imágenes", "*.png *.jpg *.jpeg *.gif *.bmp"), ("Todos", "*.*")],
@@ -262,6 +287,7 @@ class InitApp:
     # Tab 3: Colors (optional hex fields with color picker)
     # ------------------------------------------------------------------
     def _build_colors_tab(self) -> None:
+        """Build the tab where the colors are chosen."""
         tab = ttk.Frame(self.notebook, padding=15)
         self.notebook.add(tab, text="Colores")
 
@@ -317,7 +343,11 @@ class InitApp:
         ).grid(row=len(COLOR_TAB_FIELDS) * 2 + 3, column=0, columnspan=4, sticky="w")
 
     def _pick_color(self, key: str) -> None:
-        """Open OS color chooser, fill entry and update preview."""
+        """Open OS color chooser, fill entry and update preview.
+
+        Args:
+            key: Name of the color being edited.
+        """
         result = colorchooser.askcolor(
             title=key,
             parent=self.root,
@@ -329,7 +359,11 @@ class InitApp:
             self._update_preview(key)
 
     def _update_preview(self, key: str) -> None:
-        """Update the preview square for the given color key."""
+        """Update the preview square for the given color key.
+
+        Args:
+            key: Name of the color being previewed.
+        """
         cv = self._color_previews[key]
         raw = self._color_entries[key].get().strip()
         cv.delete("all")
@@ -351,7 +385,11 @@ class InitApp:
     # Collect + validate
     # ------------------------------------------------------------------
     def _collect_config(self) -> Optional[Dict[str, Any]]:
-        """Read all fields and return config dict, or None if validation fails."""
+        """Read all fields and validate them.
+
+        Returns:
+            The config dict, or None if validation fails.
+        """
 
         # ── Required text fields ──────────────────────────────────────
         required = ["empresa", "owner", "legal", "repo", "cliente", "nombre", "tarea"]
@@ -415,6 +453,7 @@ class InitApp:
         return config
 
     def _on_submit(self) -> None:
+        """Validate the form and start the pipeline in a background thread."""
         config = self._collect_config()
         if config is None:
             return  # validation failed
@@ -428,7 +467,11 @@ class InitApp:
         t.start()
 
     def _run_pipeline(self, config: Dict[str, Any]) -> None:
-        """Execute init pipeline in background thread."""
+        """Execute init pipeline in background thread.
+
+        Args:
+            config: The configuration collected from the form.
+        """
         try:
             from pipeline.init.main import run
             run(self.target_dir, config=config)
@@ -441,19 +484,31 @@ class InitApp:
             self.root.after(0, lambda: self._on_error(msg))
 
     def _on_success(self) -> None:
+        """Tell the user the project was created and close the window."""
         self.progress.stop()
         self.root.destroy()
 
     def _on_error(self, msg: str) -> None:
+        """Show the error of the pipeline and enable the form again.
+
+        Args:
+            msg: Description of the error.
+        """
         self.progress.stop()
         messagebox.showerror("Error", msg, parent=self.root)
         self._set_ui_enabled(True)
 
     def _on_cancel(self) -> None:
+        """Close the window without creating the project."""
         self.result = None
         self.root.destroy()
 
     def _set_ui_enabled(self, enabled: bool) -> None:
+        """Enable or disable the form controls while the pipeline runs.
+
+        Args:
+            enabled: True to enable them.
+        """
         state = "normal" if enabled else "disabled"
         self.btn_submit.config(state=state)
         self.btn_cancel.config(state=state)
@@ -465,6 +520,12 @@ class InitApp:
     # Window utils
     # ------------------------------------------------------------------
     def _center(self, w: int, h: int) -> None:
+        """Center the window on the screen.
+
+        Args:
+            w: Width of the window.
+            h: Height of the window.
+        """
         sw = self.root.winfo_screenwidth()
         sh = self.root.winfo_screenheight()
         x = (sw - w) // 2

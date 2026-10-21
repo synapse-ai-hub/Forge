@@ -1,3 +1,5 @@
+"""Agent: LLM clients, prompt rendering and the native tools."""
+
 from __future__ import annotations
 
 import sys
@@ -363,15 +365,15 @@ class Agent(
         The cleaning performed is deliberately conservative: it replaces zero-width and
         non-standard space characters, several dash variants and some invisible markers.
 
-        ## Args:
-            - text (str): Input text to clean.
-
-        ## Returns:
-            str: Cleaned text.
-
-        ## Example:
+        Example:
             >>> agent.clean('Hello World')
             'HelloWorld'
+
+        Args:
+            text: Input text to clean.
+
+        Returns:
+            The cleaned text.
         '''
         text = text.replace('\ufeff', '')
         text = text.replace('\u202f', ' ')   # espacio fino -> espacio normal

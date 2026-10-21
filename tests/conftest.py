@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
+import pytest
 
 LOGGED_FOLDERS = ("workflows", "creators")
 """Folders under ``tests/`` that get a results log."""
@@ -20,15 +21,26 @@ _started = datetime.now()
 
 
 def _folder_of(nodeid: str) -> str | None:
-    """Return the logged folder a test belongs to, if any."""
+    """Return the logged folder a test belongs to, if any.
+
+    Args:
+        nodeid: Pytest node id of the test.
+
+    Returns:
+        The folder name under ``tests/``, or ``None`` when the test is not in a logged folder.
+    """
     parts = nodeid.replace("\\", "/").split("/")
     if len(parts) >= 2 and parts[0] == "tests" and parts[1] in LOGGED_FOLDERS:
         return parts[1]
     return None
 
 
-def pytest_runtest_logreport(report) -> None:
-    """Collect the outcome of each test (its call, or a setup failure/skip)."""
+def pytest_runtest_logreport(report: pytest.TestReport) -> None:
+    """Collect the outcome of each test (its call, or a setup failure/skip).
+
+    Args:
+        report: Pytest report of one phase of a test.
+    """
     if report.when == "call" or (report.when == "setup" and report.outcome != "passed"):
         folder = _folder_of(report.nodeid)
         if folder is None:
@@ -42,8 +54,13 @@ def pytest_runtest_logreport(report) -> None:
         })
 
 
-def pytest_sessionfinish(session, exitstatus) -> None:
-    """Write one results log per logged folder that ran tests."""
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    """Write one results log per logged folder that ran tests.
+
+    Args:
+        session: The pytest session that finished.
+        exitstatus: Exit status pytest will return.
+    """
     finished = datetime.now()
     for folder, results in _results.items():
         try:

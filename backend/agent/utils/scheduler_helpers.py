@@ -27,6 +27,7 @@ import sqlite3
 import sys
 import uuid
 from datetime import datetime
+from typing import Any
 
 import yaml
 
@@ -57,8 +58,16 @@ _NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 # ---------------------------------------------------------------------------
 
 
-def _parse_json_field(value: str | None, default=None):
-    """Parse a JSON text column, returning *default* on failure."""
+def _parse_json_field(value: str | None, default: Any = None) -> Any:
+    """Parse a JSON text column.
+
+    Args:
+        value: The stored text, or None.
+        default: Value to return when the text cannot be parsed.
+
+    Returns:
+        The parsed value, or *default* on failure.
+    """
     if value is None:
         return default
     try:
@@ -67,8 +76,15 @@ def _parse_json_field(value: str | None, default=None):
         return default
 
 
-def _serialize_json(value) -> str | None:
-    """Serialise a Python value to a JSON string (or ``None``)."""
+def _serialize_json(value: Any) -> str | None:
+    """Serialise a Python value to a JSON string.
+
+    Args:
+        value: The value to serialise.
+
+    Returns:
+        The JSON text, or ``None`` when the value is None.
+    """
     if value is None:
         return None
     return json.dumps(value, ensure_ascii=False)
@@ -78,6 +94,13 @@ def _slot_key(time_str: str, days: list[int]) -> str:
     """Generate a unique identifier for a schedule slot.
 
     Example: ``"09:00_1,2,3,4,5"``.
+
+    Args:
+        time_str: Time of the slot, ``HH:MM``.
+        days: Weekdays of the slot.
+
+    Returns:
+        The identifier of the slot.
     """
     return f"{time_str}_{','.join(str(d) for d in sorted(set(days)))}"
 
@@ -88,6 +111,12 @@ def _slugify(text: str) -> str:
     Keeps only ``[a-z0-9]``, replacing spaces and special characters with
     hyphens.  Leading/trailing hyphens are stripped.  Falls back to a
     UUID fragment when the input produces nothing usable.
+
+    Args:
+        text: Text to convert.
+
+    Returns:
+        The slug.
     """
     slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
     return slug if slug else uuid.uuid4().hex[:8]
@@ -99,7 +128,14 @@ def _slugify(text: str) -> str:
 
 
 def _row_to_task(row: sqlite3.Row) -> dict:
-    """Convert a ``scheduled_tasks`` row into a public task dict."""
+    """Convert a ``scheduled_tasks`` row into a public task dict.
+
+    Args:
+        row: Row of ``scheduled_tasks``.
+
+    Returns:
+        The task as a dict.
+    """
     return {
         "id": row["id"],
         "name": row["name"],
@@ -167,7 +203,14 @@ def list_tasks() -> list[dict]:
 
 
 def get_task(task_id: str) -> dict | None:
-    """Return a single scheduled task or ``None`` if it does not exist."""
+    """Fetch a single scheduled task.
+
+    Args:
+        task_id: Task identifier.
+
+    Returns:
+        The task, or ``None`` if it does not exist.
+    """
     try:
         with get_connection() as conn:
             row = conn.execute(
@@ -428,7 +471,11 @@ def delete_task(task_id: str) -> dict:
 
 
 def _get_agents_dir() -> str:
-    """Return the agents config directory, creating it if needed."""
+    """Locate the agents config directory, creating it if needed.
+
+    Returns:
+        Path of the directory as text.
+    """
     from backend.agent.utils.config_dir import get_agents_dir
     agents_dir = get_agents_dir()
     agents_dir.mkdir(parents=True, exist_ok=True)
@@ -665,6 +712,14 @@ def record_run(
 ) -> int | None:
     """Persist a task execution result in ``task_runs``.
 
+    Args:
+        task_id: Task that ran.
+        session_id: Session where the agent worked, when there was one.
+        status: ``"success"`` or ``"error"``.
+        detail: First characters of the answer, or the failure reason.
+        started_at: Local time the run started.
+        finished_at: Local time the run ended.
+
     Returns:
         The id of the new ``task_runs`` row, or ``None`` when it failed.
     """
@@ -682,7 +737,14 @@ def record_run(
 
 
 def _is_valid_time(time_str: str) -> bool:
-    """Return whether ``time_str`` matches the ``HH:MM`` 24h format."""
+    """Check that a time matches the ``HH:MM`` 24h format.
+
+    Args:
+        time_str: Text to check.
+
+    Returns:
+        True when it matches.
+    """
     return bool(isinstance(time_str, str) and re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", time_str))
 
 
@@ -852,6 +914,7 @@ class SchedulerService:
     """Async loop that checks due tasks and executes them."""
 
     def __init__(self) -> None:
+        """Create the service with no task running."""
         self._task: asyncio.Task | None = None
         self._running = False
         # Only one scheduled execution at a time.
@@ -893,6 +956,9 @@ class SchedulerService:
 
         Runs as a background asyncio task so a long execution never blocks
         the minute check and other due tasks are still evaluated.
+
+        Args:
+            task: The scheduled task to run.
         """
         async with self._exec_lock:
             try:

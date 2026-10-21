@@ -35,6 +35,7 @@ import re
 import sys
 import time
 import types
+from typing import Any
 
 _current_dir = os.path.dirname(os.path.abspath(__file__))
 _project_root = os.path.dirname(os.path.dirname(os.path.dirname(_current_dir)))
@@ -154,7 +155,7 @@ class ToolsBase:
                 return None
 
             return {"type": json_type}
-    def __init__(self):
+    def __init__(self) -> None:
             """Initializes Tools.
         
             """
@@ -189,6 +190,7 @@ class ToolsBase:
                     self._last_mcp_selfheal = now
 
                     def _rebuild() -> None:
+                        """Rebuild the tools registry after the MCP self-heal."""
                         try:
                             self._tools_registry = self._build_tools_registry()
                         except Exception as e:
@@ -342,13 +344,13 @@ class ToolsBase:
             return tools
     @staticmethod
     def _parse_param_descriptions(doc: str) -> dict[str, str]:
-            """Parse Google-style ``Args:`` section from a docstring.
+            """Parse the Google-style ``Args:`` section of a docstring.
 
-            Looks for a block like::
+            Each entry of the section is ``name: description`` and its description may continue on
+            the following, more indented lines.
 
-                Args:
-                    param_name: Description text.
-                    other_param: Another description.
+            Args:
+                doc: Docstring of the tool method.
 
             Returns:
                 ``{param_name: description}`` dict.
@@ -379,7 +381,9 @@ class ToolsBase:
             """Locate the external ``tools/`` folder.
 
             Uses the config directory ``~/.config/synapseForge/tools/``.
-            Returns ``None`` (no error) if the folder does not exist.
+
+            Returns:
+                The path as text, or ``None`` (no error) if the folder does not exist.
             """
             from backend.agent.utils.config_dir import get_tools_dir
 
@@ -452,7 +456,7 @@ class ToolsBase:
                 })
 
             return results
-    async def _execute_tool(self, tool_name: str, **kwargs) -> dict:
+    async def _execute_tool(self, tool_name: str, **kwargs: Any) -> dict:
             """Execute a tool by name, dispatching to native or external handler.
 
             Args:
@@ -559,6 +563,14 @@ class ToolsBase:
 
             # Inline: links [text](url) -> <a href="url">text</a>
             def _sanitize_url(match: re.Match) -> str:
+                """Build the HTML of a markdown link, blocking unsafe URL schemes.
+
+                Args:
+                    match: Regex match of ``[label](url)``.
+
+                Returns:
+                    The ``<a>`` element for a safe URL, or the label followed by the URL as text.
+                """
                 url = match.group(2).strip()
                 label = match.group(1)
                 allowed = ("http://", "https://", "mailto:", "ftp://")

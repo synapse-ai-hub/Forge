@@ -79,7 +79,16 @@ _HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 
 def _prompt(label: str, *, required: bool = False, default: str = "") -> str:
-    """Ask for a text value. Loop until non-empty if *required*."""
+    """Ask for a text value. Loop until non-empty if *required*.
+
+    Args:
+        label: Text shown to the user.
+        required: True to ask again until the answer is not empty.
+        default: Value used when the answer is empty.
+
+    Returns:
+        The answer of the user.
+    """
     hint = f" [{default}]" if default else ""
     suffix = " *" if required else ""
     while True:
@@ -116,7 +125,14 @@ def _prompt_hex(label: str, *, required: bool = False) -> str:
 
 
 def _resolve_logo(raw: str) -> Path:
-    """Resolve and validate the logo path."""
+    """Resolve and validate the logo path.
+
+    Args:
+        raw: Path typed by the user.
+
+    Returns:
+        The resolved path of the logo.
+    """
     p = Path(raw).resolve()
     if not p.is_file():
         print(f"  ⚠ Archivo no encontrado: {p}")

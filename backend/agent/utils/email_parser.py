@@ -12,7 +12,7 @@ import calendar
 import os
 import re
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, tzinfo
 
 _current_dir = os.path.dirname(os.path.abspath(__file__))
 _project_root = os.path.dirname(os.path.dirname(_current_dir))
@@ -48,7 +48,7 @@ def decode_mime_header(value: str | None) -> str:
     return " ".join(decoded).strip()
 
 
-def _local_tz():
+def _local_tz() -> tzinfo | None:
     """Return the server's local timezone (tzinfo).
 
     Returns:

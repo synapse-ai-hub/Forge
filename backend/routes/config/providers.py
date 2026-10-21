@@ -80,6 +80,9 @@ async def list_providers() -> JSONResponse:
     Providers and their model lists are resolved once at application startup
     and persisted in the ``providers`` table, so this endpoint serves them
     from SQLite without per-request network calls.
+
+    Returns:
+        JSON response with the providers.
     """
     providers = session_manager.get_providers() if session_manager is not None else []
     available = [{"provider": p["provider"], "label": p["label"]} for p in providers]
@@ -102,6 +105,9 @@ async def list_provider_keys() -> JSONResponse:
 
     Only availability status is exposed — the key material never leaves
     the backend.
+
+    Returns:
+        JSON response with the availability of each provider.
     """
     from backend.agent.utils import provider_keys
 
@@ -143,8 +149,14 @@ async def save_provider_key(provider: str, data: dict[str, Any]) -> JSONResponse
     Body: ``{"api_key": "..."}``. Chat providers are validated against
     the live API first; decision-only providers (any catalog provider
     outside the chat registry) are stored directly — their gateways
-    expose only System One, with nothing to validate against. Same
-    table, same endpoint: a decision provider is just another provider.
+    expose only System One endpoints that cannot validate a key.
+
+    Args:
+        provider: Provider id.
+        data: Request body.
+
+    Returns:
+        JSON response with the result.
     """
     from backend.agent.utils import provider_keys
 
@@ -189,6 +201,12 @@ async def delete_provider_key(provider: str) -> JSONResponse:
     After deletion the client becomes unavailable and the providers cache
     is refreshed so the provider disappears from the selectable list.
     Decision-only providers are deleted from the same table.
+
+    Args:
+        provider: Provider id.
+
+    Returns:
+        JSON response with the result.
     """
     from backend.agent.utils import provider_keys
 

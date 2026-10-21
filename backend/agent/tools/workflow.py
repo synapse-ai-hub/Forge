@@ -9,6 +9,7 @@ logger = logging.getLogger(__name__)
 
 
 class WorkflowMixin:
+    """Native tool ``workflow``: run a saved workflow and return its result."""
     async def workflow(self, name: str) -> dict:
         """Run a saved workflow and return its result.
 

@@ -24,7 +24,11 @@ _TASK_ID_RE = re.compile(r'<(?:task|workflow)\s+id="([^"]+)"')
 
 
 def _now() -> str:
-    """Return the current local time in the format used by ``created_at``."""
+    """Get the current local time in the format used by ``created_at``.
+
+    Returns:
+        The time in ISO format.
+    """
     return datetime.now().isoformat()
 
 
@@ -167,7 +171,15 @@ def load_open_frontier(session_id: str) -> list[dict[str, Any]]:
 
 
 def _user_text(session_id: str, turn_number: int) -> str:
-    """Return the user message content of a turn (empty string if none)."""
+    """Read the user message of a turn.
+
+    Args:
+        session_id: Session identifier.
+        turn_number: Turn of the session.
+
+    Returns:
+        The content of the message, or an empty string if none.
+    """
     try:
         with db_transaction() as conn:
             cur = conn.execute(

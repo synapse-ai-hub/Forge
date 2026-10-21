@@ -22,6 +22,8 @@ sys.path.insert(
 
 from backend.agent.ddl_setup import setup_database
 from backend.agent.utils import model_catalog
+from pathlib import Path
+from typing import Any
 
 _SEED_ROWS = [
     # (provider, model_id, reasoning, reasoning_options, npm)
@@ -72,8 +74,16 @@ _SEED_ROWS = [
 
 
 @pytest.fixture()
-def catalog_db(tmp_path, monkeypatch):
-    """Create an isolated catalog DB and patch the module connection."""
+def catalog_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
+    """Create an isolated catalog DB and patch the module connection.
+
+    Args:
+        tmp_path: Temporary directory of the test.
+        monkeypatch: Pytest monkeypatch fixture.
+
+    Returns:
+        The path of the isolated catalog database.
+    """
     db_path = str(tmp_path / "test_catalog.db")
     conn = sqlite3.connect(db_path)
     try:
@@ -91,7 +101,12 @@ def catalog_db(tmp_path, monkeypatch):
     finally:
         conn.close()
 
-    def _fake_connect():
+    def _fake_connect() -> sqlite3.Connection:
+        """Open the isolated catalog database.
+
+        Returns:
+            A connection with ``sqlite3.Row`` rows.
+        """
         fake = sqlite3.connect(db_path)
         fake.row_factory = sqlite3.Row
         return fake
@@ -100,8 +115,18 @@ def catalog_db(tmp_path, monkeypatch):
     return db_path
 
 
-def tr(provider, value, model="", budget=None):
-    """Call the real translator with explicit kwargs."""
+def tr(provider: str, value: Any, model: str = "", budget: int | None = None) -> Any:
+    """Call the real translator with explicit kwargs.
+
+    Args:
+        provider: Provider id.
+        value: Reasoning value the user chose.
+        model: Model id.
+        budget: Token budget for reasoning, if any.
+
+    Returns:
+        What ``model_catalog.translate_reasoning`` returns.
+    """
     return model_catalog.translate_reasoning(
         provider=provider,
         reasoning_value=value,
@@ -112,12 +137,22 @@ def tr(provider, value, model="", budget=None):
 
 # --- Groq (plain OpenAI-compatible gateway) ---
 
-def test_groq_effort_uses_string_shape(catalog_db):
+def test_groq_effort_uses_string_shape(catalog_db: str) -> None:
+    """Groq effort uses string shape.
+
+    Args:
+        catalog_db: Path of the isolated catalog database.
+    """
     assert tr("groq", "high", "openai/gpt-oss-120b") == {"reasoning_effort": "high"}
 
 
-def test_groq_off_variants(catalog_db):
+def test_groq_off_variants(catalog_db: str) -> None:
     # gpt-oss only accepts low/medium/high: "off" sends nothing.
+    """Groq off variants.
+
+    Args:
+        catalog_db: Path of the isolated catalog database.
+    """
     for value in ("off", "none", False, "false"):
         assert tr("groq", value, "openai/gpt-oss-120b") == {}
     # qwen on groq accepts "none": "off" maps to it.
@@ -127,27 +162,52 @@ def test_groq_off_variants(catalog_db):
         }
 
 
-def test_groq_default_variants_send_nothing(catalog_db):
+def test_groq_default_variants_send_nothing(catalog_db: str) -> None:
+    """Groq default variants send nothing.
+
+    Args:
+        catalog_db: Path of the isolated catalog database.
+    """
     for value in (None, "default", "", True, "on", "true"):
         assert tr("groq", value, "openai/gpt-oss-120b") == {}
 
 
-def test_groq_unlisted_value_sends_nothing(catalog_db):
+def test_groq_unlisted_value_sends_nothing(catalog_db: str) -> None:
+    """Groq unlisted value sends nothing.
+
+    Args:
+        catalog_db: Path of the isolated catalog database.
+    """
     assert tr("groq", "auto", "openai/gpt-oss-120b") == {}
     assert tr("groq", "xhigh", "openai/gpt-oss-120b") == {}
     assert tr("groq", 1, "openai/gpt-oss-120b") == {}
 
 
-def test_groq_non_reasoning_model_sends_nothing(catalog_db):
+def test_groq_non_reasoning_model_sends_nothing(catalog_db: str) -> None:
+    """Groq non reasoning model sends nothing.
+
+    Args:
+        catalog_db: Path of the isolated catalog database.
+    """
     assert tr("groq", "high", "llama-3.3-70b-versatile") == {}
 
 
-def test_groq_unknown_model_uses_gateway_fallback(catalog_db):
+def test_groq_unknown_model_uses_gateway_fallback(catalog_db: str) -> None:
+    """Groq unknown model uses gateway fallback.
+
+    Args:
+        catalog_db: Path of the isolated catalog database.
+    """
     assert tr("groq", "low", "some-future-model") == {"reasoning_effort": "low"}
     assert tr("groq", "off", "some-future-model") == {"reasoning_effort": "none"}
 
 
-def test_translate_malformed_options_row_uses_gateway_default(catalog_db):
+def test_translate_malformed_options_row_uses_gateway_default(catalog_db: str) -> None:
+    """Translate malformed options row uses gateway default.
+
+    Args:
+        catalog_db: Path of the isolated catalog database.
+    """
     conn = sqlite3.connect(catalog_db)
     try:
         conn.execute(
@@ -161,7 +221,12 @@ def test_translate_malformed_options_row_uses_gateway_default(catalog_db):
     assert tr("groq", "high", "bad-model") == {"reasoning_effort": "high"}
 
 
-def test_translate_null_options_row_uses_gateway_default(catalog_db):
+def test_translate_null_options_row_uses_gateway_default(catalog_db: str) -> None:
+    """Translate null options row uses gateway default.
+
+    Args:
+        catalog_db: Path of the isolated catalog database.
+    """
     conn = sqlite3.connect(catalog_db)
     try:
         conn.execute(
@@ -177,20 +242,35 @@ def test_translate_null_options_row_uses_gateway_default(catalog_db):
 
 # --- OpenRouter gateway (reasoning object) ---
 
-def test_openrouter_effort_uses_object_shape(catalog_db):
+def test_openrouter_effort_uses_object_shape(catalog_db: str) -> None:
+    """Openrouter effort uses object shape.
+
+    Args:
+        catalog_db: Path of the isolated catalog database.
+    """
     assert tr("openrouter", "medium", "openai/gpt-oss-120b") == {
         "reasoning": {"effort": "medium"}
     }
 
 
-def test_openrouter_off_excludes_reasoning(catalog_db):
+def test_openrouter_off_excludes_reasoning(catalog_db: str) -> None:
+    """Openrouter off excludes reasoning.
+
+    Args:
+        catalog_db: Path of the isolated catalog database.
+    """
     assert tr("openrouter", "off", "openai/gpt-oss-120b") == {
         "reasoning": {"exclude": True}
     }
 
 
-def test_openrouter_budget_model(catalog_db):
+def test_openrouter_budget_model(catalog_db: str) -> None:
     # Realistic call: default reasoning (True) + explicit budget.
+    """Openrouter budget model.
+
+    Args:
+        catalog_db: Path of the isolated catalog database.
+    """
     assert tr("openrouter", True, "qwen/qwen3.7-flash", budget=5000) == {
         "reasoning": {"max_tokens": 5000}
     }
@@ -199,13 +279,23 @@ def test_openrouter_budget_model(catalog_db):
     }
 
 
-def test_openrouter_off_wins_over_budget(catalog_db):
+def test_openrouter_off_wins_over_budget(catalog_db: str) -> None:
+    """Openrouter off wins over budget.
+
+    Args:
+        catalog_db: Path of the isolated catalog database.
+    """
     assert tr("openrouter", "off", "qwen/qwen3.7-flash", budget=5000) == {
         "reasoning": {"exclude": True}
     }
 
 
-def test_openrouter_budget_range_reaches_options(catalog_db):
+def test_openrouter_budget_range_reaches_options(catalog_db: str) -> None:
+    """Openrouter budget range reaches options.
+
+    Args:
+        catalog_db: Path of the isolated catalog database.
+    """
     opts = model_catalog.get_reasoning_options("openrouter", "google/gemini-2.5-pro")
     assert opts["reasoning_type"] == "budget_tokens"
     assert opts["budget_min"] == 128
@@ -215,7 +305,12 @@ def test_openrouter_budget_range_reaches_options(catalog_db):
     }
 
 
-def test_openrouter_google_model_does_not_use_thinking_config(catalog_db):
+def test_openrouter_google_model_does_not_use_thinking_config(catalog_db: str) -> None:
+    """Openrouter google model does not use thinking config.
+
+    Args:
+        catalog_db: Path of the isolated catalog database.
+    """
     result = tr(
         "openrouter", "high", "google/gemini-3.1-pro-preview"
     )
@@ -223,15 +318,25 @@ def test_openrouter_google_model_does_not_use_thinking_config(catalog_db):
     assert "thinking_config" not in result
 
 
-def test_openrouter_toggle_only_model(catalog_db):
+def test_openrouter_toggle_only_model(catalog_db: str) -> None:
+    """Openrouter toggle only model.
+
+    Args:
+        catalog_db: Path of the isolated catalog database.
+    """
     assert tr("openrouter", "default", "qwen/qwen3-235b-a22b") == {}
     assert tr("openrouter", "off", "qwen/qwen3-235b-a22b") == {
         "reasoning": {"exclude": True}
     }
 
 
-def test_openrouter_no_control_model_sends_nothing(catalog_db):
+def test_openrouter_no_control_model_sends_nothing(catalog_db: str) -> None:
     # deepseek-r1 via OpenRouter declares no caller control ([]).
+    """Openrouter no control model sends nothing.
+
+    Args:
+        catalog_db: Path of the isolated catalog database.
+    """
     assert tr("openrouter", "high", "deepseek/deepseek-r1") == {}
     assert tr("openrouter", True, "deepseek/deepseek-r1", budget=5000) == {}
     assert tr("openrouter", "off", "deepseek/deepseek-r1") == {
@@ -239,75 +344,140 @@ def test_openrouter_no_control_model_sends_nothing(catalog_db):
     }
 
 
-def test_openrouter_unknown_model_uses_gateway_shape(catalog_db):
+def test_openrouter_unknown_model_uses_gateway_shape(catalog_db: str) -> None:
+    """Openrouter unknown model uses gateway shape.
+
+    Args:
+        catalog_db: Path of the isolated catalog database.
+    """
     assert tr("openrouter", "high", "some-future-model") == {
         "reasoning": {"effort": "high"}
     }
 
 
-def test_openrouter_effort_on_budget_only_model(catalog_db):
+def test_openrouter_effort_on_budget_only_model(catalog_db: str) -> None:
     # OpenRouter converts effort automatically for budget-based models.
+    """Openrouter effort on budget only model.
+
+    Args:
+        catalog_db: Path of the isolated catalog database.
+    """
     assert tr("openrouter", "high", "google/gemini-2.5-pro") == {
         "reasoning": {"effort": "high"}
     }
 
 
-def test_openrouter_budget_on_effort_only_model(catalog_db):
+def test_openrouter_budget_on_effort_only_model(catalog_db: str) -> None:
     # max_tokens is ignored when the model does not support it.
+    """Openrouter budget on effort only model.
+
+    Args:
+        catalog_db: Path of the isolated catalog database.
+    """
     assert tr("openrouter", True, "openai/gpt-oss-120b", budget=5000) == {
         "reasoning": {"max_tokens": 5000}
     }
 
 
-def test_openrouter_budget_on_toggle_only_model(catalog_db):
+def test_openrouter_budget_on_toggle_only_model(catalog_db: str) -> None:
+    """Openrouter budget on toggle only model.
+
+    Args:
+        catalog_db: Path of the isolated catalog database.
+    """
     assert tr("openrouter", True, "qwen/qwen3-235b-a22b", budget=5000) == {}
 
 
 # --- Google direct gateway ---
 
-def test_google_effort_uses_thinking_level(catalog_db):
+def test_google_effort_uses_thinking_level(catalog_db: str) -> None:
+    """Google effort uses thinking level.
+
+    Args:
+        catalog_db: Path of the isolated catalog database.
+    """
     assert tr("google", "high", "gemini-3.1-pro-preview") == {
         "thinking_config": {"thinking_level": "high"}
     }
 
 
-def test_google_effort_outside_values_sends_nothing(catalog_db):
+def test_google_effort_outside_values_sends_nothing(catalog_db: str) -> None:
+    """Google effort outside values sends nothing.
+
+    Args:
+        catalog_db: Path of the isolated catalog database.
+    """
     assert tr("google", "xhigh", "gemini-3.1-pro-preview") == {}
 
 
-def test_google_budget_uses_thinking_budget(catalog_db):
+def test_google_budget_uses_thinking_budget(catalog_db: str) -> None:
+    """Google budget uses thinking budget.
+
+    Args:
+        catalog_db: Path of the isolated catalog database.
+    """
     assert tr("google", True, "gemini-2.5-flash", budget=1000) == {
         "thinking_config": {"thinking_budget": 1000}
     }
 
 
-def test_google_budget_on_level_model_uses_thinking_budget(catalog_db):
+def test_google_budget_on_level_model_uses_thinking_budget(catalog_db: str) -> None:
+    """Google budget on level model uses thinking budget.
+
+    Args:
+        catalog_db: Path of the isolated catalog database.
+    """
     assert tr("google", True, "gemini-3.1-pro-preview", budget=1000) == {
         "thinking_config": {"thinking_budget": 1000}
     }
 
 
-def test_google_effort_on_budget_model_sends_nothing(catalog_db):
+def test_google_effort_on_budget_model_sends_nothing(catalog_db: str) -> None:
     # Gemini 2.5 has no thinking_level control.
+    """Google effort on budget model sends nothing.
+
+    Args:
+        catalog_db: Path of the isolated catalog database.
+    """
     assert tr("google", "high", "gemini-2.5-flash") == {}
 
 
-def test_google_off_disables_thinking(catalog_db):
+def test_google_off_disables_thinking(catalog_db: str) -> None:
+    """Google off disables thinking.
+
+    Args:
+        catalog_db: Path of the isolated catalog database.
+    """
     assert tr("google", "off", "gemini-2.5-flash") == {
         "thinking_config": {"thinking_budget": 0}
     }
 
 
-def test_google_off_on_level_model_sends_nothing(catalog_db):
+def test_google_off_on_level_model_sends_nothing(catalog_db: str) -> None:
+    """Google off on level model sends nothing.
+
+    Args:
+        catalog_db: Path of the isolated catalog database.
+    """
     assert tr("google", "off", "gemini-3.1-pro-preview") == {}
 
 
-def test_google_default_sends_nothing(catalog_db):
+def test_google_default_sends_nothing(catalog_db: str) -> None:
+    """Google default sends nothing.
+
+    Args:
+        catalog_db: Path of the isolated catalog database.
+    """
     assert tr("google", "default", "gemini-3.1-pro-preview") == {}
     assert tr("google", None, "gemini-3.1-pro-preview") == {}
 
 
-def test_google_unknown_model_uses_gateway_shape(catalog_db):
+def test_google_unknown_model_uses_gateway_shape(catalog_db: str) -> None:
+    """Google unknown model uses gateway shape.
+
+    Args:
+        catalog_db: Path of the isolated catalog database.
+    """
     assert tr("google", "high", "some-future-model") == {
         "thinking_config": {"thinking_level": "high"}
     }
@@ -319,7 +489,12 @@ def test_google_unknown_model_uses_gateway_shape(catalog_db):
     }
 
 
-def test_google_invalid_budget_falls_back_to_effort(catalog_db):
+def test_google_invalid_budget_falls_back_to_effort(catalog_db: str) -> None:
+    """Google invalid budget falls back to effort.
+
+    Args:
+        catalog_db: Path of the isolated catalog database.
+    """
     assert tr("google", "high", "gemini-2.5-flash", budget=0) == {}
     assert tr("google", "high", "gemini-2.5-flash", budget="junk") == {}
     assert tr("google", "high", "gemini-3.1-pro-preview", budget=-5) == {
@@ -329,53 +504,108 @@ def test_google_invalid_budget_falls_back_to_effort(catalog_db):
 
 # --- Other plain OpenAI-compatible gateways ---
 
-def test_deepseek_effort_uses_string_shape(catalog_db):
+def test_deepseek_effort_uses_string_shape(catalog_db: str) -> None:
+    """Deepseek effort uses string shape.
+
+    Args:
+        catalog_db: Path of the isolated catalog database.
+    """
     assert tr("deepseek", "high", "deepseek-flash") == {"reasoning_effort": "high"}
 
 
-def test_deepseek_off_sends_nothing(catalog_db):
+def test_deepseek_off_sends_nothing(catalog_db: str) -> None:
     # deepseek-flash declares no "none" value.
+    """Deepseek off sends nothing.
+
+    Args:
+        catalog_db: Path of the isolated catalog database.
+    """
     assert tr("deepseek", "off", "deepseek-flash") == {}
 
 
-def test_alibaba_effort_in_values_uses_string_shape(catalog_db):
+def test_alibaba_effort_in_values_uses_string_shape(catalog_db: str) -> None:
+    """Alibaba effort in values uses string shape.
+
+    Args:
+        catalog_db: Path of the isolated catalog database.
+    """
     assert tr("alibaba", "medium", "qwen3.8-max") == {"reasoning_effort": "medium"}
 
 
-def test_alibaba_effort_outside_values_sends_nothing(catalog_db):
+def test_alibaba_effort_outside_values_sends_nothing(catalog_db: str) -> None:
+    """Alibaba effort outside values sends nothing.
+
+    Args:
+        catalog_db: Path of the isolated catalog database.
+    """
     assert tr("alibaba", "high", "qwen3.8-max") == {}
     assert tr("alibaba", "off", "qwen3.8-max") == {}
 
 
-def test_openai_extended_levels_pass_through(catalog_db):
+def test_openai_extended_levels_pass_through(catalog_db: str) -> None:
+    """Openai extended levels pass through.
+
+    Args:
+        catalog_db: Path of the isolated catalog database.
+    """
     assert tr("openai", "xhigh", "gpt-6-astra") == {"reasoning_effort": "xhigh"}
 
 
-def test_plain_gateway_budget_has_no_generic_param(catalog_db):
+def test_plain_gateway_budget_has_no_generic_param(catalog_db: str) -> None:
+    """Plain gateway budget has no generic param.
+
+    Args:
+        catalog_db: Path of the isolated catalog database.
+    """
     assert tr("alibaba", "default", "qwen3.8-max", budget=4000) == {}
 
 
-def test_plain_gateway_effort_wins_over_budget(catalog_db):
+def test_plain_gateway_effort_wins_over_budget(catalog_db: str) -> None:
     # Plain gateways have no budget param: an explicit effort level is
     # preserved instead of being dropped.
+    """Plain gateway effort wins over budget.
+
+    Args:
+        catalog_db: Path of the isolated catalog database.
+    """
     assert tr("groq", "high", "openai/gpt-oss-120b", budget=5000) == {
         "reasoning_effort": "high"
     }
 
 
-def test_provider_without_synced_models_uses_registry_fallback(catalog_db):
+def test_provider_without_synced_models_uses_registry_fallback(catalog_db: str) -> None:
+    """Provider without synced models uses registry fallback.
+
+    Args:
+        catalog_db: Path of the isolated catalog database.
+    """
     assert tr("togetherai", "medium", "some-model") == {"reasoning_effort": "medium"}
 
 
-def test_unknown_provider_sends_nothing(catalog_db):
+def test_unknown_provider_sends_nothing(catalog_db: str) -> None:
+    """Unknown provider sends nothing.
+
+    Args:
+        catalog_db: Path of the isolated catalog database.
+    """
     assert tr("no-such-provider", "high", "any-model") == {}
 
 
-def test_empty_provider_sends_nothing(catalog_db):
+def test_empty_provider_sends_nothing(catalog_db: str) -> None:
+    """Empty provider sends nothing.
+
+    Args:
+        catalog_db: Path of the isolated catalog database.
+    """
     assert tr("", "high", "any-model") == {}
 
 
-def test_invalid_budget_falls_back_to_effort(catalog_db):
+def test_invalid_budget_falls_back_to_effort(catalog_db: str) -> None:
+    """Invalid budget falls back to effort.
+
+    Args:
+        catalog_db: Path of the isolated catalog database.
+    """
     assert tr("openrouter", "medium", "openai/gpt-oss-120b", budget=0) == {
         "reasoning": {"effort": "medium"}
     }
@@ -389,7 +619,12 @@ def test_invalid_budget_falls_back_to_effort(catalog_db):
 
 # --- Provider normalization, model_id=None, LOCAL, int values ---
 
-def test_provider_name_normalization(catalog_db):
+def test_provider_name_normalization(catalog_db: str) -> None:
+    """Provider name normalization.
+
+    Args:
+        catalog_db: Path of the isolated catalog database.
+    """
     assert tr("groq", "high", "openai/gpt-oss-120b") == {"reasoning_effort": "high"}
     assert tr("  openrouter  ", "medium", "openai/gpt-oss-120b") == {
         "reasoning": {"effort": "medium"}
@@ -399,31 +634,56 @@ def test_provider_name_normalization(catalog_db):
     }
 
 
-def test_model_id_none_skips_lookup(catalog_db):
+def test_model_id_none_skips_lookup(catalog_db: str) -> None:
+    """Model id none skips lookup.
+
+    Args:
+        catalog_db: Path of the isolated catalog database.
+    """
     assert tr("groq", "high", None) == {"reasoning_effort": "high"}
 
 
-def test_string_budget_coerced(catalog_db):
+def test_string_budget_coerced(catalog_db: str) -> None:
+    """String budget coerced.
+
+    Args:
+        catalog_db: Path of the isolated catalog database.
+    """
     assert tr("openrouter", True, "qwen/qwen3.7-flash", budget="5000") == {
         "reasoning": {"max_tokens": 5000}
     }
 
 
-def test_local_provider_sends_nothing(catalog_db):
+def test_local_provider_sends_nothing(catalog_db: str) -> None:
     # Local reasoning is handled by model_resolver, never via API kwargs.
+    """Local provider sends nothing.
+
+    Args:
+        catalog_db: Path of the isolated catalog database.
+    """
     assert tr("LOCAL", "high", "llama3") == {}
     assert tr("ollama", "high", "llama3") == {}
 
 
 # --- get_reasoning_options coverage ---
 
-def test_options_non_reasoning_model(catalog_db):
+def test_options_non_reasoning_model(catalog_db: str) -> None:
+    """Options non reasoning model.
+
+    Args:
+        catalog_db: Path of the isolated catalog database.
+    """
     opts = model_catalog.get_reasoning_options("groq", "llama-3.3-70b-versatile")
     assert opts["reasoning_supported"] is False
     assert opts["reasoning_type"] is None
 
 
-def test_options_effort_model(catalog_db):
+def test_options_effort_model(catalog_db: str) -> None:
+    """Options effort model.
+
+    Args:
+        catalog_db: Path of the isolated catalog database.
+    """
     opts = model_catalog.get_reasoning_options("groq", "openai/gpt-oss-120b")
     assert opts["reasoning_supported"] is True
     assert opts["reasoning_type"] == "effort_levels"
@@ -432,13 +692,23 @@ def test_options_effort_model(catalog_db):
     ]
 
 
-def test_options_toggle_model(catalog_db):
+def test_options_toggle_model(catalog_db: str) -> None:
+    """Options toggle model.
+
+    Args:
+        catalog_db: Path of the isolated catalog database.
+    """
     opts = model_catalog.get_reasoning_options("openrouter", "qwen/qwen3-235b-a22b")
     assert opts["reasoning_supported"] is True
     assert opts["reasoning_type"] == "boolean"
 
 
-def test_options_combined_model_reports_budget_range(catalog_db):
+def test_options_combined_model_reports_budget_range(catalog_db: str) -> None:
+    """Options combined model reports budget range.
+
+    Args:
+        catalog_db: Path of the isolated catalog database.
+    """
     opts = model_catalog.get_reasoning_options("alibaba", "qwen3.8-max")
     assert opts["reasoning_supported"] is True
     assert opts["reasoning_type"] == "budget_tokens"
@@ -447,7 +717,12 @@ def test_options_combined_model_reports_budget_range(catalog_db):
     assert [o["value"] for o in opts["reasoning_options"]] == ["default"]
 
 
-def test_options_google_budget_range(catalog_db):
+def test_options_google_budget_range(catalog_db: str) -> None:
+    """Options google budget range.
+
+    Args:
+        catalog_db: Path of the isolated catalog database.
+    """
     opts = model_catalog.get_reasoning_options("google", "gemini-2.5-flash")
     assert opts["reasoning_supported"] is True
     assert opts["reasoning_type"] == "budget_tokens"
@@ -455,14 +730,26 @@ def test_options_google_budget_range(catalog_db):
     assert opts["budget_max"] == 24576
 
 
-def test_options_unknown_model(catalog_db):
+def test_options_unknown_model(catalog_db: str) -> None:
+    """Options unknown model.
+
+    Args:
+        catalog_db: Path of the isolated catalog database.
+    """
     opts = model_catalog.get_reasoning_options("groq", "no-such-model")
     assert opts["reasoning_supported"] is None
     assert opts["reasoning_type"] is None
     assert opts["reasoning_options"] == []
 
 
-def test_options_malformed_json_row(catalog_db, tmp_path, monkeypatch):
+def test_options_malformed_json_row(catalog_db: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Options malformed json row.
+
+    Args:
+        catalog_db: Path of the isolated catalog database.
+        tmp_path: Temporary directory of the test.
+        monkeypatch: Pytest monkeypatch fixture.
+    """
     bad_path = str(tmp_path / "bad.db")
     conn = sqlite3.connect(bad_path)
     try:
@@ -477,7 +764,12 @@ def test_options_malformed_json_row(catalog_db, tmp_path, monkeypatch):
     finally:
         conn.close()
 
-    def _bad_connect():
+    def _bad_connect() -> sqlite3.Connection:
+        """Open a database that is not a valid catalog.
+
+        Returns:
+            A connection with ``sqlite3.Row`` rows.
+        """
         fake = sqlite3.connect(bad_path)
         fake.row_factory = sqlite3.Row
         return fake
@@ -491,11 +783,21 @@ def test_options_malformed_json_row(catalog_db, tmp_path, monkeypatch):
 
 # --- Streaming config ---
 
-def test_streaming_config_is_empty(catalog_db):
+def test_streaming_config_is_empty(catalog_db: str) -> None:
+    """Streaming config is empty.
+
+    Args:
+        catalog_db: Path of the isolated catalog database.
+    """
     for provider in ("groq", "openrouter", "google", "deepseek", "unknown"):
         assert model_catalog.get_reasoning_streaming_config(provider) == {}
 
 
-def test_streaming_config_ignores_argument(catalog_db):
+def test_streaming_config_ignores_argument(catalog_db: str) -> None:
+    """Streaming config ignores argument.
+
+    Args:
+        catalog_db: Path of the isolated catalog database.
+    """
     assert model_catalog.get_reasoning_streaming_config(None) == {}
     assert model_catalog.get_reasoning_streaming_config("") == {}

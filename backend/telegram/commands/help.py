@@ -8,6 +8,11 @@ class HelpCommandsMixin:
     """``/ayuda``."""
 
     async def _cmd_ayuda(self, chat_id: int) -> None:
+        """Answer ``/ayuda``: list the available commands.
+
+        Args:
+            chat_id: Telegram chat id.
+        """
         help_text = (
             "Comandos:\n"
             "/sesiones - Listar sesiones\n"

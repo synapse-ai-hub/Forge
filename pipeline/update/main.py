@@ -19,7 +19,12 @@ from ..init.venv_handler import run_ddl_setup, run_seed_collections
 
 
 def _smart_merge(backup_path: str, target_path: str) -> None:
-    """Merge two text files by combining unique lines (backup + new)."""
+    """Merge two text files by combining unique lines (backup + new).
+
+    Args:
+        backup_path: File saved in the backup.
+        target_path: File of the new template; it is rewritten with the merge.
+    """
     try:
         with open(backup_path, "r", encoding="utf-8") as f:
             backup_lines = [line.rstrip("\n") for line in f]
@@ -42,7 +47,11 @@ def _smart_merge(backup_path: str, target_path: str) -> None:
 
 
 def _get_backup_dir() -> Path:
-    """Return ``~/.config/synapseForge/backup/``, creating it if needed."""
+    """Locate the backup directory, creating it if needed.
+
+    Returns:
+        ``~/.config/synapseForge/backup/``.
+    """
     import os
     base = Path(os.getenv("XDG_CONFIG_HOME", Path.home() / ".config"))
     backup = base / "synapseForge" / "backup"
@@ -111,6 +120,9 @@ def run_update(target_dir: str) -> None:
         5. Regenerate derived files (colors.json).
         6. On failure → restore from backup, delete backup.
         7. On success → ask user whether to keep or delete the backup.
+
+    Args:
+        target_dir: Directory of the project to update.
     """
     target = Path(target_dir).resolve()
     backup_dir = _get_backup_dir()

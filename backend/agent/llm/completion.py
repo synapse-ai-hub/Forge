@@ -34,7 +34,7 @@ class CompletionMixin:
                            reasoning: bool = True,
                            budget_tokens: int | None = None,
                            provider: str | None = None,
-                           **kwargs) -> ContractResponse:
+                           **kwargs: Any) -> ContractResponse:
         """Send a chat completion and return content + tool_calls.
 
         Accepts either the classic ``prompt`` + ``system_content`` (backwards

@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 class ListDirMixin:
+    """Native tool ``list_dir``: list files and directories in a path."""
     async def list_dir(self, path: str = ".") -> dict:
             """List files and directories in a given path.
 

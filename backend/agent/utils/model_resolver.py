@@ -27,6 +27,11 @@ import sys
 from pathlib import Path
 from typing import List
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from backend.agent.agent import Agent
+
 # ---------------------------------------------------------------------------
 # Ensure the project root is in sys.path for absolute imports
 # ---------------------------------------------------------------------------
@@ -136,7 +141,7 @@ def get_ollama_context_window(model: str) -> int | None:
 # Context window detection (delegates cloud to model_catalog)
 # ---------------------------------------------------------------------------
 
-def ensure_context_window(agent, model: str) -> int | None:
+def ensure_context_window(agent: Agent, model: str) -> int | None:
     """Return the model's context window, detecting and caching it if needed.
 
     If ``agent._context_window`` is already set, returns it. Otherwise it
@@ -181,12 +186,15 @@ _vram_cache: int | None | object = None
 
 
 def get_vram_gb() -> int | None:
-    """Return the total VRAM in GB of the primary GPU, or ``None`` if unknown.
+    """Get the total VRAM of the primary GPU.
 
     Resolution order:
     1. In-memory cache.
     2. Value persisted in ``config_kv``.
     3. Detect via ``nvidia-smi`` then ``wmic`` (Windows).
+
+    Returns:
+        The VRAM in GB, or ``None`` if unknown.
     """
     global _vram_cache
     if _vram_cache is not None:

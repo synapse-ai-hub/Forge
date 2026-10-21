@@ -23,6 +23,13 @@ from backend.telegram.bot import TelegramBot
 
 
 def _create_bot() -> TelegramBot:
+    """Create the bot from the environment.
+
+    Reads ``TELEGRAM_BOT_TOKEN`` and ``TELEGRAM_ALLOWED_CHAT_IDS`` (comma-separated).
+
+    Returns:
+        The bot, not started.
+    """
     token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
     allowed_chat_ids: set[int] = set()
     for part in os.getenv("TELEGRAM_ALLOWED_CHAT_IDS", "").split(","):

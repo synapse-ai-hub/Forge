@@ -24,14 +24,30 @@ logger = logging.getLogger(__name__)
 
 
 def _to_bool(value: str | None, default: bool) -> bool:
-    """Parse a bool env var, returning ``default`` if unset."""
+    """Parse a bool env var.
+
+    Args:
+        value: The raw value, or None when unset.
+        default: Value to return when it is unset.
+
+    Returns:
+        The parsed bool, or ``default`` if unset.
+    """
     if value is None:
         return default
     return value.strip().lower() in ("1", "true", "yes", "on")
 
 
 def _to_int(value: str | None, default: int) -> int:
-    """Parse an int env var, returning ``default`` if unset/invalid."""
+    """Parse an int env var.
+
+    Args:
+        value: The raw value, or None when unset.
+        default: Value to return when it is unset or invalid.
+
+    Returns:
+        The parsed int, or ``default`` if unset/invalid.
+    """
     if value is None:
         return default
     try:
@@ -42,7 +58,15 @@ def _to_int(value: str | None, default: int) -> int:
 
 
 def _to_float(value: str | None, default: float) -> float:
-    """Parse a float env var, returning ``default`` if unset/invalid."""
+    """Parse a float env var.
+
+    Args:
+        value: The raw value, or None when unset.
+        default: Value to return when it is unset or invalid.
+
+    Returns:
+        The parsed float, or ``default`` if unset/invalid.
+    """
     if value is None:
         return default
     try:
@@ -90,15 +114,12 @@ class CompactionConfig:
     def from_env(cls) -> "CompactionConfig":
         """Build a config from environment variables.
 
-        Reads:
-        - ``AGENT_COMPACTION_AUTO``
-        - ``AGENT_COMPACTION_PRUNE``
-        - ``AGENT_COMPACTION_TAIL_TURNS``
-        - ``AGENT_COMPACTION_PRESERVE_RECENT_TOKENS``
-        - ``AGENT_COMPACTION_RESERVED``
-        - ``AGENT_COMPACTION_TRIGGER_THRESHOLD``
-        - ``AGENT_COMPACTION_STRATEGY``
-        - ``AGENT_COMPACTION_OPTIONS`` (comma-separated)
+        Reads the ``AGENT_COMPACTION_*`` variables: ``AUTO``, ``PRUNE``,
+        ``TAIL_TURNS``, ``PRESERVE_RECENT_TOKENS``, ``RESERVED`` and
+        ``TRIGGER_THRESHOLD``.
+
+        Returns:
+            The configuration.
         """
         strategy = os.getenv("AGENT_COMPACTION_STRATEGY", "original").strip()
         if strategy not in VALID_STRATEGIES:
@@ -129,7 +150,11 @@ class CompactionConfig:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        """Return a plain dict representation (useful for logging)."""
+        """Convert to a plain dict (useful for logging).
+
+        Returns:
+            The configuration as a dict.
+        """
         return {
             "auto": self.auto,
             "prune": self.prune,
@@ -163,6 +188,12 @@ class SessionContext:
         Expected keys (all optional):
         - ``context_limit`` (int)
         - ``max_context_tokens`` (int)
+
+        Args:
+            metadata: Metadata of the session, or None.
+
+        Returns:
+            The session context.
         """
         if not metadata:
             return cls()
@@ -172,7 +203,11 @@ class SessionContext:
         )
 
     def to_metadata(self) -> dict[str, Any]:
-        """Return a dict suitable for storing in session metadata."""
+        """Convert to a dict suitable for storing in session metadata.
+
+        Returns:
+            The metadata dict.
+        """
         data: dict[str, Any] = {}
         if self.context_limit is not None:
             data["context_limit"] = self.context_limit

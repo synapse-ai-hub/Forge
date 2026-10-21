@@ -78,7 +78,7 @@ class AddUrlRequest(BaseModel):
 
 
 @router.post("/collections")
-async def create_collection(req: CreateCollectionRequest):
+async def create_collection(req: CreateCollectionRequest) -> dict:
     """Create a new vector collection.
 
     Args:
@@ -116,7 +116,7 @@ async def create_collection(req: CreateCollectionRequest):
 
 
 @router.get("/collections")
-async def list_collections():
+async def list_collections() -> dict:
     """List all available collections.
 
     Returns:
@@ -149,7 +149,7 @@ async def list_collections():
 
 
 @router.get("/collections/embedding-compatibility")
-async def get_embedding_compatibility():
+async def get_embedding_compatibility() -> dict:
     """Classify collections by embedding-model compatibility.
 
     Collections created with an older embedding model hold vectors
@@ -176,7 +176,7 @@ async def get_embedding_compatibility():
 
 
 @router.post("/collections/{name}/reindex")
-async def reindex_collection_endpoint(name: str):
+async def reindex_collection_endpoint(name: str) -> dict:
     """Reindex a collection with the current embedding model.
 
     Reads every stored chunk, embeds everything up front (an embedding
@@ -218,7 +218,7 @@ async def reindex_collection_endpoint(name: str):
 
 
 @router.delete("/collections/{name}")
-async def delete_collection(name: str):
+async def delete_collection(name: str) -> dict:
     """Delete a collection and all its data.
 
     Args:
@@ -253,10 +253,16 @@ async def delete_collection(name: str):
 
 
 def _source_of(meta: dict[str, Any] | None) -> tuple[str, str]:
-    """Return the ``(kind, name)`` source a chunk came from.
+    """Find the source a chunk came from.
 
     Files carry ``filename`` and web pages ``url``. Chunks with neither
     (collections created by other means) are grouped under ``("other", "")``.
+
+    Args:
+        meta: Metadata of the chunk.
+
+    Returns:
+        The ``(kind, name)`` of the source.
     """
     meta = meta or {}
     if meta.get("url"):
@@ -267,7 +273,15 @@ def _source_of(meta: dict[str, Any] | None) -> tuple[str, str]:
 
 
 def _list_sources_sync(db: VectorDB, name: str) -> list[dict[str, Any]]:
-    """Group the chunks of a collection by source (blocking)."""
+    """Group the chunks of a collection by source (blocking).
+
+    Args:
+        db: The vector database.
+        name: Collection name.
+
+    Returns:
+        One dict per source with its kind, name and number of chunks.
+    """
     data = db.get_collection(name).get(include=["metadatas"])
     counts: dict[tuple[str, str], int] = {}
     for meta in data.get("metadatas") or []:
@@ -280,7 +294,17 @@ def _list_sources_sync(db: VectorDB, name: str) -> list[dict[str, Any]]:
 
 
 def _delete_source_sync(db: VectorDB, name: str, kind: str, source: str) -> int:
-    """Delete every chunk of one source (blocking). Returns the deleted count."""
+    """Delete every chunk of one source (blocking).
+
+    Args:
+        db: The vector database.
+        name: Collection name.
+        kind: Kind of the source (file, url or other).
+        source: Name of the source.
+
+    Returns:
+        The number of deleted chunks.
+    """
     data = db.get_collection(name).get(include=["metadatas"])
     ids = [
         chunk_id
@@ -293,7 +317,7 @@ def _delete_source_sync(db: VectorDB, name: str, kind: str, source: str) -> int:
 
 
 @router.get("/collections/{name}/sources")
-async def list_sources(name: str):
+async def list_sources(name: str) -> dict:
     """List the sources (files and web pages) of a collection.
 
     Args:
@@ -329,7 +353,7 @@ async def list_sources(name: str):
 
 
 @router.delete("/collections/{name}/sources")
-async def delete_source(name: str, kind: str, source: str = ""):
+async def delete_source(name: str, kind: str, source: str = "") -> dict:
     """Delete one source (all its chunks) from a collection.
 
     Args:
@@ -371,7 +395,7 @@ async def delete_source(name: str, kind: str, source: str = ""):
 
 
 @router.post("/collections/{name}/files")
-async def upload_files(name: str, files: list[UploadFile] = File(...)):
+async def upload_files(name: str, files: list[UploadFile] = File(...)) -> dict:
     """Upload files to a collection: extract text, chunk and store.
 
     Args:
@@ -488,7 +512,7 @@ async def upload_files(name: str, files: list[UploadFile] = File(...)):
 
 
 @router.post("/collections/{name}/urls")
-async def add_url(name: str, req: AddUrlRequest):
+async def add_url(name: str, req: AddUrlRequest) -> dict:
     """Add a web page to a collection.
 
     Fetches the content, chunks it like any other data and stores it.

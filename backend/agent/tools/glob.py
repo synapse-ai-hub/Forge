@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 class GlobMixin:
+    """Native tool ``glob``: fast file pattern matching."""
     async def glob(self, pattern: str, path: str | None = None) -> dict:
             """Fast file pattern matching tool.
 

@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 class ReferenceMixin:
+    """Native tool ``reference``: load a reference file from the directory of a skill."""
     async def reference(self, skill: str, file: str) -> dict:
             """Load a specific reference file from a skill's directory.
 

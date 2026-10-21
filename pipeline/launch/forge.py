@@ -59,11 +59,24 @@ BACKEND_KEEP_MD_TXT_PATHS: set[str] = {
 # Logging helper
 # ---------------------------------------------------------------------------
 def _log(msg: str, *, err: bool = False) -> None:
+    """Print a build message.
+
+    Args:
+        msg: Message to print.
+        err: True to print it as an error.
+    """
     tag = "ERR" if err else "INF"
     print(f"[{tag}] {msg}", file=sys.stderr if err else sys.stdout)
 
 
 def _step(n: int, total: int, label: str) -> None:
+    """Print the header of a build step.
+
+    Args:
+        n: Number of the step.
+        total: Total number of steps.
+        label: Name of the step.
+    """
     print(f"\n{'=' * 60}")
     print(f"  Step {n}/{total}: {label}")
     print(f"{'=' * 60}")
@@ -73,7 +86,14 @@ def _step(n: int, total: int, label: str) -> None:
 # Path helpers
 # ---------------------------------------------------------------------------
 def _repo_name(repo_path: str) -> str:
-    """Extract the last directory component as the repo name."""
+    """Extract the last directory component as the repo name.
+
+    Args:
+        repo_path: Path of the repository.
+
+    Returns:
+        The name of the repository folder.
+    """
     return Path(repo_path).resolve().name
 
 
@@ -81,7 +101,14 @@ def _repo_name(repo_path: str) -> str:
 # Version extraction from frontend/package.json
 # ---------------------------------------------------------------------------
 def _get_version(repo_path: str) -> str:
-    """Read version from frontend/package.json, fallback to '0.1.0'."""
+    """Read the version from frontend/package.json, falling back to '0.1.0'.
+
+    Args:
+        repo_path: Path of the repository.
+
+    Returns:
+        The version text.
+    """
     pkg = Path(repo_path) / "frontend" / "package.json"
     if pkg.is_file():
         try:
@@ -96,7 +123,12 @@ def _get_version(repo_path: str) -> str:
 # Step: Download and setup embedded Python
 # ---------------------------------------------------------------------------
 def _download_file(url: str, dest: Path) -> None:
-    """Download a file with progress indicator."""
+    """Download a file with progress indicator.
+
+    Args:
+        url: URL to download.
+        dest: File to write.
+    """
     _log(f"  Downloading {url.split('/')[-1]} ...")
     try:
         urllib.request.urlretrieve(url, str(dest))
@@ -108,7 +140,12 @@ def _download_file(url: str, dest: Path) -> None:
 def _setup_embedded_python(repo_path: str, build_dir: Path) -> Path:
     """Download, configure, and install deps into embedded Python.
 
-    Returns the path to the configured python/ directory.
+    Args:
+        repo_path: Path of the repository.
+        build_dir: Directory where the build is assembled.
+
+    Returns:
+        The path to the configured python/ directory.
     """
     python_dir = build_dir / "dist" / "python"
     if python_dir.is_dir():
@@ -203,7 +240,11 @@ def _setup_embedded_python(repo_path: str, build_dir: Path) -> Path:
 # Step 1: Build frontend
 # ---------------------------------------------------------------------------
 def _build_frontend(repo_path: str) -> None:
-    """Run npm run build in the repo's frontend directory."""
+    """Run npm run build in the repo's frontend directory.
+
+    Args:
+        repo_path: Path of the repository.
+    """
     frontend_dir = Path(repo_path) / "frontend"
     dist_dir = frontend_dir / "dist"
 
@@ -245,7 +286,11 @@ def _build_frontend(repo_path: str) -> None:
 # Step 2: Compile backend to .pyc
 # ---------------------------------------------------------------------------
 def _compile_backend(repo_path: str) -> None:
-    """Compile all .py files to legacy .pyc alongside the originals."""
+    """Compile all .py files to legacy .pyc alongside the originals.
+
+    Args:
+        repo_path: Path of the repository.
+    """
     backend_dir = Path(repo_path) / "backend"
     if not backend_dir.is_dir():
         _log(f"backend/ not found at {backend_dir}", err=True)
@@ -274,7 +319,12 @@ def _clean_backend_copy(repo_path: str, *, compiled: bool) -> Path:
     When ``compiled`` is True only ``.pyc`` files are kept (``.py`` excluded).
     Otherwise the original ``.py`` sources are kept (``.pyc`` excluded).
 
-    Returns the path to the clean backend directory.
+    Args:
+        repo_path: Path of the repository.
+        compiled: True to keep only the compiled files.
+
+    Returns:
+        The path to the clean backend directory.
     """
     src = Path(repo_path) / "backend"
     dst = Path(repo_path) / BUILD_DIR_NAME / "dist" / "backend"
@@ -332,7 +382,12 @@ def _clean_backend_copy(repo_path: str, *, compiled: bool) -> Path:
 def _generate_launcher(repo_path: str, exe_name: str) -> str:
     """Generate a customized launcher.py from the template.
 
-    Returns the path to the generated launcher file.
+    Args:
+        repo_path: Path of the repository.
+        exe_name: Name of the executable.
+
+    Returns:
+        The path to the generated launcher file.
     """
     template_file = TEMPLATES_DIR / "launcher.py"
     if not template_file.is_file():
@@ -361,7 +416,13 @@ def _generate_launcher(repo_path: str, exe_name: str) -> str:
 def _build_executable(repo_path: str, launcher_path: str, exe_name: str) -> Path:
     """Run PyInstaller to create the executable.
 
-    Returns the path to the generated executable.
+    Args:
+        repo_path: Path of the repository.
+        launcher_path: Path of the launcher file.
+        exe_name: Name of the executable.
+
+    Returns:
+        The path to the generated executable.
     """
     build_dir = Path(repo_path) / BUILD_DIR_NAME
 
@@ -429,6 +490,14 @@ def _build_zip(repo_path: str, exe_path: Path, exe_name: str) -> Path:
     - .env             (from repo)
     - LICENSE          (from repo)
     - README.md        (from repo)
+
+    Args:
+        repo_path: Path of the repository.
+        exe_path: Path of the executable.
+        exe_name: Name of the executable.
+
+    Returns:
+        The path to the zip file.
     """
     repo = Path(repo_path)
     version = _get_version(repo_path)
@@ -513,7 +582,16 @@ def _build_zip(repo_path: str, exe_path: Path, exe_name: str) -> Path:
 # Cleanup
 # ---------------------------------------------------------------------------
 def _cleanup(repo_path: str, *, keep_zip: bool = True, compiled: bool = True) -> Path | None:
-    """Remove build artifacts from repo. Returns final zip path if kept."""
+    """Remove build artifacts from the repo.
+
+    Args:
+        repo_path: Path of the repository.
+        keep_zip: True to keep the generated zip.
+        compiled: True when the backend was compiled.
+
+    Returns:
+        The final zip path if kept, None otherwise.
+    """
     build_dir = Path(repo_path) / BUILD_DIR_NAME
     final_zip: Path | None = None
 
@@ -562,7 +640,8 @@ def build(
         compile_backend: Compile ``backend/`` to ``.pyc`` (default: ship
             the ``.py`` sources as-is).
 
-    Returns the path to the generated zip file, or None if build failed.
+    Returns:
+        The path to the generated zip file, or None if the build failed.
     """
     repo_path = str(Path(repo_path).resolve())
     total_steps = 7 if not skip_frontend else 6
@@ -644,6 +723,7 @@ def build(
 # CLI entry point
 # ---------------------------------------------------------------------------
 def main() -> None:
+    """Parse the command line and run the build."""
     parser = argparse.ArgumentParser(
         description="synapseForge - Build distribution zip for agent repos",
         formatter_class=argparse.RawDescriptionHelpFormatter,
