@@ -12,7 +12,7 @@ from pathlib import Path
 
 from .input_handler import get_user_input
 from .template_handler import extract_template
-from .venv_handler import setup_venv, install_requirements, run_ddl_setup
+from .venv_handler import setup_venv, install_requirements, run_ddl_setup, run_seed_collections
 from .config_handler import save_config
 from .logo_handler import handle_logo
 from .placeholder_handler import replace_all_placeholders
@@ -93,8 +93,9 @@ def run(target_dir: str, config: dict | None = None) -> None:
         replace_all_placeholders(target, config)
 
         # Step 11: Initialize database schema (ddl_setup)
-        print("\n[11/11] Initializing database schema (ddl_setup) ...")
+        print("\n[11/11] Initializing database schema (ddl_setup) and help collection ...")
         run_ddl_setup(target, venv_path)
+        run_seed_collections(target, venv_path)
 
     except Exception as exc:
         print(f"\n  ERROR: Init failed at step — {exc}")

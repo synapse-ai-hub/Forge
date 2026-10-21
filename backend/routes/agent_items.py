@@ -115,8 +115,10 @@ async def list_knowledge_collections() -> JSONResponse:
     """
     try:
         db = get_vector_db()
+        from backend.agent.utils.rag_helpers import INTERNAL_COLLECTIONS
+
         cols = db.list_collections()
-        names = [c["name"] for c in cols]
+        names = [c["name"] for c in cols if c["name"] not in INTERNAL_COLLECTIONS]
         return JSONResponse(
             status_code=200,
             content={"status": "success", "collections": names},

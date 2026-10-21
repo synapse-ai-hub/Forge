@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type ChangeEvent, type FormEvent } from "react";
-import { Database, Plus, Trash2, Upload, Link2, FolderOpen } from "lucide-react";
+import { Database, Plus, Trash2, Upload, Link2, FolderOpen, FileText, Globe } from "lucide-react";
 import { configService } from "../services/configService";
 import { API_BASE_URL } from "../config/api";
 
@@ -13,6 +13,13 @@ interface Collection {
   name: string;
   metadata?: Record<string, any> | null;
   count?: number;
+}
+
+/** Fuente de una colección: un archivo, una página web u otro origen. */
+interface Source {
+  kind: "file" | "url" | "other";
+  name: string;
+  chunks: number;
 }
 
 /** Resultado de procesar un archivo o URL. */
@@ -37,6 +44,11 @@ export function RagInterface() {
 
   // Colección seleccionada
   const [selected, setSelected] = useState<string | null>(null);
+
+  // Fuentes de la colección seleccionada
+  const [sources, setSources] = useState<Source[]>([]);
+  const [sourcesLoading, setSourcesLoading] = useState(false);
+  const [sourcesError, setSourcesError] = useState<string | null>(null);
 
   // Archivos
   const [files, setFiles] = useState<File[]>([]);
@@ -100,6 +112,71 @@ export function RagInterface() {
   useEffect(() => {
     loadCollections();
   }, [loadCollections]);
+
+  /* ---- fuentes de la colección seleccionada ----
+     Se recargan al cambiar de colección y cada vez que se recarga la lista
+     (después de subir, agregar o borrar). */
+  useEffect(() => {
+    if (!selected) {
+      setSources([]);
+      setSourcesError(null);
+      return;
+    }
+    let cancelled = false;
+    setSourcesLoading(true);
+    fetch(`${API}/rag/collections/${encodeURIComponent(selected)}/sources`)
+      .then((resp) => resp.json())
+      .then((data) => {
+        if (cancelled) return;
+        if (data.status === "success") {
+          setSources(data.data?.sources || []);
+          setSourcesError(null);
+        } else {
+          setSources([]);
+          setSourcesError(data.message || "Error al listar las fuentes.");
+        }
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        setSources([]);
+        setSourcesError("Error de conexión: " + ((e as Error)?.message || "Error desconocido"));
+      })
+      .finally(() => {
+        if (!cancelled) setSourcesLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selected, collections]);
+
+  /* ---- eliminar una fuente ---- */
+  const handleDeleteSource = useCallback(
+    async (source: Source) => {
+      if (!selected) return;
+      const label = source.kind === "other" ? "las fuentes sin origen" : `"${source.name}"`;
+      if (!window.confirm(`¿Eliminar ${label} (${source.chunks} chunks) de "${selected}"?`)) return;
+      try {
+        const query = new URLSearchParams({ kind: source.kind, source: source.name });
+        const resp = await fetch(
+          `${API}/rag/collections/${encodeURIComponent(selected)}/sources?${query.toString()}`,
+          { method: "DELETE" },
+        );
+        const data = await resp.json();
+        if (data.status === "success") {
+          setResultType("success");
+          setResultMsg(data.message || "Fuente eliminada.");
+          await loadCollections();
+        } else {
+          setResultType("error");
+          setResultMsg(data.message || "Error al eliminar la fuente.");
+        }
+      } catch (e) {
+        setResultType("error");
+        setResultMsg("Error de conexión: " + ((e as Error)?.message || "Error desconocido"));
+      }
+    },
+    [selected, loadCollections],
+  );
 
   /* ---- crear colección ---- */
   const handleCreate = useCallback(
@@ -405,7 +482,7 @@ export function RagInterface() {
               <div>
                 <h2 className="text-lg font-semibold text-app-text">{selected}</h2>
                 <p className="text-xs text-app-text-secondary">
-                  Agregá archivos o páginas web. El contenido se chunkea y se guarda en la colección.
+                  Agregá archivos o páginas web. El contenido se chunkea y se guarda en la colección. Podés ver y eliminar cada fuente abajo.
                 </p>
               </div>
 
@@ -420,6 +497,56 @@ export function RagInterface() {
                   {resultMsg}
                 </div>
               )}
+
+              {/* Fuentes de la colección */}
+              <section className="space-y-2">
+                <h3 className="text-sm font-medium text-app-text flex items-center gap-2">
+                  <FolderOpen size={14} className="text-app-primary" />
+                  Fuentes
+                  {!sourcesLoading && (
+                    <span className="text-xs font-normal text-app-text-secondary">({sources.length})</span>
+                  )}
+                </h3>
+                {sourcesLoading && <p className="text-xs text-app-text-secondary">Cargando...</p>}
+                {sourcesError && (
+                  <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                    {sourcesError}
+                  </div>
+                )}
+                {!sourcesLoading && !sourcesError && sources.length === 0 && (
+                  <p className="text-xs text-app-text-secondary">
+                    Esta colección todavía no tiene fuentes. Agregá archivos o páginas web.
+                  </p>
+                )}
+                {sources.length > 0 && (
+                  <ul className="space-y-1">
+                    {sources.map((s) => (
+                      <li
+                        key={`${s.kind}:${s.name}`}
+                        className="flex items-center gap-2 px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-sm"
+                      >
+                        {s.kind === "url" ? (
+                          <Globe size={14} className="shrink-0 text-app-primary" />
+                        ) : (
+                          <FileText size={14} className="shrink-0 text-app-primary" />
+                        )}
+                        <span className="truncate font-medium text-app-text" title={s.name}>
+                          {s.kind === "other" ? "(sin origen)" : s.name}
+                        </span>
+                        <span className="shrink-0 text-gray-400 text-xs">{s.chunks} chunk(s)</span>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteSource(s)}
+                          className="ml-auto shrink-0 text-red-500 hover:text-red-700"
+                          title="Eliminar fuente"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
 
               {/* Archivos */}
               <section className="space-y-2">

@@ -73,13 +73,21 @@ class GeminiEmbeddingFunction(EmbeddingFunction[Documents]):
         Raises:
             RuntimeError: If the Gemini API call fails.
         """
+        from google.genai import types
+
         vectors: list[list[float]] = []
         try:
             for start in range(0, len(input), _BATCH_SIZE):
                 batch = list(input[start:start + _BATCH_SIZE])
+                # gemini-embedding-2 is multimodal: a plain list in ``contents``
+                # is ONE input and returns ONE aggregated vector. Wrapping each
+                # text in its own Content gives one vector per text.
                 resp = self.client.models.embed_content(
                     model=self.model_name,
-                    contents=batch,
+                    contents=[
+                        types.Content(parts=[types.Part.from_text(text=text)])
+                        for text in batch
+                    ],
                 )
                 embeddings = resp.embeddings or []
                 if len(embeddings) != len(batch):

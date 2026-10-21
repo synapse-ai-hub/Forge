@@ -15,7 +15,7 @@ from pathlib import Path
 from ..init.template_handler import extract_template
 from ..init.config_handler import load_config, save_colors
 from ..init.placeholder_handler import replace_all_placeholders
-from ..init.venv_handler import run_ddl_setup
+from ..init.venv_handler import run_ddl_setup, run_seed_collections
 
 
 def _smart_merge(backup_path: str, target_path: str) -> None:
@@ -206,10 +206,11 @@ def run_update(target_dir: str) -> None:
         print("\n[5/6] Regenerating derived files ...")
         save_colors(target, config)
 
-        print("\n[6/6] Initializing/updating database schema (ddl_setup) ...")
+        print("\n[6/6] Initializing/updating database schema (ddl_setup) and help collection ...")
         repo_name = config.get("repo", "synapse")
         venv_path = target / f".{repo_name}"
         run_ddl_setup(target, venv_path)
+        run_seed_collections(target, venv_path)
 
     except Exception as exc:
         # ── Failure: restore from backup ──────────────────────────────

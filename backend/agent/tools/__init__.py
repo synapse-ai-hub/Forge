@@ -80,7 +80,6 @@ from backend.agent.tools.check_email import CheckEmailMixin
 from backend.agent.tools.edit import EditMixin
 from backend.agent.tools.glob import GlobMixin
 from backend.agent.tools.grep import GrepMixin
-from backend.agent.tools.help import HelpMixin
 from backend.agent.tools.list_dir import ListDirMixin
 from backend.agent.tools.query_model_capabilities import QueryModelCapabilitiesMixin
 from backend.agent.tools.rag import RagMixin
@@ -647,7 +646,6 @@ class Tools(
     EditMixin,
     GlobMixin,
     GrepMixin,
-    HelpMixin,
     ListDirMixin,
     QueryModelCapabilitiesMixin,
     RagMixin,

@@ -166,7 +166,6 @@ Todos los prompts son templates Jinja (`.jinja`) y se cargan con `agent.prompt(n
 - `mandatory.jinja` — Reglas `## MANDATORY:` inyectadas al final del system prompt de todos los agentes.
 - `seguridad.jinja` — Reglas de seguridad (prompt injection, fuga de datos, comandos y SQL); las de una tool aparecen solo si el agente la tiene. Sin modelo de decisión se renderiza como `## Seguridad` (reglas e instrucciones) en el system prompt de todos los agentes, después de `MANDATORY`. Con el modelo de decisión habilitado, el router no lo lleva y el decisor recibe las reglas y la pregunta, con el mensaje del usuario como estado.
 - `paralelizacion.jinja` — Instrucciones para emitir llamadas independientes en paralelo.
-- `help.jinja` — Documentación interna para la tool `help`.
 - `title.jinja` — Generación de títulos de sesión.
 - `create_*.jinja`, `iterate_*.jinja`, `interview_*.jinja` — Prompts de creación, iteración y entrevista vía LLM (agent, skill, tool, workflow).
 - `generate_workflow.jinja` — Generación de workflows.
@@ -361,6 +360,8 @@ El agente principal (router) usa `~/.config/synapseForge/config.yaml` para sus p
 permissions:
   tools:
     read: allow
+    rag:
+      mi_coleccion: allow
   skills:
     mi_skill: allow
   tasks:
@@ -369,10 +370,11 @@ permissions:
     reporte-diario: allow
 ```
 
-Las claves son siempre `tools`, `skills`, `tasks` y `workflows` (plural). Las skills listadas se inyectan en el system prompt del router como `## Skills Disponibles`, igual que en un sub-agente.
+Las claves son siempre `tools`, `skills`, `tasks` y `workflows` (plural); cualquier otra clave bajo `permissions` se ignora. Las colecciones RAG se permiten dentro de `tools`, como `rag: { nombre: allow }`. Las skills listadas se inyectan en el system prompt del router como `## Skills Disponibles`, igual que en un sub-agente.
 
-- Si el archivo **no existe** → el router usa las tools base (`task`, `help`, `search_memory`, `read`, `websearch`, `webfetch`) y no tiene skills.
+- Si el archivo **no existe** → el router usa las tools base (`task`, `search_memory`, `read`, `websearch`, `webfetch`) y no tiene skills.
 - Si existe → usa **solo** los permisos explícitos del yaml: no se suma ninguna tool base.
+- **Piso fijo**: con o sin yaml, el router siempre puede usar `rag` sobre las colecciones internas `help` (documentación del sistema, un documento por sección) y `agent_conversations`. Lo que el yaml liste en `rag` se suma a esas dos.
 - `task` solo está disponible si el yaml la lista en `tools` o en `tasks`; `tasks` limita a qué sub-agentes puede delegar.
 - `workflow` solo está disponible si el yaml la lista en `tools` o define `workflows`; `workflows` limita cuáles puede ejecutar. El system prompt agrega la sección `## Workflows Disponibles` con los permitidos.
 
