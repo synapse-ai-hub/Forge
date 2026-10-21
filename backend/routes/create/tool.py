@@ -10,6 +10,11 @@ from typing import Any, AsyncGenerator
 
 from fastapi.responses import StreamingResponse
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from backend.agent.agent import Agent
+
 # ---------------------------------------------------------------------------
 # Ensure project root for absolute imports
 # ---------------------------------------------------------------------------
@@ -26,7 +31,7 @@ from backend.agent.utils.create_helpers import (
 )
 from backend.instances import agent
 from backend.agent.utils.error_logger import log_error
-from backend.agent.utils.creator_runs import track_creator_run
+from backend.agent.utils.creators import track_creator_run
 from backend.routes.create.common import (
     _AGENT_TOOLS_PERMS,
     _FRIENDLY_ERROR_TOOL,
@@ -114,11 +119,14 @@ _TOOL_INTERVIEW_TOOL: dict[str, Any] = {
 
 
 @router.post("/tool")
-async def post_create_tool_stream(req: CreateToolRequest):
-    """Streaming endpoint to create an external tool via an LLM interview.
+async def post_create_tool_stream(req: CreateToolRequest) -> StreamingResponse:
+    """Stream the creation of an external tool via an LLM interview.
 
     Same contract as ``POST /api/create/skill`` but emits ``tool_action``
     and ``tool_result`` events instead of ``skill_action`` / ``skill_result``.
+
+    Args:
+        req: The creation request.
 
     Returns:
         A StreamingResponse with SSE events.
@@ -142,7 +150,11 @@ async def post_create_tool_stream(req: CreateToolRequest):
         )
 
     async def event_stream() -> AsyncGenerator[str, None]:
-        """Generate SSE events for the tool creation flow."""
+        """Generate SSE events for the tool creation flow.
+
+        Yields:
+            SSE ``data:`` lines.
+        """
         _create_model, _create_provider = resolve_create_model_provider(req.model, req.provider)
 
         # ════════════════════════════════════════════════════════════════
@@ -428,7 +440,24 @@ async def post_create_tool_stream(req: CreateToolRequest):
 
 
 # Helper para evaluar inline sin reimportar todo el módulo
-async def _evaluar_si_existe_tool_inline(tarea, tools_locales, agent, model=None, provider=None):
-    """Wrapper sobre el helper compartido."""
+async def _evaluar_si_existe_tool_inline(
+    tarea: str,
+    tools_locales: list[dict[str, Any]],
+    agent: Agent,
+    model: str | None = None,
+    provider: str | None = None,
+) -> dict | None:
+    """Check whether a task is already covered by an existing tool (wrapper of the shared helper).
+
+    Args:
+        tarea: Description of the task.
+        tools_locales: The external tools that already exist.
+        agent: Agent singleton (unused, kept for the callers).
+        model: Model to evaluate with, or None for the default.
+        provider: Provider of that model, or None for the default.
+
+    Returns:
+        The result of the shared helper.
+    """
     from backend.agent.utils.tools_helpers import _evaluar_si_existe
     return await _evaluar_si_existe(tarea, tools_locales, model, provider)
