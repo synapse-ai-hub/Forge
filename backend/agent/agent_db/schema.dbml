@@ -1,0 +1,462 @@
+// Generado por generate_schema_docs.py a partir del esquema real. No editar a mano.
+
+Table sessions {
+  id integer [pk, increment]
+  session_id text [not null, unique]
+  created_at text [not null]
+  updated_at text [not null]
+  metadata text
+  title text
+  parent_id text
+
+  indexes {
+    parent_id [name: 'idx_sessions_parent_id']
+  }
+}
+
+Table messages {
+  id integer [pk, increment]
+  session_id text [not null]
+  role text [not null]
+  content text
+  reasoning text
+  tool_calls text
+  tool_results text
+  status text
+  message text
+  prompt_tokens integer
+  completion_tokens integer
+  total_tokens integer
+  total_time real
+  time_to_first_token real
+  tool_call_id text
+  tool_name text
+  model text
+  provider text
+  cost_input real
+  cost_output real
+  cost_total real
+  turn_number integer
+  step integer [default: 0]
+  substep integer [default: 0]
+  created_at text [not null]
+
+  indexes {
+    session_id [name: 'idx_messages_session_id']
+  }
+}
+
+Table turn_latency {
+  id integer [pk, increment]
+  session_id text [not null]
+  turn_number integer [not null]
+  latency real
+
+  indexes {
+    (session_id, turn_number) [name: 'idx_turn_latency_session_turn']
+  }
+}
+
+Table config_kv {
+  key text [pk]
+  value text
+}
+
+Table providers {
+  provider text [pk]
+  label text [not null]
+  models text
+  updated_at text [not null]
+}
+
+Table provider_api_keys {
+  provider text [pk]
+  api_key_encrypted text [not null]
+  updated_at text [not null]
+}
+
+Table error_log {
+  id integer [pk, increment]
+  session_id text
+  parent_id text
+  turn_number integer
+  exception text [not null]
+  source text
+  created_at text [not null]
+
+  indexes {
+    created_at [name: 'idx_error_log_created_at']
+    session_id [name: 'idx_error_log_session_id']
+  }
+}
+
+Table context_files {
+  id integer [pk, increment]
+  filename text [not null]
+  content text [not null]
+  created_at text [not null]
+}
+
+Table attachments {
+  id integer [pk, increment]
+  session_id text [not null]
+  turn_number integer [not null]
+  file_name text [not null]
+  size integer
+  content blob
+  created_at text [not null]
+
+  indexes {
+    (session_id, turn_number) [name: 'idx_attachments_session_turn']
+  }
+}
+
+Table scheduled_tasks {
+  id text [pk]
+  name text [not null]
+  prompt text [not null]
+  time text [not null, default: `'09:00'`]
+  days text [not null, default: `'[0,1,2,3,4,5,6]'`]
+  enabled integer [not null, default: 1]
+  repetitions text
+  tool_permissions text
+  skill_permissions text
+  parameters text
+  last_run_date text
+  slot_runs text
+  created_at text [not null]
+  updated_at text [not null]
+}
+
+Table task_runs {
+  id integer [pk, increment]
+  task_id text [not null]
+  session_id text
+  status text [not null]
+  detail text
+  started_at text [not null]
+  finished_at text
+
+  indexes {
+    started_at [name: 'idx_task_runs_started_at']
+    task_id [name: 'idx_task_runs_task_id']
+  }
+}
+
+Table model_catalog {
+  provider text [not null]
+  model_id text [not null]
+  type text
+  name text
+  description text
+  family text
+  context_window integer
+  input_limit integer
+  output_limit integer
+  reasoning integer [default: 0]
+  reasoning_options text
+  tool_call integer [default: 0]
+  attachment integer [default: 0]
+  temperature integer [default: 0]
+  structured_output integer [default: 0]
+  modalities_input text
+  modalities_output text
+  cost_input real
+  cost_output real
+  cost_cache_read real
+  cost_cache_write real
+  open_weights integer [default: 0]
+  status text
+  api text
+  npm text
+  updated_at text [not null]
+
+  indexes {
+    context_window [name: 'idx_model_catalog_context']
+    reasoning [name: 'idx_model_catalog_reasoning']
+    model_id [name: 'idx_model_catalog_model']
+    provider [name: 'idx_model_catalog_provider']
+  }
+}
+
+Table decision_catalog {
+  provider text [not null]
+  model_id text [not null]
+  type text
+  name text
+  description text
+  family text
+  context_window integer
+  input_limit integer
+  output_limit integer
+  reasoning integer [default: 0]
+  reasoning_options text
+  tool_call integer [default: 0]
+  attachment integer [default: 0]
+  temperature integer [default: 0]
+  structured_output integer [default: 0]
+  modalities_input text
+  modalities_output text
+  cost_input real
+  cost_output real
+  cost_cache_read real
+  cost_cache_write real
+  open_weights integer [default: 0]
+  status text
+  api text
+  npm text
+  updated_at text [not null]
+
+  indexes {
+    type [name: 'idx_decision_catalog_type']
+    model_id [name: 'idx_decision_catalog_model']
+    provider [name: 'idx_decision_catalog_provider']
+  }
+}
+
+Table billing {
+  id integer [pk, increment]
+  provider text [not null, unique]
+  requests integer [default: 0]
+  prompt_tokens integer [default: 0]
+  completion_tokens integer [default: 0]
+  total_tokens integer [default: 0]
+  cost real [default: 0.0]
+  provider_limits text
+  created_at text [not null]
+  updated_at text [not null]
+
+  indexes {
+    provider [name: 'idx_billing_provider']
+  }
+}
+
+Table spend {
+  id integer [pk, increment]
+  provider text [not null]
+  model text [not null]
+  month text [not null]
+  requests integer [default: 0]
+  prompt_tokens integer [default: 0]
+  completion_tokens integer [default: 0]
+  total_tokens integer [default: 0]
+  cost_input real [default: 0.0]
+  cost_output real [default: 0.0]
+  cost_total real [default: 0.0]
+  updated_at text [not null]
+
+  indexes {
+    (provider, model, month) [name: 'idx_spend_provider_model']
+  }
+}
+
+Table spend_limits {
+  id integer [pk, increment]
+  provider text [not null]
+  model text
+  limit_amount real [not null]
+  created_at text [not null]
+  updated_at text [not null]
+
+  indexes {
+    (provider, model) [name: 'idx_spend_limits_provider_model']
+  }
+}
+
+Table external_usage {
+  id integer [pk, increment]
+  kind text [not null]
+  provider text [not null]
+  model text [not null]
+  units integer [default: 0]
+  prompt_tokens integer [default: 0]
+  completion_tokens integer [default: 0]
+  duration real
+  session_id text
+  turn_number integer
+  step integer
+  created_at text [not null]
+
+  indexes {
+    kind [name: 'idx_external_usage_kind']
+  }
+}
+
+Table creator_calls {
+  id integer [pk, increment]
+  caller text [not null]
+  provider text [not null]
+  model text [not null]
+  prompt_tokens integer [default: 0]
+  completion_tokens integer [default: 0]
+  total_tokens integer [default: 0]
+  total_time real
+  cost_input real [default: 0.0]
+  cost_output real [default: 0.0]
+  cost_total real [default: 0.0]
+  created_at text [not null]
+
+  indexes {
+    caller [name: 'idx_creator_calls_caller']
+  }
+}
+
+Table creator_runs {
+  id integer [pk, increment]
+  kind text [not null]
+  action text
+  item_name text
+  description text
+  status text [not null, default: `'success'`]
+  provider text
+  model text
+  llm_calls integer [not null, default: 0]
+  prompt_tokens integer [not null, default: 0]
+  completion_tokens integer [not null, default: 0]
+  total_tokens integer [not null, default: 0]
+  cost_input real [not null, default: 0.0]
+  cost_output real [not null, default: 0.0]
+  cost_total real [not null, default: 0.0]
+  duration real
+  created_at text [not null]
+  finished_at text
+
+  indexes {
+    created_at [name: 'idx_creator_runs_created_at']
+    kind [name: 'idx_creator_runs_kind']
+  }
+
+  Note: 'One row per run of a creator (agent, skill, tool or workflow creator). kind: agent | skill | tool | workflow action: question (asked the user for more information) | create | iterate | exists (the item already existed, nothing was created) status: success | error | aborted item_name: name of the item created or modified, when known. Tokens and cost add up every LLM call the run made. creator_calls keeps the detail of each call; spend is not touched here.'
+}
+
+Table step_frontier {
+  id integer [pk, increment]
+  session_id text [not null]
+  turn_number integer [not null]
+  step integer [not null, default: 0]
+  substep integer [not null, default: 0]
+  tool_call_id text
+  tool_name text [not null]
+  tool_args text
+  state text [not null, default: `'open'`]
+  child_id text
+  created_at text [not null]
+  updated_at text [not null]
+
+  indexes {
+    (session_id, turn_number) [name: 'idx_step_frontier_session_turn']
+  }
+
+  Note: 'Frontier of unsettled work units for the current step. One row per dispatched tool call, written at dispatch time (state open) and flipped to done when its result commits. Rows are only deleted when the step closes with a validated done signal; a cut flow leaves them behind so the next turn can resume from them.'
+}
+
+Table message_feedback {
+  id integer [pk, increment]
+  session_id text [not null]
+  turn_number integer [not null]
+  feedback_type text [not null]
+  model text
+  provider text
+  created_at text [not null]
+  updated_at text [not null]
+
+  indexes {
+    created_at [name: 'idx_message_feedback_created_at']
+  }
+
+  Note: 'Thumbs up / down the user gives to an assistant answer. One row per answer (a turn of a session); clicking again removes it. model and provider are the ones that produced the answer, so feedback can later be read per model.'
+}
+
+Table workflows {
+  name text [pk]
+  created_at text [not null]
+  updated_at text [not null]
+
+  Note: 'Registry of workflows. The YAML file stays the definition; the name is the id. A row is created the first time a workflow is saved or run.'
+}
+
+Table workflow_runs {
+  id text [pk]
+  workflow_name text [not null]
+  session_id text
+  parent_session_id text
+  source text [not null, default: `'play'`]
+  status text [not null, default: `'running'`]
+  attempt integer [not null, default: 1]
+  started_at text [not null]
+  finished_at text
+  result text
+  error_text text
+  prompt_tokens integer [not null, default: 0]
+  completion_tokens integer [not null, default: 0]
+  total_tokens integer [not null, default: 0]
+  total_time real [not null, default: 0]
+  cost_input real [not null, default: 0]
+  cost_output real [not null, default: 0]
+  cost_total real [not null, default: 0]
+  usage_calls text
+
+  indexes {
+    started_at [name: 'idx_workflow_runs_started_at']
+    status [name: 'idx_workflow_runs_status']
+    workflow_name [name: 'idx_workflow_runs_name']
+  }
+
+  Note: 'One row per workflow execution. status: running | success | error | cancelled source: play (UI button) | tool (called by an agent through the workflow tool) attempt: current attempt, 1..3 (the run resumes from the last committed node). result: final answer of the run. error_text: plain-language failure explanation. Spend of the LLM calls the engine makes by itself (judge, explain, output), not the agent nodes (their cost lives in their child sessions): the tokens/cost columns hold the sum for the run, like a messages row, and usage_calls keeps every call as JSON ([{purpose, provider, model, prompt_tokens, completion_tokens, total_tokens, total_time, cost_input, cost_output, cost_total, created_at}]). spend is NOT touched here: llm_process already contemplates it.'
+}
+
+Table workflow_run_steps {
+  id integer [pk, increment]
+  run_id text [not null]
+  attempt integer [not null, default: 1]
+  step integer [not null]
+  substep integer [not null, default: 0]
+  node_id text [not null]
+  node_type text [not null]
+  args text
+  state text [not null, default: `'open'`]
+  result text
+  error text
+  child_session_id text
+  created_at text [not null]
+  updated_at text [not null]
+
+  indexes {
+    (run_id, step) [name: 'idx_workflow_run_steps_run']
+  }
+
+  Note: 'Commits of a workflow run: one row per node execution. state: open (dispatched) | done (result committed) | failed | stale (a done row invalidated because an earlier step had to be re-run). result holds the complete node output (never truncated) so a retry or a resume after a crash rebuilds the shared state without re-running it.'
+}
+
+Table notifications {
+  id integer [pk, increment]
+  kind text [not null]
+  workflow_name text
+  task_id text
+  run_id text
+  title text [not null]
+  status text [not null]
+  message text
+  session_id text
+  read integer [not null, default: 0]
+  created_at text [not null]
+
+  indexes {
+    created_at [name: 'idx_notifications_created_at']
+    read [name: 'idx_notifications_read']
+  }
+
+  Note: 'Notifications of finished workflow runs and scheduled-task executions. Exactly one of workflow_name / task_id is set (FK to the PK of each table). run_id: workflow_runs.id or task_runs.id (as text) to open the detail. status: success | error. read: 0 unread, 1 read.'
+}
+
+Ref: sessions.parent_id > sessions.session_id
+Ref: messages.session_id > sessions.session_id
+Ref: turn_latency.session_id > sessions.session_id
+Ref: attachments.session_id > sessions.session_id
+Ref: task_runs.task_id > scheduled_tasks.id
+Ref: step_frontier.session_id > sessions.session_id
+Ref: message_feedback.session_id > sessions.session_id
+Ref: workflow_runs.workflow_name > workflows.name
+Ref: workflow_run_steps.run_id > workflow_runs.id
+Ref: notifications.workflow_name > workflows.name
+Ref: notifications.task_id > scheduled_tasks.id
