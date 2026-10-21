@@ -162,7 +162,7 @@ class DecisionMixin:
             return validate_response(make_success_response(
                 message='Decision ok.',
                 data={'available': True, 'answers': answers,
-                      'model': getattr(response, 'model', effective_model),
+                      'model': (effective_model or '').strip(),
                       'provider': provider_id},
                 usage={
                     'prompt_tokens': prompt_tokens,

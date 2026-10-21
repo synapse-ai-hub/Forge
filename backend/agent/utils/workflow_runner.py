@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 import uuid
 from datetime import datetime
 from typing import Any
@@ -219,7 +220,7 @@ class WorkflowRunner:
                 )
             outcomes = await asyncio.gather(
                 *(
-                    self._run_node(session_id, node, state, cancel_event, execute_tool)
+                    self._timed_node(session_id, node, state, cancel_event, execute_tool)
                     for _, node in pending
                 )
             )
@@ -233,6 +234,7 @@ class WorkflowRunner:
                     workflow_db.record_node(
                         run_id, attempt, step, pos, node["id"], node["type"], "success",
                         result=data, child_session_id=outcome.get("child_id"), started_at=started_at,
+                        tool_name=self._tool_of(node), seconds=outcome.get("seconds", 0.0),
                     )
                     committed[node["id"]] = {"result": data, "child": outcome.get("child_id")}
                     state["results"][node["id"]] = data
@@ -242,7 +244,8 @@ class WorkflowRunner:
                     workflow_db.record_node(
                         run_id, attempt, step, pos, node["id"], node["type"], "cancelled",
                         error="Cancelado por el usuario.", child_session_id=outcome.get("child_id"),
-                        started_at=started_at,
+                        started_at=started_at, tool_name=self._tool_of(node),
+                        seconds=outcome.get("seconds", 0.0),
                     )
                 else:
                     message = str(outcome.get("message") or "Nodo fallido.")
@@ -250,6 +253,7 @@ class WorkflowRunner:
                     workflow_db.record_node(
                         run_id, attempt, step, pos, node["id"], node["type"], "error",
                         error=message, child_session_id=outcome.get("child_id"), started_at=started_at,
+                        tool_name=self._tool_of(node), seconds=outcome.get("seconds", 0.0),
                     )
                     state["errors"][node["id"]] = message
                     failures.append({"node": node["id"], "type": node["type"], "error": message})
@@ -330,6 +334,50 @@ class WorkflowRunner:
     # ------------------------------------------------------------------
     # Node execution
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _tool_of(node: dict[str, Any]) -> str | None:
+        """Name the tool a node runs.
+
+        Args:
+            node: Normalized node.
+
+        Returns:
+            ``shell`` for a ``run`` node, ``rag`` for a ``rag`` node, the tool of a
+            ``tool`` node, or ``None`` for an ``agent`` node.
+        """
+        kind = node.get("type")
+        if kind == "run":
+            return "shell"
+        if kind == "rag":
+            return "rag"
+        if kind == "tool":
+            return str(node.get("tool") or "") or None
+        return None
+
+    async def _timed_node(
+        self,
+        session_id: str,
+        node: dict[str, Any],
+        state: dict[str, Any],
+        cancel_event: asyncio.Event,
+        execute_tool: Callable[..., Awaitable[dict[str, Any]]],
+    ) -> dict[str, Any]:
+        """Run one node (see :meth:`_run_node`) and measure how long it took.
+
+        Args:
+            session_id: Session that holds the execution.
+            node: Normalized node.
+            state: Shared state of the attempt.
+            cancel_event: Set when the user cancels the run.
+            execute_tool: Tool executor from ``loop_helpers``.
+
+        Returns:
+            The outcome of :meth:`_run_node` with the ``seconds`` the node took.
+        """
+        started = time.monotonic()
+        outcome = await self._run_node(session_id, node, state, cancel_event, execute_tool)
+        return {**outcome, "seconds": round(time.monotonic() - started, 3)}
 
     async def _run_node(
         self,

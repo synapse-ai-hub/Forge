@@ -4,7 +4,8 @@
 --     and its sessions). It is the only row of the run that has a result and a source.
 --   node: one execution of a node (step, substep, node_id, node_type, status, result or error_text,
 --     child_session_id). The nodes of a step run in parallel, each with its own substep. An agent
---     node adds up the spend of its child session.
+--     node adds up the spend of its child session; the other nodes run a tool (tool_name) and
+--     their total_time is the seconds they took.
 --   decision: verdict of the decision model on the run. status: approved | rejected; result holds
 --     the JSON of its answers.
 --   judge: verdict of the chat LLM, used when the decision model is not ready. status: approved |
@@ -30,6 +31,7 @@ CREATE TABLE IF NOT EXISTS workflow_runs (
     substep INTEGER NOT NULL DEFAULT 0,  -- position of the row inside its step
     node_id TEXT,  -- id of the node in the YAML (node rows)
     node_type TEXT,  -- agent | tool | rag | run (node rows)
+    tool_name TEXT,  -- tool a node ran: shell in run nodes, rag in rag nodes, the tool in tool nodes (NULL in agent nodes)
     status TEXT,  -- run: running | success | error | cancelled; node: success | error | cancelled; decision, judge: approved | rejected | error; output, explain: success | error
     source TEXT,  -- play | tool (run row)
     session_id TEXT,  -- session that holds the execution (run row)
