@@ -365,8 +365,9 @@ async def post_create_agent_stream(req: CreateAgentRequest) -> StreamingResponse
             "Creá el agente. Pasos OBLIGATORIOS en orden: "
             "1) Leé las tools y skills disponibles con list_dir. "
             "2) Seleccioná las mínimas necesarias para el rol. "
-            "3) Escribí el archivo .md con write en la carpeta de agents. "
-            "4) Confirmame qué creaste."
+            "3) Verificá con shell lo que el agente va a usar (librerías, comandos, rutas). "
+            "4) Escribí el archivo .md con write en la carpeta de agents. "
+            "5) Confirmame qué creaste."
         )
 
         # ── 3a. Resolver tools ──
