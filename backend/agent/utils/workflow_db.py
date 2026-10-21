@@ -393,10 +393,13 @@ def record_node(
     error: str | None = None,
     child_session_id: str | None = None,
     started_at: str | None = None,
+    tool_name: str | None = None,
+    seconds: float = 0.0,
 ) -> bool:
     """Record one execution of a node as a row of its run.
 
-    An agent node adds up the spend of its child session.
+    An agent node adds up the spend of its child session. The other nodes run
+    a tool, so the row keeps the tool and the seconds the node took.
 
     Args:
         run_id: Run identifier.
@@ -410,18 +413,23 @@ def record_node(
         error: Failure message, when it failed.
         child_session_id: Session of the sub-agent, in agent nodes.
         started_at: Local time the node was dispatched (now when ``None``).
+        tool_name: Tool the node ran (``shell``, ``rag`` or the tool), ``None`` in agent nodes.
+        seconds: Seconds the node took; kept as ``total_time`` in the nodes that run a tool.
 
     Returns:
         ``True`` when the row was stored.
     """
     try:
         now = _now()
+        usage = list(_child_usage(child_session_id))
+        if tool_name:
+            usage[5] = float(seconds)
         with db_transaction() as conn:
             cur = conn.execute(
                 load_query("workflows/insert_node_row.sql"),
                 (
-                    attempt, step, substep, node_id, node_type, status, child_session_id,
-                    result, error, *_child_usage(child_session_id), started_at or now, now, run_id,
+                    attempt, step, substep, node_id, node_type, tool_name, status, child_session_id,
+                    result, error, *usage, started_at or now, now, run_id,
                 ),
             )
             return cur.rowcount > 0
