@@ -127,6 +127,8 @@ interface ChatInterfaceProps {
   onOpenNotifications?: () => void;
   onDeleteNotification?: (id: number) => void;
   onClearNotifications?: () => void;
+  /** Called when a notification is clicked (the app opens its complete output). */
+  onSelectNotification?: (notification: AppNotification) => void;
 }
 
 export interface ChatInterfaceHandle {
@@ -170,6 +172,7 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
       onOpenNotifications,
       onDeleteNotification,
       onClearNotifications,
+      onSelectNotification,
     }: ChatInterfaceProps,
     ref: ForwardedRef<ChatInterfaceHandle>,
   ) {
@@ -1100,7 +1103,14 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
                             key={n.id}
                             className={`group flex gap-2.5 px-4 py-3 ${
                               freshNotificationIds.includes(n.id) ? "bg-app-primary/5" : ""
-                            }`}
+                            } ${onSelectNotification ? "cursor-pointer hover:bg-gray-50" : ""}`}
+                            onClick={() => {
+                              if (onSelectNotification) {
+                                onSelectNotification(n);
+                                setShowNotifications(false);
+                              }
+                            }}
+                            title="Ver el resultado completo"
                           >
                             {n.status === "success" ? (
                               <CheckCircle2 size={16} className="shrink-0 mt-0.5 text-green-600" />
@@ -1119,7 +1129,7 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
                                 {n.status === "success" ? "Ejecutado con éxito" : "Falló"}
                               </p>
                               {n.message && (
-                                <p className="text-xs text-app-text-secondary mt-1 line-clamp-3 break-words">
+                                <p className="text-xs text-app-text-secondary mt-1 line-clamp-6 whitespace-pre-line break-words">
                                   {n.message}
                                 </p>
                               )}
@@ -1127,7 +1137,10 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
                             {onDeleteNotification && (
                               <button
                                 type="button"
-                                onClick={() => onDeleteNotification(n.id)}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onDeleteNotification(n.id);
+                                }}
                                 className="shrink-0 self-start rounded p-1 text-app-text-secondary opacity-0 group-hover:opacity-100 hover:bg-red-100 hover:text-app-error transition-all"
                                 aria-label="Eliminar notificación"
                                 title="Eliminar notificación"
