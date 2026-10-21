@@ -32,6 +32,7 @@ if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
 from backend.agent.utils.config_dir import ensure_config_dir
+from backend.agent.utils.packages import restore_missing
 from backend.instances import agent, session_manager
 from backend.routes import config as config_module
 from backend.agent.utils.error_logger import log_error
@@ -215,6 +216,18 @@ async def lifespan(app: FastAPI):
         log_error(str(exc), source="main.py:lifespan(config_dir)")
         logger.warning("Failed to initialize config directory: %s", exc)
 
+    # Libraries the tools installed (tools/lib/requirements.txt) that this
+    # machine or container lacks: reinstalled in the background.
+    async def _restore_tool_packages() -> None:
+        try:
+            restored = await asyncio.to_thread(restore_missing)
+            if restored:
+                logger.info("Tool libraries restored: %s", ", ".join(restored))
+        except Exception as exc:
+            log_error(str(exc), source="main.py:lifespan(tool_packages)")
+
+    asyncio.create_task(_restore_tool_packages())
+
     # Load persisted config (model, provider, context window) from SQLite BEFORE serving requests
     try:
         await asyncio.to_thread(config_module.load_persisted_config)
@@ -285,6 +298,16 @@ async def lifespan(app: FastAPI):
 
     logger.info("<nombre>nombre_proyecto</nombre> API started successfully.")
 
+    # Internal help collection, shipped already vectorized: it needs no API
+    # key, so it is loaded before the key check below.
+    try:
+        from backend.agent.utils.seed_collections import seed_help_collection
+
+        await asyncio.to_thread(seed_help_collection)
+    except Exception as exc:
+        log_error(str(exc), source="main.py:lifespan(help_seed)")
+        logger.warning("Failed to seed the help collection: %s", exc)
+
     # Pre-create the RAG vector DB (Gemini Embedding 2) once at startup,
     # only if the Gemini key is configured. It is shared and never
     # killed, so the first use of RAG does not pay the init cost.
@@ -293,7 +316,13 @@ async def lifespan(app: FastAPI):
         from backend.agent.utils.vector_db import get_vector_db
 
         if provider_keys.get_key("GOOGLE"):
-            await asyncio.to_thread(get_vector_db)
+            vector_db = await asyncio.to_thread(get_vector_db)
+            # Internal collections (conversation memory, help) exist from
+            # the first start; they are never listed in the UI.
+            from backend.agent.utils.rag_helpers import INTERNAL_COLLECTIONS
+
+            for internal in INTERNAL_COLLECTIONS:
+                await asyncio.to_thread(vector_db.get_or_create_collection, internal)
             logger.info("RAG vector DB initialized at startup.")
         else:
             logger.warning(
