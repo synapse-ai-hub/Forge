@@ -15,6 +15,7 @@ Imported by ``backend/routes/create.py``.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -31,8 +32,10 @@ _project_root = os.path.dirname(os.path.dirname(os.path.dirname(_current_dir)))
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
+from backend.agent.loop.constants import LLM_BACKOFF_BASE_SECONDS, MAX_LLM_RETRIES
 from backend.agent.permissions import is_tool_allowed
 from backend.agent.utils import provider_keys
+from backend.agent.utils.rate_limit_handler import classify_error_category, get_retry_delay
 from backend.instances import agent
 
 logger = logging.getLogger(__name__)
@@ -55,6 +58,35 @@ _INTERVIEW_TOOLS_PERMS: dict[str, str] = {
     "query_model_capabilities": "allow",
 }
 """Native tools enabled during creation interviews (read/explore + web)."""
+
+
+def _llm_retry_plan(exc: Exception, attempt: int) -> tuple[float, str] | None:
+    """Decide whether a failed creator LLM call is retried, like the chat loop.
+
+    Only ``rate_limit`` and ``transient`` errors are retried, up to
+    ``MAX_LLM_RETRIES`` times, with exponential back-off that honors the
+    provider's ``retry_after`` hint. Fatal, budget and too-large errors end
+    the flow.
+
+    Args:
+        exc: Exception raised by the LLM call.
+        attempt: Retries already made for this iteration (0 on the first failure).
+
+    Returns:
+        ``(delay_seconds, notice)`` when the call must be retried, else ``None``.
+    """
+    category = classify_error_category(exc)
+    if category not in ("rate_limit", "transient") or attempt >= MAX_LLM_RETRIES:
+        return None
+    delay = max(
+        LLM_BACKOFF_BASE_SECONDS * (2 ** attempt),
+        get_retry_delay(exc, LLM_BACKOFF_BASE_SECONDS, 60.0),
+    )
+    if category == "rate_limit":
+        notice = f"Rate limit alcanzado, reintentando (intento {attempt + 1} de {MAX_LLM_RETRIES})..."
+    else:
+        notice = "Error transitorio, reintentando..."
+    return delay, notice
 
 
 def _resolve_create_model_provider() -> tuple[str | None, str]:
@@ -192,7 +224,10 @@ async def stream_interview_loop(
 
     msgs: list[dict[str, Any]] = [{"role": "user", "content": prompt}]
 
-    for _iteration in range(max_iter):
+    _iteration = 0
+    llm_attempt = 0
+    while _iteration < max_iter:
+        _iteration += 1
         collected_content = ""
         tool_calls = None
         iter_usage: dict[str, Any] | None = None
@@ -240,8 +275,18 @@ async def stream_interview_loop(
                 agent._record_spend(provider, model, iter_usage)
             except Exception:
                 pass
-            yield {"type": "error", "content": friendly_error}
-            return
+            plan = _llm_retry_plan(e, llm_attempt)
+            if plan is None:
+                yield {"type": "error", "content": friendly_error}
+                return
+            delay, notice = plan
+            logger.warning("Interview LLM error, retrying in %.0fs: %s", delay, e)
+            yield {"type": "retry", "content": notice}
+            await asyncio.sleep(delay)
+            llm_attempt += 1
+            _iteration -= 1
+            continue
+        llm_attempt = 0
 
         # Contemplate this interview LLM call (tracked in creator_calls
         # since it never produces messages rows).
@@ -352,6 +397,7 @@ async def stream_tool_calling_loop(
     # Only the tools offered to the LLM may run (deny by default).
     offered_tools = {(t.get("function") or {}).get("name") for t in tools}
     iteration = 0
+    llm_attempt = 0
     while iteration < max_iter:
         iteration += 1
 
@@ -402,8 +448,18 @@ async def stream_tool_calling_loop(
                 agent._record_spend(provider, model, iter_usage)
             except Exception:
                 pass
-            yield {"type": "error", "content": friendly_error}
-            return
+            plan = _llm_retry_plan(e, llm_attempt)
+            if plan is None:
+                yield {"type": "error", "content": friendly_error}
+                return
+            delay, notice = plan
+            logger.warning("Creator LLM error, retrying in %.0fs: %s", delay, e)
+            yield {"type": "retry", "content": notice}
+            await asyncio.sleep(delay)
+            llm_attempt += 1
+            iteration -= 1
+            continue
+        llm_attempt = 0
 
         # Contemplate this generation LLM call (tracked in creator_calls
         # since it never produces messages rows).

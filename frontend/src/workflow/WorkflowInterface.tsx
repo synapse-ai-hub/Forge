@@ -10,6 +10,7 @@ import { flushSync } from "react-dom";
 import { Send, Square, Download } from "lucide-react";
 import { MessageRow } from "../components/chatBlocks";
 import { CreateModelSelector } from "../components/CreateModelSelector";
+import { RecursoSelector } from "./RecursoSelector";
 import configService from "../services/configService";
 import type { Message, ContentBlock } from "../App";
 import { saveFileWithPicker, fetchConversationMarkdown } from "../utils/conversationExport";
@@ -44,6 +45,15 @@ export function WorkflowInterface() {
   /* Sin proveedores cloud configurados: la creación queda bloqueada */
   const [noProviders, setNoProviders] = useState(false);
 
+  /* Recursos existentes que el usuario puede indicar para el workflow (opcionales) */
+  const [agentesDisp, setAgentesDisp] = useState<{ name: string; description?: string }[]>([]);
+  const [toolsDisp, setToolsDisp] = useState<{ name: string; description?: string }[]>([]);
+  const [ragDisp, setRagDisp] = useState<{ name: string }[]>([]);
+  const [recursosLoading, setRecursosLoading] = useState(true);
+  const [agentes, setAgentes] = useState<string[]>([]);
+  const [tools, setTools] = useState<string[]>([]);
+  const [rag, setRag] = useState<string[]>([]);
+
   const [messages, setMessages] = useState<Message[]>([]);
   const historialRef = useRef<HistorialMsg[]>([]);
   const [input, setInput] = useState("");
@@ -53,10 +63,6 @@ export function WorkflowInterface() {
   const [resultType, setResultType] = useState<"success" | "error" | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const [isIterating, setIsIterating] = useState(false);
-  /* ---- editor YAML (validar/guardar, mismos endpoints que el panel) ---- */
-  const [yaml, setYaml] = useState("");
-  const [yamlMsg, setYamlMsg] = useState<string | null>(null);
-  const [yamlBusy, setYamlBusy] = useState(false);
 
   /* ---- refs ---- */
   const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -120,6 +126,25 @@ export function WorkflowInterface() {
     } else {
       wheelUpRef.current = false;
     }
+  }, []);
+
+  /* ---- recursos existentes para los dropdowns del setup ---- */
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([
+      configService.getAgents().catch(() => []),
+      configService.getTools().catch(() => []),
+      configService.listKnowledge().catch(() => []),
+    ]).then(([a, t, k]) => {
+      if (cancelled) return;
+      setAgentesDisp(a);
+      setToolsDisp(t);
+      setRagDisp(k.map((name) => ({ name })));
+      setRecursosLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   /* ---- heartbeat ---- */
@@ -212,6 +237,9 @@ export function WorkflowInterface() {
             model: createModel,
             provider: createProvider,
             iterate,
+            agentes,
+            tools,
+            rag,
           }),
           signal: abort.signal,
         });
@@ -220,6 +248,7 @@ export function WorkflowInterface() {
         const reader = resp.body!.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
+        let retryActive = false;
 
         while (true) {
           const { done, value } = await reader.read();
@@ -237,7 +266,24 @@ export function WorkflowInterface() {
               let event: any;
               try { event = JSON.parse(data); } catch { continue; }
 
+              // Transient retry notice (as in ChatInterface): cleared on the next event.
+              if (retryActive && event.type !== "retry") {
+                retryActive = false;
+                setMessages((prev) =>
+                  prev.map((m) => (m.id === assistantId ? { ...m, retryNotice: null } : m)),
+                );
+              }
+
               switch (event.type) {
+                case "retry":
+                  retryActive = true;
+                  setMessages((prev) =>
+                    prev.map((m) =>
+                      m.id === assistantId ? { ...m, retryNotice: String(event.content || "") } : m,
+                    ),
+                  );
+                  break;
+
                 case "chunk": {
                   accumulatedContent += event.content || "";
                   const last = accumulatedBlocks[accumulatedBlocks.length - 1];
@@ -440,7 +486,7 @@ export function WorkflowInterface() {
         abortRef.current = null;
       }
     },
-    [isStreaming, descripcion, nombre, createModel, createProvider, isIterating],
+    [isStreaming, descripcion, nombre, createModel, createProvider, isIterating, agentes, tools, rag],
   );
 
   /* ---- enviar desde el chat ---- */
@@ -457,51 +503,6 @@ export function WorkflowInterface() {
     abortRef.current?.abort();
     abortRef.current = null;
   }, []);
-
-  /* ---- YAML: generar con agente / validar / guardar ---- */
-  const handleGenerateYaml = useCallback(async () => {
-    const desc = descripcion.trim();
-    if (!desc) { setYamlMsg("Completá la descripción primero."); return; }
-    setYamlBusy(true);
-    setYamlMsg("Generando con el agente...");
-    try {
-      const res = await configService.generateWorkflow(desc);
-      setYaml(res.yaml);
-      if (res.name && !nombre.trim()) setNombre(res.name);
-      setYamlMsg("YAML generado. Revisalo y guardalo.");
-    } catch (err) {
-      setYamlMsg(err instanceof Error ? err.message : "No se pudo generar.");
-    } finally {
-      setYamlBusy(false);
-    }
-  }, [descripcion, nombre]);
-
-  const handleValidateYaml = useCallback(async () => {
-    if (!yaml.trim()) { setYamlMsg("No hay YAML para validar."); return; }
-    setYamlBusy(true);
-    try {
-      const res = await configService.validateWorkflow(yaml);
-      setYamlMsg(res.message);
-    } catch (err) {
-      setYamlMsg(err instanceof Error ? err.message : "Error validando.");
-    } finally {
-      setYamlBusy(false);
-    }
-  }, [yaml]);
-
-  const handleSaveYaml = useCallback(async () => {
-    const nameVal = nombre.trim();
-    if (!nameVal || !yaml.trim()) { setYamlMsg("Nombre y YAML requeridos."); return; }
-    setYamlBusy(true);
-    try {
-      await configService.saveWorkflow(nameVal, yaml);
-      setYamlMsg(`Workflow «${nameVal}» guardado.`);
-    } catch (err) {
-      setYamlMsg(err instanceof Error ? err.message : "No se pudo guardar.");
-    } finally {
-      setYamlBusy(false);
-    }
-  }, [nombre, yaml]);
 
   /* ---- keyboard ---- */
   const handleKeyDown = useCallback(
@@ -630,6 +631,36 @@ export function WorkflowInterface() {
                 </p>
               </div>
 
+              <RecursoSelector
+                id="workflow-agentes"
+                label="Agentes"
+                hint="Agentes existentes que el workflow debe usar como nodos."
+                opciones={agentesDisp}
+                seleccionados={agentes}
+                onChange={setAgentes}
+                loading={recursosLoading}
+              />
+
+              <RecursoSelector
+                id="workflow-tools"
+                label="Tools"
+                hint="Tools existentes que el workflow debe ejecutar como nodos."
+                opciones={toolsDisp}
+                seleccionados={tools}
+                onChange={setTools}
+                loading={recursosLoading}
+              />
+
+              <RecursoSelector
+                id="workflow-rag"
+                label="Colecciones RAG"
+                hint="Colecciones existentes que el workflow debe consultar."
+                opciones={ragDisp}
+                seleccionados={rag}
+                onChange={setRag}
+                loading={recursosLoading}
+              />
+
               <CreateModelSelector
                 onApply={(m, p) => {
                   setCreateModel(m);
@@ -694,47 +725,6 @@ export function WorkflowInterface() {
                        px-3 sm:px-4 py-3 sm:py-4"
           >
             <div className="max-w-full sm:max-w-3xl lg:max-w-4xl mx-auto">
-              {/* ========== YAML DEL WORKFLOW ========== */}
-              <div className="mb-3 rounded-2xl border border-app-border bg-white p-4 space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium text-app-text">YAML del workflow</span>
-                  <button
-                    type="button"
-                    disabled={yamlBusy}
-                    onClick={handleGenerateYaml}
-                    className="text-xs bg-app-primary hover:opacity-90 text-white px-3 py-1.5 rounded disabled:opacity-50"
-                  >
-                    {yamlBusy ? "Generando..." : "Generar con agente"}
-                  </button>
-                </div>
-                <textarea
-                  value={yaml}
-                  onChange={(e) => setYaml(e.target.value)}
-                  placeholder="YAML del workflow..."
-                  rows={8}
-                  spellCheck={false}
-                  className="w-full text-[11px] font-mono px-2 py-1.5 rounded border border-app-border bg-white text-app-text"
-                />
-                {yamlMsg && <p className="text-xs text-app-text-secondary">{yamlMsg}</p>}
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    disabled={yamlBusy}
-                    onClick={handleValidateYaml}
-                    className="text-xs px-3 py-1.5 rounded border border-app-border hover:bg-app-bg-tertiary disabled:opacity-50"
-                  >
-                    Validar
-                  </button>
-                  <button
-                    type="button"
-                    disabled={yamlBusy}
-                    onClick={handleSaveYaml}
-                    className="text-xs bg-app-primary hover:opacity-90 text-white px-3 py-1.5 rounded disabled:opacity-50"
-                  >
-                    Guardar
-                  </button>
-                </div>
-              </div>
               {resultMsg ? (
                 <div className="relative rounded-2xl border border-app-border bg-white p-4 sm:p-5 flex flex-col items-center gap-3 text-center">
                   <div

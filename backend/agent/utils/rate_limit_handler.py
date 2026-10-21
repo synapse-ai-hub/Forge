@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import re
 import sys
@@ -447,15 +448,18 @@ def _parse_generic(response_body: str | dict | None, status_code: int) -> RateLi
 
 def _extract_retry_after(message: str) -> int | None:
     """Extract retry_after value from an error message."""
+    # Seconds may be decimal ("retry in 46.3s", Gemini) or come as a
+    # ``retryDelay: "46s"`` field; rounded up so the wait is never short.
     patterns = [
-        r"retry\s*after[:\s]*(\d+)",
-        r"wait\s*(\d+)\s*second",
-        r"in\s*(\d+)\s*second",
+        r"retry\s*after[:\s]*(\d+(?:\.\d+)?)",
+        r"wait\s*(\d+(?:\.\d+)?)\s*second",
+        r"in\s*(\d+(?:\.\d+)?)\s*(?:second|s\b)",
+        r"retryDelay['\"]?\s*:\s*['\"]?(\d+(?:\.\d+)?)\s*s",
     ]
     for pattern in patterns:
         match = re.search(pattern, message, re.IGNORECASE)
         if match:
-            return int(match.group(1))
+            return math.ceil(float(match.group(1)))
     return None
 
 

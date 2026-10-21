@@ -215,6 +215,7 @@ export function AgentInterface() {
         const reader = resp.body!.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
+        let retryActive = false;
 
         while (true) {
           const { done, value } = await reader.read();
@@ -232,7 +233,24 @@ export function AgentInterface() {
               let event: any;
               try { event = JSON.parse(data); } catch { continue; }
 
+              // Transient retry notice (as in ChatInterface): cleared on the next event.
+              if (retryActive && event.type !== "retry") {
+                retryActive = false;
+                setMessages((prev) =>
+                  prev.map((m) => (m.id === assistantId ? { ...m, retryNotice: null } : m)),
+                );
+              }
+
               switch (event.type) {
+                case "retry":
+                  retryActive = true;
+                  setMessages((prev) =>
+                    prev.map((m) =>
+                      m.id === assistantId ? { ...m, retryNotice: String(event.content || "") } : m,
+                    ),
+                  );
+                  break;
+
                 case "chunk": {
                   accumulatedContent += event.content || "";
                   const last = accumulatedBlocks[accumulatedBlocks.length - 1];
