@@ -504,7 +504,7 @@ async def get_tool_metrics(time_range: str = "1m") -> dict:
         time_range: Time filter ('1h', '6h', '1d', '1w', '1m', 'all').
 
     Returns:
-        A contract response with tool usage, totals and sub-agent calls.
+        A contract response with tool usage, totals and the calls to each sub-agent.
     """
     try:
         time_range = _normalize_range(time_range)
@@ -536,7 +536,7 @@ async def get_tool_metrics(time_range: str = "1m") -> dict:
             )
             subagent_rows = conn.execute(subagent_sql, params).fetchall()
         top_subagents = [
-            {"name": row["tool_name"], "count": row["cnt"]} for row in subagent_rows
+            {"name": row["agent_name"], "count": row["cnt"]} for row in subagent_rows
         ]
 
         return validate_response(
