@@ -329,6 +329,14 @@ def verificar_refs(workflow: dict[str, Any]) -> dict[str, Any]:
                 elif ref not in agentes:
                     faltantes.append({"nodo": nid, "tipo": "agent", "ref": ref,
                                       "detalle": f"No se encontró el agente '{ref}' (nodo '{nid}'). Revisá que exista en la carpeta de agentes."})
+                prompt_file = str(node.get("prompt_file", "") or "")
+                if prompt_file:
+                    from backend.agent.utils.workflow_loader import load_prompt_file
+
+                    loaded = load_prompt_file(prompt_file)
+                    if loaded.get("status") != "success":
+                        faltantes.append({"nodo": nid, "tipo": "prompt", "ref": prompt_file,
+                                          "detalle": f"Nodo '{nid}': {loaded.get('message')}"})
             elif ntype == "tool":
                 ref = str(node.get("tool", "") or "")
                 if not _ref_es_segura(ref):

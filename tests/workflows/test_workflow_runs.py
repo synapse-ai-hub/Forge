@@ -100,8 +100,8 @@ def test_success_persists_run_steps_session_and_notification(env):
 
     run = query("select * from workflow_runs where id=?", (started["run_id"],))[0]
     assert run["status"] == "success" and run["attempt"] == 1 and run["source"] == "play"
-    steps = query("select node_id,state from workflow_run_steps where run_id=? order by id", (started["run_id"],))
-    assert {(s["node_id"], s["state"]) for s in steps} == {("a", "done"), ("b", "done"), ("fin", "done")}
+    # What ended well is deleted: a finished run keeps no node commits.
+    assert query("select node_id,state from workflow_run_steps where run_id=?", (started["run_id"],)) == []
     assert query("select name from workflows") == [{"name": "ok-flow"}]
 
     session = query("select title,parent_id from sessions where session_id=?", (started["run_id"],))[0]
@@ -358,12 +358,12 @@ def test_delete_workflow_removes_file_runs_commits_and_notifications(env, monkey
     assert response.status_code == 200
     assert not (tmp / "workflows" / "borrable.yaml").exists()
     for table, column in (("workflows", "name"), ("workflow_runs", "workflow_name"),
-                          ("notifications", "workflow_name"), ("workflow_usage", "workflow_name")):
+                          ("notifications", "workflow_name")):
         assert query(f"select 1 from {table} where {column}=?", ("borrable",)) == []
     assert query("select 1 from workflow_run_steps where run_id in (select id from workflow_runs where workflow_name='borrable')") == []
     # The other workflow keeps everything.
     assert (tmp / "workflows" / "queda.yaml").exists()
     assert len(query("select 1 from workflow_runs where workflow_name='queda'")) == 1
     assert len(query("select 1 from notifications where workflow_name='queda'")) == 1
-    assert len(query("select 1 from workflow_run_steps")) == 3
+    assert query("select 1 from workflow_run_steps") == []  # a run that ended well keeps no commits
 

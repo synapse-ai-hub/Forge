@@ -41,7 +41,6 @@ _DDL_SCRIPTS: tuple[str, ...] = (
     "ddl/workflows.sql",
     "ddl/workflow_runs.sql",
     "ddl/workflow_run_steps.sql",
-    "ddl/workflow_usage.sql",
     "ddl/notifications.sql",
 )
 
@@ -57,3 +56,64 @@ def setup_database(conn: sqlite3.Connection) -> None:
     """
     script = "\n".join(load_query(name) for name in _DDL_SCRIPTS)
     conn.executescript(script)
+    _migrate_workflow_usage(conn)
+    # What ended well is deleted (like step_frontier): the commits of a run are
+    # only kept while it can still be resumed, or after it failed.
+    conn.execute(
+        "DELETE FROM workflow_run_steps WHERE run_id IN (SELECT id FROM workflow_runs WHERE status = 'success')"
+    )
+
+
+_USAGE_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("prompt_tokens", "INTEGER NOT NULL DEFAULT 0"),
+    ("completion_tokens", "INTEGER NOT NULL DEFAULT 0"),
+    ("total_tokens", "INTEGER NOT NULL DEFAULT 0"),
+    ("total_time", "REAL NOT NULL DEFAULT 0"),
+    ("cost_input", "REAL NOT NULL DEFAULT 0"),
+    ("cost_output", "REAL NOT NULL DEFAULT 0"),
+    ("cost_total", "REAL NOT NULL DEFAULT 0"),
+    ("usage_calls", "TEXT"),
+)
+
+
+def _migrate_workflow_usage(conn: sqlite3.Connection) -> None:
+    """Fold the old ``workflow_usage`` table into ``workflow_runs`` (no data lost).
+
+    Adds the spend columns to an existing ``workflow_runs``, moves every
+    ``workflow_usage`` row into the ``usage_calls`` JSON and the sums of its
+    run, then drops the table. Runs once: afterwards there is nothing to move.
+    """
+    import json
+
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(workflow_runs)")}
+    for name, definition in _USAGE_COLUMNS:
+        if name not in existing:
+            conn.execute(f"ALTER TABLE workflow_runs ADD COLUMN {name} {definition}")
+    has_old = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='workflow_usage'"
+    ).fetchone()
+    if not has_old:
+        return
+    calls: dict[str, list[dict]] = {}
+    sums: dict[str, list[float]] = {}
+    rows = conn.execute(
+        "SELECT run_id, purpose, provider, model, prompt_tokens, completion_tokens, total_tokens, "
+        "total_time, cost_input, cost_output, cost_total, created_at FROM workflow_usage ORDER BY id"
+    ).fetchall()
+    keys = ("purpose", "provider", "model", "prompt_tokens", "completion_tokens", "total_tokens",
+            "total_time", "cost_input", "cost_output", "cost_total", "created_at")
+    for row in rows:
+        run_id = row[0]
+        calls.setdefault(run_id, []).append(dict(zip(keys, row[1:])))
+        acc = sums.setdefault(run_id, [0.0] * 7)
+        for i, value in enumerate(row[4:11]):
+            acc[i] += value or 0
+    for run_id, items in calls.items():
+        acc = sums[run_id]
+        conn.execute(
+            "UPDATE workflow_runs SET prompt_tokens=?, completion_tokens=?, total_tokens=?, total_time=?, "
+            "cost_input=?, cost_output=?, cost_total=?, usage_calls=? WHERE id=?",
+            (int(acc[0]), int(acc[1]), int(acc[2]), acc[3], acc[4], acc[5], acc[6],
+             json.dumps(items, ensure_ascii=False), run_id),
+        )
+    conn.execute("DROP TABLE workflow_usage")
