@@ -4,18 +4,18 @@
 -- the step closes with a validated done signal; a cut flow leaves them behind
 -- so the next turn can resume from them.
 CREATE TABLE IF NOT EXISTS step_frontier (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_id TEXT NOT NULL,
-    turn_number INTEGER NOT NULL,
-    step INTEGER NOT NULL DEFAULT 0,
-    substep INTEGER NOT NULL DEFAULT 0,
-    tool_call_id TEXT,
-    tool_name TEXT NOT NULL,
-    tool_args TEXT,
-    state TEXT NOT NULL DEFAULT 'open',
-    child_id TEXT,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,  -- internal row id
+    session_id TEXT NOT NULL,  -- session of the turn
+    turn_number INTEGER NOT NULL,  -- turn the call belongs to
+    step INTEGER NOT NULL DEFAULT 0,  -- step of the turn
+    substep INTEGER NOT NULL DEFAULT 0,  -- position inside the step
+    tool_call_id TEXT,  -- id of the tool call
+    tool_name TEXT NOT NULL,  -- tool that was called
+    tool_args TEXT,  -- JSON with the arguments of the call
+    state TEXT NOT NULL DEFAULT 'open',  -- open (dispatched) | done (result committed)
+    child_id TEXT,  -- session_id of the sub-agent, when the call was a task
+    created_at TEXT NOT NULL,  -- local time the call was dispatched
+    updated_at TEXT NOT NULL,  -- local time of the last change
     FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
 );
 

@@ -2,14 +2,14 @@
 -- (a turn of a session); clicking again removes it. model and provider are the
 -- ones that produced the answer, so feedback can later be read per model.
 CREATE TABLE IF NOT EXISTS message_feedback (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_id TEXT NOT NULL,
-    turn_number INTEGER NOT NULL,
-    feedback_type TEXT NOT NULL CHECK (feedback_type IN ('up', 'down')),
-    model TEXT,
-    provider TEXT,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,  -- internal row id
+    session_id TEXT NOT NULL,  -- session of the answer
+    turn_number INTEGER NOT NULL,  -- turn of the answer
+    feedback_type TEXT NOT NULL CHECK (feedback_type IN ('up', 'down')),  -- up | down
+    model TEXT,  -- model that produced the answer
+    provider TEXT,  -- provider of that model
+    created_at TEXT NOT NULL,  -- local time the feedback was given
+    updated_at TEXT NOT NULL,  -- local time of the last change
     UNIQUE (session_id, turn_number),
     FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
 );
