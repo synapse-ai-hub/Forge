@@ -10,9 +10,14 @@ import yaml
 from backend.agent.utils.error_logger import log_error
 from backend.agent.utils import provider_keys
 from backend.agent.utils.model_catalog import get_provider_api_type
+from backend.agent.utils.rag_helpers import HELP_COLLECTION, MEMORY_COLLECTION
 from backend.instances import session_manager
 
 logger = logging.getLogger(__name__)
+
+# Internal RAG collections the router can always query (help and conversation
+# memory), independent of ``config.yaml``.
+_ROUTER_RAG_FLOOR = {HELP_COLLECTION: "allow", MEMORY_COLLECTION: "allow"}
 
 def _resolve_tool_api_type(effective_provider: str | None) -> str:
     """Resolve the API type used to pick the tool-message format.
@@ -70,10 +75,12 @@ def _load_router_permissions() -> dict | None:
 def _router_tool_permissions(router_perms: dict | None) -> dict:
     """Resolve the router's tool permissions.
 
-    If ``config.yaml`` defines permissions they are used exclusively (no
-    floor): ``tools`` become flat permissions, ``tasks`` the nested
-    ``task`` permission and ``workflows`` the nested ``workflow`` permission. Without ``config.yaml`` the guaranteed floor tools
-    are used.
+    If ``config.yaml`` defines permissions they are used exclusively: ``tools``
+    become flat permissions, ``tasks`` the nested ``task`` permission and
+    ``workflows`` the nested ``workflow`` permission. Without ``config.yaml``
+    the guaranteed floor tools are used. In both cases the internal RAG
+    collections (``_ROUTER_RAG_FLOOR``) are always readable, whatever the
+    yaml says.
 
     Args:
         router_perms: Result of :func:`_load_router_permissions`.
@@ -82,23 +89,31 @@ def _router_tool_permissions(router_perms: dict | None) -> dict:
         The tool permission dict for ``tools_registry``.
     """
     if router_perms is None:
-        return {
+        tool_permissions: dict = {
             "task": "allow",
-            "help": "allow",
             "search_memory": "allow",
             "read": "allow",
             "websearch": "allow",
             "webfetch": "allow",
         }
-    tool_permissions: dict = {}
-    for name, action in (router_perms.get("tools") or {}).items():
-        tool_permissions[name] = action
-    tasks_perms = router_perms.get("tasks")
-    if isinstance(tasks_perms, dict) and tasks_perms:
-        tool_permissions["task"] = tasks_perms
-    workflows_perms = router_perms.get("workflows")
-    if isinstance(workflows_perms, dict) and workflows_perms:
-        tool_permissions["workflow"] = workflows_perms
+    else:
+        tool_permissions = {}
+        for name, action in (router_perms.get("tools") or {}).items():
+            tool_permissions[name] = action
+        tasks_perms = router_perms.get("tasks")
+        if isinstance(tasks_perms, dict) and tasks_perms:
+            tool_permissions["task"] = tasks_perms
+        workflows_perms = router_perms.get("workflows")
+        if isinstance(workflows_perms, dict) and workflows_perms:
+            tool_permissions["workflow"] = workflows_perms
+
+    # Floor that is never removed nor overridden by the yaml. A flat
+    # ``rag: allow`` already covers every collection, so it is kept as is.
+    rag_perms = tool_permissions.get("rag")
+    if isinstance(rag_perms, dict):
+        tool_permissions["rag"] = {**rag_perms, **_ROUTER_RAG_FLOOR}
+    elif rag_perms != "allow":
+        tool_permissions["rag"] = dict(_ROUTER_RAG_FLOOR)
     return tool_permissions
 
 def _read_param_override(key: str) -> Any:

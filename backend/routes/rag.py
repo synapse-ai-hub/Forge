@@ -41,6 +41,7 @@ from backend.agent.utils.contract import (
     zero_usage,
 )
 from backend.agent.utils.rag_helpers import (
+    INTERNAL_COLLECTIONS,
     MAX_BYTES,
     MAX_FILES,
     fetch_url_content,
@@ -120,17 +121,15 @@ async def list_collections():
 
     Returns:
         Contract with the list of collections (name, metadata, count).
-        Excludes internal collections like agent_conversations.
+        Excludes internal collections (agent_conversations, help).
     """
     try:
-        from backend.agent.utils.rag_helpers import MEMORY_COLLECTION
-
         db = get_vector_db()
         collections = db.list_collections()
         result = []
         for c in collections:
             # Skip internal collections
-            if c["name"] == MEMORY_COLLECTION:
+            if c["name"] in INTERNAL_COLLECTIONS:
                 continue
             try:
                 info = db.get_collection_info(c["name"])
@@ -251,6 +250,124 @@ async def delete_collection(name: str):
     except Exception:
         logger.exception("Error eliminando colección")
         return make_error_response(message="No se pudo eliminar la colección.")
+
+
+def _source_of(meta: dict[str, Any] | None) -> tuple[str, str]:
+    """Return the ``(kind, name)`` source a chunk came from.
+
+    Files carry ``filename`` and web pages ``url``. Chunks with neither
+    (collections created by other means) are grouped under ``("other", "")``.
+    """
+    meta = meta or {}
+    if meta.get("url"):
+        return "url", str(meta["url"])
+    if meta.get("filename"):
+        return "file", str(meta["filename"])
+    return "other", ""
+
+
+def _list_sources_sync(db: VectorDB, name: str) -> list[dict[str, Any]]:
+    """Group the chunks of a collection by source (blocking)."""
+    data = db.get_collection(name).get(include=["metadatas"])
+    counts: dict[tuple[str, str], int] = {}
+    for meta in data.get("metadatas") or []:
+        key = _source_of(meta)
+        counts[key] = counts.get(key, 0) + 1
+    return [
+        {"kind": kind, "name": source, "chunks": chunks}
+        for (kind, source), chunks in sorted(counts.items(), key=lambda item: (item[0][0], item[0][1].lower()))
+    ]
+
+
+def _delete_source_sync(db: VectorDB, name: str, kind: str, source: str) -> int:
+    """Delete every chunk of one source (blocking). Returns the deleted count."""
+    data = db.get_collection(name).get(include=["metadatas"])
+    ids = [
+        chunk_id
+        for chunk_id, meta in zip(data.get("ids") or [], data.get("metadatas") or [])
+        if _source_of(meta) == (kind, source)
+    ]
+    if ids:
+        db.delete_documents(name, ids)
+    return len(ids)
+
+
+@router.get("/collections/{name}/sources")
+async def list_sources(name: str):
+    """List the sources (files and web pages) of a collection.
+
+    Args:
+        name: Collection name.
+
+    Returns:
+        Contract with ``sources``: ``[{kind, name, chunks}]``.
+    """
+    try:
+        error = validar_nombre_coleccion(name)
+        if error:
+            return make_error_response(message=error)
+        if name in INTERNAL_COLLECTIONS:
+            return make_error_response(message="Las colecciones internas no se administran desde acá.")
+
+        db = get_vector_db()
+        try:
+            db.get_collection(name)
+        except ValueError:
+            return make_error_response(message=f"La colección '{name}' no existe.")
+
+        sources = await asyncio.to_thread(_list_sources_sync, db, name)
+        return validate_response(
+            make_success_response(
+                message=f"{len(sources)} fuente(s) en '{name}'.",
+                data={"sources": sources},
+                usage=zero_usage(),
+            )
+        )
+    except Exception:
+        logger.exception("Error listando fuentes de la colección")
+        return make_error_response(message="No se pudieron listar las fuentes.")
+
+
+@router.delete("/collections/{name}/sources")
+async def delete_source(name: str, kind: str, source: str = ""):
+    """Delete one source (all its chunks) from a collection.
+
+    Args:
+        name: Collection name.
+        kind: ``file``, ``url`` or ``other`` (as returned by the listing).
+        source: File name or URL of the source (empty for ``other``).
+
+    Returns:
+        Contract with the number of deleted chunks.
+    """
+    try:
+        error = validar_nombre_coleccion(name)
+        if error:
+            return make_error_response(message=error)
+        if name in INTERNAL_COLLECTIONS:
+            return make_error_response(message="Las colecciones internas no se administran desde acá.")
+        if kind not in ("file", "url", "other"):
+            return make_error_response(message="Tipo de fuente inválido.")
+
+        db = get_vector_db()
+        try:
+            db.get_collection(name)
+        except ValueError:
+            return make_error_response(message=f"La colección '{name}' no existe.")
+
+        deleted = await asyncio.to_thread(_delete_source_sync, db, name, kind, source)
+        if deleted == 0:
+            return make_error_response(message="La fuente no existe en la colección.")
+        return validate_response(
+            make_success_response(
+                message=f"Fuente eliminada de '{name}' ({deleted} chunks).",
+                data={"deleted": deleted},
+                usage=zero_usage(),
+            )
+        )
+    except Exception:
+        logger.exception("Error eliminando fuente de la colección")
+        return make_error_response(message="No se pudo eliminar la fuente.")
 
 
 @router.post("/collections/{name}/files")

@@ -60,7 +60,6 @@ def build_parent_tools(agent: Agent) -> list[dict[str, Any]]:
         # No config.yaml — use the guaranteed floor.
         tool_permissions = {
             "task": "allow",
-            "help": "allow",
             "search_memory": "allow",
             "read": "allow",
             "websearch": "allow",

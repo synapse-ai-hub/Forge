@@ -67,6 +67,14 @@ MAX_RESPONSE_BYTES = 5 * 1024 * 1024
 # Dedicated Chroma collection holding one document per conversation turn.
 MEMORY_COLLECTION = "agent_conversations"
 
+# Dedicated Chroma collection holding the internal documentation, one
+# document per section.
+HELP_COLLECTION = "help"
+
+# Internal collections: created at startup, never shown to the user as RAG
+# collections.
+INTERNAL_COLLECTIONS = (MEMORY_COLLECTION, HELP_COLLECTION)
+
 # Turns are usually short, so a turn is a single document. Only when the
 # document exceeds this size is the existing chunking helper applied.
 MAX_TURN_DOC_CHARS = 4000
@@ -224,7 +232,7 @@ def list_collections() -> list[str]:
                 name = entry.get("name")
             else:
                 name = getattr(entry, "name", None)
-            if name:
+            if name and str(name) not in INTERNAL_COLLECTIONS:
                 names.append(str(name))
         return names
     except Exception as exc:

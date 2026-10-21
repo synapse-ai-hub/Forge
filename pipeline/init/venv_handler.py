@@ -75,6 +75,34 @@ def _venv_python(venv_path: Path) -> Path:
     return venv_path / "Scripts" / "python.exe"
 
 
+def run_seed_collections(target: Path, venv_path: Path) -> None:
+    """Load the internal ``help`` collection (already vectorized) into the knowledge dir."""
+    python = get_venv_python(venv_path)
+    if not python.is_file():
+        python = Path(sys.executable)
+
+    code = (
+        "from backend.agent.utils.seed_collections import seed_help_collection; "
+        "added = seed_help_collection(); "
+        "print(f'  Help collection: {added} sections loaded.' if added else '  Help collection already present.')"
+    )
+
+    try:
+        result = subprocess.run(
+            [str(python), "-c", code],
+            cwd=str(target),
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        if result.stdout.strip():
+            print(f"  {result.stdout.strip()}")
+    except subprocess.CalledProcessError as exc:
+        print(f"  WARNING: help collection seed failed:\n{exc.stderr.strip()}")
+    except Exception as exc:
+        print(f"  WARNING: help collection seed error: {exc}")
+
+
 def run_ddl_setup(target: Path, venv_path: Path) -> None:
     """Run ddl_setup to initialize/update the SQLite database tables."""
     db_path = target / "backend" / "agent" / "agent_db" / "agent.db"

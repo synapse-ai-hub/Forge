@@ -86,9 +86,9 @@ def test_small_yaml_drops_sections_of_missing_tools():
     names = _router_tool_names(
         {"tools": {"read": "allow", "websearch": "allow", "webfetch": "allow", "search_memory": "allow"}}
     )
-    assert "task" not in names and "help" not in names and "write" not in names
+    assert "task" not in names and "write" not in names
     prompt = build_system_prompt(None, tools=names)
-    for gone in ("## Tool: help", "## TODOs para tareas complejas",
+    for gone in ("## TODOs para tareas complejas",
                  "### Cómo redactar el prompt para el sub-agente"):
         assert gone not in prompt, gone
     assert "delegar las tareas" not in prompt
@@ -100,9 +100,9 @@ def test_small_yaml_drops_sections_of_missing_tools():
 
 def test_router_without_tools_has_no_tool_sections():
     names = _router_tool_names({"tools": {}})
-    assert names == []
+    # Only the always-on floor remains: rag on the internal collections.
+    assert names == ["rag"]
     prompt = build_system_prompt(None, tools=names)
-    assert "## Paralelización" not in prompt
     assert "## Cómo encontrar y leer información" not in prompt
     assert "Seguir enlaces o descargar archivos" not in prompt
     assert "## Seguridad" in prompt
@@ -110,7 +110,7 @@ def test_router_without_tools_has_no_tool_sections():
 
 def test_shell_adds_command_and_sql_rules():
     names = _router_tool_names({"tools": {"shell": "allow"}})
-    assert names == ["shell"]
+    assert names == ["rag", "shell"]
     prompt = build_system_prompt(None, tools=names)
     assert "comandos destructivos" in prompt
     assert "usá parámetros" in prompt
