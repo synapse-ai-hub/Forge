@@ -544,6 +544,15 @@ function WorkflowsPanel() {
     };
   }, [load]);
 
+  // While a run is open, ask for its state from time to time: if the event
+  // that closes it never arrives (connection lost), the card still updates.
+  const anyRunning = items.some((w) => w.running);
+  useEffect(() => {
+    if (!anyRunning) return;
+    const timer = window.setInterval(load, 5000);
+    return () => window.clearInterval(timer);
+  }, [anyRunning, load]);
+
   const play = async (name: string) => {
     setStarting(name);
     setErrors((prev) => ({ ...prev, [name]: "" }));
@@ -581,13 +590,14 @@ function WorkflowsPanel() {
     if (!item.run_id) return;
     try {
       await workflowService.cancel(item.run_id);
-      await load();
     } catch (err) {
       setErrors((prev) => ({
         ...prev,
         [item.name]: err instanceof Error ? err.message : "No se pudo cancelar la ejecución.",
       }));
     }
+    // Whatever the answer, show the real state (the run may have ended already).
+    await load();
   };
 
   if (loading) return <p className="text-sm text-app-text-secondary">Cargando...</p>;

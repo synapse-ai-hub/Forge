@@ -25,6 +25,7 @@ import configService from "./services/configService";
 import telegramService from "./services/telegramService";
 import chatService from "./services/chatService";
 import notificationService, { type AppNotification } from "./services/notificationService";
+import { NotificationModal } from "./components/NotificationModal";
 import { API_BASE_URL } from "./config/api";
 
 export type { ContentBlock };
@@ -336,10 +337,36 @@ const handleTelegramToggle = useCallback((val: boolean) => {
     setShowSidebarMenu((prev) => !prev);
   }, []);
 
+  /* Clicking a notification opens a window with its complete output. */
+  const [openedNotification, setOpenedNotification] = useState<AppNotification | null>(null);
+  const handleSelectNotification = useCallback((n: AppNotification) => {
+    setOpenedNotification(n);
+  }, []);
+  const handleCloseNotification = useCallback(() => setOpenedNotification(null), []);
+  /* "Revisar con el agente": the new conversation (with the output) shows up in the sidebar. */
+  const handleReviewed = useCallback(
+    (sessionId: string) => {
+      setRefreshTrigger((t) => t + 1);
+      handleSelectSession(sessionId);
+    },
+    [handleSelectSession]
+  );
+
   // Listen to backend events (SSE) so Telegram messages/commands run the
   // exact same chat flow as if the user had typed in the web UI.
   useEffect(() => {
     const es = new EventSource(`${API_BASE_URL}/api/events`);
+    let connectedBefore = false;
+    es.onopen = () => {
+      // The events emitted while the connection was down (a backend restart)
+      // are lost: on reconnect, ask for the current state instead.
+      if (connectedBefore) {
+        notificationService.list().then(setNotifications).catch(() => {});
+        window.dispatchEvent(new CustomEvent("workflow-run"));
+        setRefreshTrigger((t) => t + 1);
+      }
+      connectedBefore = true;
+    };
     es.onmessage = (ev) => {
       let data: any;
       try {
@@ -475,8 +502,15 @@ const handleTelegramToggle = useCallback((val: boolean) => {
           onOpenNotifications={handleOpenNotifications}
           onDeleteNotification={handleDeleteNotification}
           onClearNotifications={handleClearNotifications}
+          onSelectNotification={handleSelectNotification}
         />
       </div>
+
+      <NotificationModal
+        notification={openedNotification}
+        onClose={handleCloseNotification}
+        onReviewed={handleReviewed}
+      />
 
       <HistoryModal
         open={showHistory}

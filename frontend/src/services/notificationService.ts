@@ -47,6 +47,22 @@ async function clear(): Promise<void> {
   if (!res.ok) throw new Error("Error limpiando las notificaciones");
 }
 
-const notificationService = { list, markAllRead, remove, clear };
+/** Complete output behind a notification (the bell only keeps a short text). */
+async function detail(id: number): Promise<{ notification: AppNotification; output: string }> {
+  const res = await fetch(`${API_BASE_URL}/api/notifications/${id}/detail`);
+  const data = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(data?.message || "No se pudo cargar el resultado.");
+  return { notification: data.notification as AppNotification, output: String(data.output || "") };
+}
+
+/** Open a new conversation that already holds the output ("Revisar con el agente"). */
+async function review(id: number): Promise<string> {
+  const res = await fetch(`${API_BASE_URL}/api/notifications/${id}/review`, { method: "POST" });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(data?.message || "No se pudo abrir la revisión con el agente.");
+  return String(data.session_id);
+}
+
+const notificationService = { list, markAllRead, remove, clear, detail, review };
 
 export default notificationService;
