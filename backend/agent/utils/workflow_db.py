@@ -1,8 +1,10 @@
-"""Persistence helpers for workflows: registry, runs, node commits and usage.
+"""Persistence helpers for workflows: registry, runs and node commits.
 
-Tables: ``workflows`` (name is the id), ``workflow_runs`` (one row per
-execution), ``workflow_run_steps`` (one commit row per node execution) and
-the spend of the LLM calls the engine makes by itself, kept in each run.
+Tables: ``workflows`` (name is the id), ``workflow_runs`` (laid out like
+``messages``: the row of the run plus one row per node execution and per LLM
+call of the engine, each with its step, substep, status, result and spend) and
+``workflow_run_steps`` (the node commits a failed or cut run resumes from;
+they are deleted when the run ends well).
 
 Every function manages its own connection, never raises and logs failures:
 persisting a run must never break its execution. All timestamps are local
@@ -25,7 +27,11 @@ MAX_ATTEMPTS = 3
 
 
 def _now() -> str:
-    """Return the current local time as an ISO string."""
+    """Return the current local time.
+
+    Returns:
+        The time in ISO format.
+    """
     return datetime.now().isoformat()
 
 
@@ -77,7 +83,12 @@ def create_run(
 
 
 def set_run_session(run_id: str, session_id: str) -> None:
-    """Attach the execution session to a run."""
+    """Attach the execution session to a run.
+
+    Args:
+        run_id: Run identifier.
+        session_id: Session that holds the execution.
+    """
     try:
         with db_transaction() as conn:
             conn.execute(load_query("workflows/set_run_session.sql"), (session_id, run_id))
@@ -86,7 +97,14 @@ def set_run_session(run_id: str, session_id: str) -> None:
 
 
 def get_run(run_id: str) -> dict[str, Any] | None:
-    """Return one run as a dict, or ``None`` when it does not exist."""
+    """Fetch one run.
+
+    Args:
+        run_id: Run identifier.
+
+    Returns:
+        The run as a dict, or ``None`` when it does not exist.
+    """
     try:
         with get_connection() as conn:
             row = conn.execute(load_query("workflows/get_run.sql"), (run_id,)).fetchone()
@@ -97,7 +115,11 @@ def get_run(run_id: str) -> dict[str, Any] | None:
 
 
 def list_running_runs() -> list[dict[str, Any]]:
-    """Return the runs still marked as ``running``."""
+    """List the runs still marked as ``running``.
+
+    Returns:
+        One dict per run.
+    """
     try:
         with get_connection() as conn:
             rows = conn.execute(load_query("workflows/list_running.sql")).fetchall()
@@ -108,7 +130,11 @@ def list_running_runs() -> list[dict[str, Any]]:
 
 
 def list_last_runs() -> dict[str, dict[str, Any]]:
-    """Return the latest run of every workflow, keyed by workflow name."""
+    """List the latest run of every workflow.
+
+    Returns:
+        Workflow name → its most recent run.
+    """
     try:
         with get_connection() as conn:
             rows = conn.execute(load_query("workflows/list_last_runs.sql")).fetchall()
@@ -119,11 +145,14 @@ def list_last_runs() -> dict[str, dict[str, Any]]:
 
 
 def list_runs(name: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
-    """Return the most recent runs, newest first.
+    """List the most recent runs, newest first.
 
     Args:
         name: Restrict to one workflow, or ``None`` for all.
         limit: Maximum number of runs.
+
+    Returns:
+        One dict per run.
     """
     try:
         with get_connection() as conn:
@@ -137,7 +166,12 @@ def list_runs(name: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
 
 
 def set_run_attempt(run_id: str, attempt: int) -> None:
-    """Start another attempt of a run (it goes back to ``running``)."""
+    """Start another attempt of a run (it goes back to ``running``).
+
+    Args:
+        run_id: Run identifier.
+        attempt: Attempt number (1..3).
+    """
     try:
         with db_transaction() as conn:
             conn.execute(load_query("workflows/set_run_attempt.sql"), (attempt, run_id))
@@ -180,6 +214,15 @@ def open_step(
 ) -> int | None:
     """Record a dispatched node as an open commit row.
 
+    Args:
+        run_id: Run identifier.
+        attempt: Attempt that dispatches the node.
+        step: Step of the workflow.
+        substep: Position of the node inside its step.
+        node_id: Node id in the YAML.
+        node_type: ``agent``, ``tool``, ``rag`` or ``run``.
+        args: Arguments of the node.
+
     Returns:
         The commit row id, or ``None`` when it could not be stored.
     """
@@ -200,7 +243,13 @@ def open_step(
 
 
 def commit_step(row_id: int | None, result: str, child_session_id: str | None = None) -> None:
-    """Commit the complete result of a node (row goes to ``done``)."""
+    """Commit the complete result of a node (the row goes to ``done``).
+
+    Args:
+        row_id: Commit row id (``None`` is ignored).
+        result: Complete output of the node.
+        child_session_id: Session of the sub-agent, in agent nodes.
+    """
     if row_id is None:
         return
     try:
@@ -214,7 +263,13 @@ def commit_step(row_id: int | None, result: str, child_session_id: str | None = 
 
 
 def fail_step(row_id: int | None, error: str, child_session_id: str | None = None) -> None:
-    """Mark a node as failed with its technical error."""
+    """Mark a node as failed with its technical error.
+
+    Args:
+        row_id: Commit row id (``None`` is ignored).
+        error: Failure message.
+        child_session_id: Session of the sub-agent, in agent nodes.
+    """
     if row_id is None:
         return
     try:
@@ -228,7 +283,12 @@ def fail_step(row_id: int | None, error: str, child_session_id: str | None = Non
 
 
 def fail_open_steps(run_id: str, reason: str) -> None:
-    """Mark the nodes left in flight by a cut as failed."""
+    """Mark the nodes left in flight by a cut as failed.
+
+    Args:
+        run_id: Run identifier.
+        reason: Failure message to store.
+    """
     try:
         with db_transaction() as conn:
             conn.execute(
@@ -239,7 +299,14 @@ def fail_open_steps(run_id: str, reason: str) -> None:
 
 
 def load_done_steps(run_id: str) -> list[dict[str, Any]]:
-    """Return the committed nodes of a run, in execution order."""
+    """List the committed nodes of a run.
+
+    Args:
+        run_id: Run identifier.
+
+    Returns:
+        One dict per committed node, in execution order.
+    """
     try:
         with get_connection() as conn:
             rows = conn.execute(load_query("workflows/list_done_steps.sql"), (run_id,)).fetchall()
@@ -250,7 +317,12 @@ def load_done_steps(run_id: str) -> list[dict[str, Any]]:
 
 
 def invalidate_steps_after(run_id: str, step: int) -> None:
-    """Mark as stale the committed nodes after ``step`` (they will be re-run)."""
+    """Mark as stale the committed nodes after a step (they will be run again).
+
+    Args:
+        run_id: Run identifier.
+        step: Last step that stays valid.
+    """
     try:
         with db_transaction() as conn:
             conn.execute(
@@ -261,7 +333,14 @@ def invalidate_steps_after(run_id: str, step: int) -> None:
 
 
 def list_steps(run_id: str) -> list[dict[str, Any]]:
-    """Return every node execution of a run, in order."""
+    """List every node execution of a run.
+
+    Args:
+        run_id: Run identifier.
+
+    Returns:
+        One dict per execution, in order.
+    """
     try:
         with get_connection() as conn:
             rows = conn.execute(load_query("workflows/list_steps.sql"), (run_id,)).fetchall()
@@ -271,31 +350,113 @@ def list_steps(run_id: str) -> list[dict[str, Any]]:
         return []
 
 
-def record_usage(
-    workflow_name: str,
+def _child_usage(child_session_id: str | None) -> tuple[Any, ...]:
+    """Add up the spend of a sub-agent session.
+
+    Args:
+        child_session_id: Session of the sub-agent, or ``None`` when the node has none.
+
+    Returns:
+        ``(provider, model, prompt_tokens, completion_tokens, total_tokens, total_time,
+        cost_input, cost_output, cost_total)``; zeros and ``None`` without a session.
+    """
+    empty = (None, None, 0, 0, 0, 0.0, 0.0, 0.0, 0.0)
+    if not child_session_id:
+        return empty
+    try:
+        with get_connection() as conn:
+            row = conn.execute(
+                load_query("workflows/child_usage.sql"),
+                (child_session_id, child_session_id, child_session_id),
+            ).fetchone()
+        if row is None:
+            return empty
+        return (
+            row["provider"], row["model"], row["prompt_tokens"], row["completion_tokens"],
+            row["total_tokens"], row["total_time"], row["cost_input"], row["cost_output"],
+            row["cost_total"],
+        )
+    except Exception as exc:
+        log_error(str(exc), source="workflow_db.py:_child_usage")
+        return empty
+
+
+def record_node(
     run_id: str,
-    purpose: str,
+    attempt: int,
+    step: int,
+    substep: int,
+    node_id: str,
+    node_type: str,
+    status: str,
+    result: str | None = None,
+    error: str | None = None,
+    child_session_id: str | None = None,
+    started_at: str | None = None,
+) -> bool:
+    """Record one execution of a node as a row of its run.
+
+    An agent node adds up the spend of its child session.
+
+    Args:
+        run_id: Run identifier.
+        attempt: Attempt that executed the node.
+        step: Step of the workflow.
+        substep: Position of the node inside its step (parallel nodes).
+        node_id: Node id in the YAML.
+        node_type: ``agent``, ``tool``, ``rag`` or ``run``.
+        status: ``success``, ``error`` or ``cancelled``.
+        result: Complete output of the node, when it succeeded.
+        error: Failure message, when it failed.
+        child_session_id: Session of the sub-agent, in agent nodes.
+        started_at: Local time the node was dispatched (now when ``None``).
+
+    Returns:
+        ``True`` when the row was stored.
+    """
+    try:
+        now = _now()
+        with db_transaction() as conn:
+            cur = conn.execute(
+                load_query("workflows/insert_node_row.sql"),
+                (
+                    attempt, step, substep, node_id, node_type, status, child_session_id,
+                    result, error, *_child_usage(child_session_id), started_at or now, now, run_id,
+                ),
+            )
+            return cur.rowcount > 0
+    except Exception as exc:
+        log_error(str(exc), source="workflow_db.py:record_node")
+        return False
+
+
+def record_engine_row(
+    run_id: str,
+    kind: str,
     provider: str | None,
     model: str | None,
     usage: dict[str, Any] | None,
+    status: str | None = None,
+    result: str | None = None,
 ) -> bool:
-    """Record the spend of an LLM call made by the workflow engine in its run.
+    """Record an LLM call made by the workflow engine as the next step of its run.
 
-    The run row keeps the sums (tokens, time, cost) and ``usage_calls`` keeps
-    every call. ``spend`` is not touched here: ``llm_process`` already
-    contemplates it.
+    The row has its own step and substep 0, the verdict or text the call
+    produced and its spend. ``spend`` is not touched here: ``llm_process``
+    already contemplates it.
 
     Args:
-        workflow_name: Workflow that made the call.
         run_id: Run that made the call.
-        purpose: ``"judge"``, ``"explain"`` or ``"output"``.
+        kind: ``"decision"``, ``"judge"``, ``"output"`` or ``"explain"``.
         provider: Provider used.
         model: Model used.
         usage: Usage report (``prompt_tokens``, ``completion_tokens``,
             ``total_tokens``, ``total_time``).
+        status: ``approved`` or ``rejected`` (decision, judge), ``success`` or ``error``.
+        result: Text the call produced (answers, verdict, output or explanation).
 
     Returns:
-        ``True`` when the call was stored.
+        ``True`` when the row was stored.
     """
     try:
         from backend.agent.utils.spend_handler import calculate_cost
@@ -310,35 +471,33 @@ def record_usage(
         cost_input, cost_output, cost_total = calculate_cost(
             provider_value, model_value, prompt_tokens, completion_tokens
         )
-        call = {
-            "purpose": purpose, "provider": provider_value, "model": model_value,
-            "prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens,
-            "total_tokens": total_tokens, "total_time": total_time,
-            "cost_input": cost_input, "cost_output": cost_output, "cost_total": cost_total,
-            "created_at": _now(),
-        }
+        now = _now()
         with db_transaction() as conn:
-            row = conn.execute("SELECT usage_calls FROM workflow_runs WHERE id = ?", (run_id,)).fetchone()
-            if row is None:
-                return False
-            calls = json.loads(row[0]) if row[0] else []
-            calls.append(call)
-            conn.execute(
-                load_query("workflows/set_usage.sql"),
+            cur = conn.execute(
+                load_query("workflows/insert_engine_row.sql"),
                 (
+                    kind, status, result, provider_value, model_value,
                     prompt_tokens, completion_tokens, total_tokens, total_time,
-                    cost_input, cost_output, cost_total,
-                    json.dumps(calls, ensure_ascii=False), run_id,
+                    cost_input, cost_output, cost_total, now, now, run_id,
                 ),
             )
-        return True
+            return cur.rowcount > 0
     except Exception as exc:
-        log_error(str(exc), source="workflow_db.py:record_usage")
+        log_error(str(exc), source="workflow_db.py:record_engine_row")
         return False
 
 
 def delete_run_steps(run_id: str) -> bool:
-    """Delete the node commits of a run that finished well (nothing left to resume)."""
+    """Delete the node commits of a run that finished well.
+
+    Nothing is left to resume, so what ended is removed.
+
+    Args:
+        run_id: Run identifier.
+
+    Returns:
+        ``True`` when the rows were deleted.
+    """
     try:
         with db_transaction() as conn:
             conn.execute(load_query("workflows/delete_run_steps.sql"), (run_id,))
@@ -349,7 +508,7 @@ def delete_run_steps(run_id: str) -> bool:
 
 
 def delete_workflow(name: str) -> bool:
-    """Remove a workflow from the registry with its runs, commits, spend and notifications.
+    """Remove a workflow from the registry with its runs, commits and notifications.
 
     The sessions created by its runs stay in the history.
 

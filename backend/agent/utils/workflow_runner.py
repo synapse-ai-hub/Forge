@@ -21,21 +21,30 @@ import asyncio
 import json
 import logging
 import uuid
+from datetime import datetime
 from typing import Any
 
 from backend.agent.utils import workflow_db
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from backend.agent.agent import Agent
+    from backend.agent.session import SessionManager
+    from collections.abc import Awaitable, Callable
+
 logger = logging.getLogger(__name__)
-
-CONTEXT_LIMIT = 24000
-"""Characters of previous results handed to an agent node, shared among the nodes."""
-
-NODE_MESSAGE_LIMIT = 2000
-"""Characters of a node result stored in the run session (the commit row keeps it whole)."""
 
 
 def _as_text(data: Any) -> str:
-    """Return a node result as text (JSON for dicts and lists)."""
+    """Convert a node result to text.
+
+    Args:
+        data: Result of a node (text, dict, list or ``None``).
+
+    Returns:
+        The text itself, JSON for dicts and lists, or an empty string for ``None``.
+    """
     if data is None:
         return ""
     if isinstance(data, (dict, list)):
@@ -49,7 +58,7 @@ def _as_text(data: Any) -> str:
 class WorkflowRunner:
     """Execute one attempt of a validated workflow, step by step."""
 
-    def __init__(self, agent, session_manager) -> None:
+    def __init__(self, agent: Agent, session_manager: SessionManager) -> None:
         """Store shared singletons.
 
         Args:
@@ -166,9 +175,22 @@ class WorkflowRunner:
         nodes: list[dict[str, Any]],
         attempt: int,
         cancel_event: asyncio.Event,
-        execute_tool,
+        execute_tool: Callable[..., Awaitable[dict[str, Any]]],
     ) -> dict[str, Any]:
-        """Execute the pending steps of the DAG (see :meth:`execute_attempt`)."""
+        """Execute the pending steps of the DAG (see :meth:`execute_attempt`).
+
+        Args:
+            run_id: Run identifier (owner of the commit rows).
+            session_id: Session that holds the execution.
+            workflow: Validated workflow data.
+            nodes: Normalized workflow nodes.
+            attempt: Attempt number (1..3).
+            cancel_event: Set when the user cancels the run.
+            execute_tool: Tool executor from ``loop_helpers``.
+
+        Returns:
+            The attempt outcome ``{status, results, failures, final_text}``.
+        """
         on_failure = workflow.get("on_failure", "continue")
         name = workflow.get("name", "workflow")
         committed = self._resume_state(run_id, nodes)
@@ -190,6 +212,7 @@ class WorkflowRunner:
                 continue
 
             rows: dict[str, int | None] = {}
+            started_at = datetime.now().isoformat()
             for pos, node in pending:
                 rows[node["id"]] = workflow_db.open_step(
                     run_id, attempt, step, pos, node["id"], node["type"], node.get("args"),
@@ -202,19 +225,32 @@ class WorkflowRunner:
             )
 
             aborted = False
-            for (_, node), outcome in zip(pending, outcomes):
+            for (pos, node), outcome in zip(pending, outcomes):
                 row_id = rows.get(node["id"])
                 if outcome["status"] == "success":
                     data = _as_text(outcome["data"])
                     workflow_db.commit_step(row_id, data, outcome.get("child_id"))
+                    workflow_db.record_node(
+                        run_id, attempt, step, pos, node["id"], node["type"], "success",
+                        result=data, child_session_id=outcome.get("child_id"), started_at=started_at,
+                    )
                     committed[node["id"]] = {"result": data, "child": outcome.get("child_id")}
                     state["results"][node["id"]] = data
                     self._save_node_message(session_id, node, step, data, None)
                 elif outcome["status"] == "cancelled":
                     workflow_db.fail_step(row_id, "Cancelado por el usuario.", outcome.get("child_id"))
+                    workflow_db.record_node(
+                        run_id, attempt, step, pos, node["id"], node["type"], "cancelled",
+                        error="Cancelado por el usuario.", child_session_id=outcome.get("child_id"),
+                        started_at=started_at,
+                    )
                 else:
                     message = str(outcome.get("message") or "Nodo fallido.")
                     workflow_db.fail_step(row_id, message, outcome.get("child_id"))
+                    workflow_db.record_node(
+                        run_id, attempt, step, pos, node["id"], node["type"], "error",
+                        error=message, child_session_id=outcome.get("child_id"), started_at=started_at,
+                    )
                     state["errors"][node["id"]] = message
                     failures.append({"node": node["id"], "type": node["type"], "error": message})
                     self._save_node_message(session_id, node, step, "", message)
@@ -234,7 +270,17 @@ class WorkflowRunner:
         failures: list[dict[str, str]],
         nodes: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        """Build the attempt result, resolving the final answer of the run."""
+        """Build the attempt result, resolving the final answer of the run.
+
+        Args:
+            status: ``"success"``, ``"error"`` or ``"cancelled"``.
+            state: Shared state of the attempt (``results`` of every node).
+            failures: One dict per failed node with ``node``, ``type`` and ``error``.
+            nodes: Normalized workflow nodes.
+
+        Returns:
+            The attempt outcome ``{status, results, failures, final_text}``.
+        """
         final_text = ""
         for node in nodes:
             if node.get("final"):
@@ -254,14 +300,22 @@ class WorkflowRunner:
         data: str,
         error: str | None,
     ) -> None:
-        """Store a short record of a node in the run session."""
+        """Store a short record of a node in the run session.
+
+        Args:
+            session_id: Session that holds the execution.
+            node: Normalized node.
+            step: Step of the node.
+            data: Result of the node, when it succeeded.
+            error: Failure message, or ``None`` when the node succeeded.
+        """
         from backend.agent.utils.error_logger import log_error
 
         try:
             if error is None:
                 self._session_manager.save_message(
                     session_id, "assistant",
-                    content=f"[nodo {node['id']}] {data[:NODE_MESSAGE_LIMIT]}",
+                    content=f"[nodo {node['id']}] {data}",
                     turn_number=1, step=step, status="success", message="",
                 )
             else:
@@ -283,9 +337,16 @@ class WorkflowRunner:
         node: dict[str, Any],
         state: dict[str, Any],
         cancel_event: asyncio.Event,
-        execute_tool,
+        execute_tool: Callable[..., Awaitable[dict[str, Any]]],
     ) -> dict[str, Any]:
         """Run one node with its own retries (exponential backoff).
+
+        Args:
+            session_id: Session that holds the execution.
+            node: Normalized node.
+            state: Shared state of the attempt.
+            cancel_event: Set when the user cancels the run.
+            execute_tool: Tool executor from ``loop_helpers``.
 
         Returns:
             ``{"status": "success" | "error" | "cancelled", "message", "data",
@@ -334,19 +395,19 @@ class WorkflowRunner:
     def _build_context(results: dict[str, Any]) -> str:
         """Render the results of the previous nodes as readable text.
 
-        Each node keeps its own share of ``CONTEXT_LIMIT``: a long result is
-        cut at the end of its own section (marked), never in the middle of a
-        JSON structure, and it cannot push the other nodes out of the prompt.
+        Every result goes in whole, with no cut.
+
+        Args:
+            results: Node id → result of the previous nodes.
+
+        Returns:
+            One section per node, or an empty string when there are no results.
         """
         if not results:
             return ""
-        share = max(CONTEXT_LIMIT // len(results), 500)
         sections = []
         for node_id, value in results.items():
-            text = _as_text(value).strip()
-            if len(text) > share:
-                text = text[:share].rstrip() + "\n[... resultado recortado ...]"
-            sections.append(f"### {node_id}\n{text}")
+            sections.append(f"### {node_id}\n{_as_text(value).strip()}")
         return "\n\n".join(sections)
 
     async def _run_agent_node(
@@ -356,7 +417,21 @@ class WorkflowRunner:
         state: dict[str, Any],
         cancel_event: asyncio.Event,
     ) -> dict[str, Any]:
-        """Run an agent node in a child session, return only final text."""
+        """Run an agent node in a child session.
+
+        The agent uses its own markdown (system prompt, permissions and parameters).
+        The user message is the prompt of the node (the ``prompt_file`` toml when it
+        has one) followed by the results of the previous steps.
+
+        Args:
+            session_id: Session that holds the execution.
+            node: Normalized agent node.
+            state: Shared state of the attempt.
+            cancel_event: Set when the user cancels the run.
+
+        Returns:
+            Contract dict ``{status, message, data, child_id}`` with the final text of the agent.
+        """
         import json as _json
 
         from backend.agent.loop import AgentLoop
@@ -461,8 +536,22 @@ class WorkflowRunner:
         return {"status": "success", "message": "Nodo agente ok.", "data": final_text,
                 "child_id": child_id}
 
-    async def _run_tool_node(self, node: dict[str, Any], state: dict[str, Any], execute_tool) -> dict[str, Any]:
-        """Run a tool node with permissions from its agent when set."""
+    async def _run_tool_node(
+        self,
+        node: dict[str, Any],
+        state: dict[str, Any],
+        execute_tool: Callable[..., Awaitable[dict[str, Any]]],
+    ) -> dict[str, Any]:
+        """Run a tool node.
+
+        Args:
+            node: Normalized tool node.
+            state: Shared state of the attempt.
+            execute_tool: Tool executor from ``loop_helpers``.
+
+        Returns:
+            Contract dict ``{status, message, data}`` with the output of the tool as text.
+        """
         import json as _json
 
         from backend.agent.utils.error_logger import log_error
@@ -500,7 +589,11 @@ class WorkflowRunner:
             text = str(data)
         return {"status": "success", "message": "Nodo tool ok.", "data": text}
 
-    async def _run_run_node(self, node: dict[str, Any], execute_tool) -> dict[str, Any]:
+    async def _run_run_node(
+        self,
+        node: dict[str, Any],
+        execute_tool: Callable[..., Awaitable[dict[str, Any]]],
+    ) -> dict[str, Any]:
         """Run a run node (shell command, github-actions style).
 
         Executes ``node["run"]`` through the ``shell`` tool so it inherits
@@ -571,8 +664,22 @@ class WorkflowRunner:
             text = str(data)
         return {"status": "success", "message": "Nodo run ok.", "data": text}
 
-    async def _run_rag_node(self, node: dict[str, Any], state: dict[str, Any], execute_tool) -> dict[str, Any]:
-        """Run a rag node against a collection."""
+    async def _run_rag_node(
+        self,
+        node: dict[str, Any],
+        state: dict[str, Any],
+        execute_tool: Callable[..., Awaitable[dict[str, Any]]],
+    ) -> dict[str, Any]:
+        """Run a rag node against a collection.
+
+        Args:
+            node: Normalized rag node.
+            state: Shared state of the attempt.
+            execute_tool: Tool executor from ``loop_helpers``.
+
+        Returns:
+            Contract dict ``{status, message, data}`` with the query results.
+        """
         from backend.agent.utils.error_logger import log_error
 
         query = node.get("query", "") or state.get("input", "")

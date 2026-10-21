@@ -13,8 +13,8 @@ Three LLM-backed steps, all fail-safe (they never raise):
   why a run failed. The technical exception goes to ``error_log`` elsewhere;
   this text is what the user reads in the notification.
 
-The spend of each call is stored in its run (``workflow_runs.usage_calls``;
-purpose ``output`` / ``judge`` / ``explain``).
+Each call is stored as a row of its run in ``workflow_runs`` (kind ``output``,
+``decision``, ``judge`` or ``explain``), with its verdict or text and its spend.
 """
 
 from __future__ import annotations
@@ -29,10 +29,12 @@ from backend.agent.utils import workflow_db
 from backend.agent.utils.decision import DECISION_CLOSE_THRESHOLD
 from backend.agent.utils.error_logger import log_error
 
-logger = logging.getLogger(__name__)
+from typing import TYPE_CHECKING
 
-_NODE_RESULT_LIMIT = 6000
-"""Characters of each node result sent to the judge (keeps the call bounded)."""
+if TYPE_CHECKING:
+    from backend.agent.agent import Agent
+
+logger = logging.getLogger(__name__)
 
 GENERIC_FAILURE_TEXT = (
     "El workflow no pudo completarse. Probá ejecutarlo de nuevo más tarde; "
@@ -41,16 +43,27 @@ GENERIC_FAILURE_TEXT = (
 """Fallback shown when no LLM is available to explain a failure."""
 
 
-def _clip(text: Any, limit: int = _NODE_RESULT_LIMIT) -> str:
-    """Return ``text`` as a string cut to ``limit`` characters."""
-    value = "" if text is None else str(text)
-    if len(value) <= limit:
-        return value
-    return value[:limit] + "… (recortado)"
+def _as_str(value: Any) -> str:
+    """Convert a value to text, whole.
+
+    Args:
+        value: Value to convert.
+
+    Returns:
+        The text, or an empty string for ``None``.
+    """
+    return "" if value is None else str(value)
 
 
-def _chat_model(agent) -> tuple[str | None, str | None]:
-    """Return the ``(model, provider)`` the app uses for chat, if any."""
+def _chat_model(agent: Agent) -> tuple[str | None, str | None]:
+    """Get the model the app uses for chat.
+
+    Args:
+        agent: Agent singleton.
+
+    Returns:
+        ``(model, provider)``, or ``(None, None)`` when none is configured.
+    """
     try:
         model = agent.default_model
         provider = agent.provider
@@ -62,7 +75,14 @@ def _chat_model(agent) -> tuple[str | None, str | None]:
 
 
 def _parse_verdict(raw: str) -> tuple[bool, str] | None:
-    """Parse the JSON verdict of the LLM judge, or ``None`` when unreadable."""
+    """Parse the JSON verdict of the LLM judge.
+
+    Args:
+        raw: Text answered by the LLM.
+
+    Returns:
+        ``(ok, reason)``, or ``None`` when the text is not a readable verdict.
+    """
     match = re.search(r"\{.*\}", raw or "", re.DOTALL)
     if not match:
         return None
@@ -78,12 +98,9 @@ def _parse_verdict(raw: str) -> tuple[bool, str] | None:
 OUTPUT_ATTEMPTS = 3
 """Tries of the output call before the final node's result is used instead."""
 
-_OUTPUT_TOTAL_LIMIT = 120000
-"""Characters of node results sent to the output call (shared among the nodes)."""
-
 
 async def generate_output(
-    agent,
+    agent: Agent,
     workflow_name: str,
     run_id: str,
     description: str,
@@ -117,9 +134,8 @@ async def generate_output(
             for n in nodes
             if isinstance(n, dict)
         ]
-        share = max(_OUTPUT_TOTAL_LIMIT // max(len(items), 1), 2000)
         nodes_text = "\n\n".join(
-            f"#### {node_id} ({node_type})\n\n{_clip(text, share)}" for node_id, node_type, text in items
+            f"#### {node_id} ({node_type})\n\n{text}" for node_id, node_type, text in items
         ) or "(sin nodos)"
         prompt = agent.prompt(
             "output_workflow",
@@ -137,8 +153,10 @@ async def generate_output(
                 reasoning=False,
             )
             if isinstance(response, dict):
-                workflow_db.record_usage(
-                    workflow_name, run_id, "output", provider, model, response.get("usage"),
+                workflow_db.record_engine_row(
+                    run_id, "output", provider, model, response.get("usage"),
+                    status=str(response.get("status") or "error"),
+                    result=str(response.get("data") or ""),
                 )
                 text = str(response.get("data") or "").strip()
                 if response.get("status") == "success" and text:
@@ -154,7 +172,7 @@ async def generate_output(
 
 
 async def judge_run(
-    agent,
+    agent: Agent,
     workflow_name: str,
     run_id: str,
     description: str,
@@ -183,7 +201,7 @@ async def judge_run(
             {
                 "id": n.get("id", ""),
                 "type": n.get("type", ""),
-                "result": _clip(results.get(n.get("id", ""), "")),
+                "result": _as_str(results.get(n.get("id", ""), "")),
             }
             for n in nodes
             if isinstance(n, dict)
@@ -193,7 +211,7 @@ async def judge_run(
                 "workflow": workflow_name,
                 "description": description,
                 "nodes": node_items,
-                "final": _clip(final_text),
+                "final": _as_str(final_text),
             }
             questions = {
                 "done": {
@@ -204,14 +222,17 @@ async def judge_run(
             response = await agent.decision(state, questions)
             data = (response or {}).get("data") or {}
             if data.get("available"):
-                workflow_db.record_usage(
-                    workflow_name, run_id, "judge",
-                    data.get("provider"), data.get("model"),
-                    (response or {}).get("usage"),
-                )
                 verdict = ((data.get("answers") or {}).get("done") or {}).get("noul")
-                if isinstance(verdict, (int, float)) and not isinstance(verdict, bool):
-                    if float(verdict) >= DECISION_CLOSE_THRESHOLD:
+                readable = isinstance(verdict, (int, float)) and not isinstance(verdict, bool)
+                approved = readable and float(verdict) >= DECISION_CLOSE_THRESHOLD
+                workflow_db.record_engine_row(
+                    run_id, "decision", data.get("provider"), data.get("model"),
+                    (response or {}).get("usage"),
+                    status="approved" if approved else ("rejected" if readable else "error"),
+                    result=json.dumps(data.get("answers") or {}, ensure_ascii=False),
+                )
+                if readable:
+                    if approved:
                         return True, ""
                     return False, (
                         "El workflow se ejecutó, pero el resultado no parece cumplir "
@@ -231,7 +252,7 @@ async def judge_run(
             name=workflow_name,
             description=description or "(sin descripción)",
             nodes_text=nodes_text,
-            final_text=_clip(final_text),
+            final_text=_as_str(final_text),
         )
         response = await agent.llm_process(
             model=model,
@@ -245,12 +266,16 @@ async def judge_run(
         )
         if not isinstance(response, dict):
             return True, ""
-        workflow_db.record_usage(
-            workflow_name, run_id, "judge", provider, model, response.get("usage"),
+        parsed = (
+            _parse_verdict(str(response.get("data") or ""))
+            if response.get("status") == "success"
+            else None
         )
-        if response.get("status") != "success":
-            return True, ""
-        parsed = _parse_verdict(str(response.get("data") or ""))
+        workflow_db.record_engine_row(
+            run_id, "judge", provider, model, response.get("usage"),
+            status="error" if parsed is None else ("approved" if parsed[0] else "rejected"),
+            result=str(response.get("data") or ""),
+        )
         if parsed is None:
             return True, ""
         return parsed
@@ -260,7 +285,7 @@ async def judge_run(
 
 
 async def explain_failure(
-    agent,
+    agent: Agent,
     workflow_name: str,
     run_id: str,
     description: str,
@@ -287,7 +312,7 @@ async def explain_failure(
         if not model:
             return GENERIC_FAILURE_TEXT
         failures_text = "\n".join(
-            f"- Nodo «{f.get('node', '?')}» (tipo {f.get('type', '?')}): {_clip(f.get('error', ''), 1500)}"
+            f"- Nodo «{f.get('node', '?')}» (tipo {f.get('type', '?')}): {_as_str(f.get('error', ''))}"
             for f in failures
         ) or "- (no se registró el detalle del fallo)"
         prompt = agent.prompt(
@@ -308,8 +333,10 @@ async def explain_failure(
         )
         if not isinstance(response, dict):
             return GENERIC_FAILURE_TEXT
-        workflow_db.record_usage(
-            workflow_name, run_id, "explain", provider, model, response.get("usage"),
+        workflow_db.record_engine_row(
+            run_id, "explain", provider, model, response.get("usage"),
+            status=str(response.get("status") or "error"),
+            result=str(response.get("data") or ""),
         )
         text = str(response.get("data") or "").strip()
         if response.get("status") != "success" or not text:

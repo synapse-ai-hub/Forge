@@ -1057,11 +1057,8 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
               <Bell size={16} />
               {unreadCount > 0 && (
                 <span
-                  className={`absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full text-[10px] font-semibold leading-4 text-white ${
-                    notifications.some((n) => !n.read && n.status === "error")
-                      ? "bg-red-500"
-                      : "bg-app-primary"
-                  }`}
+                  className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full text-[10px] font-semibold leading-4 text-white"
+                  style={{ backgroundImage: "linear-gradient(to right, #4f46e5, #8b5cf6)" }}
                 >
                   {unreadCount > 9 ? "9+" : unreadCount}
                 </span>

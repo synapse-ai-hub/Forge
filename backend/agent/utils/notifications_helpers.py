@@ -18,11 +18,23 @@ from backend.agent.utils.db import db_transaction, get_connection
 from backend.agent.utils.error_logger import log_error
 from backend.agent.utils.queries import load_query
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import sqlite3
+
 logger = logging.getLogger(__name__)
 
 
-def _row_to_dict(row) -> dict[str, Any]:
-    """Convert a ``notifications`` row into the public dict."""
+def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
+    """Convert a ``notifications`` row into the public dict.
+
+    Args:
+        row: Row of the ``notifications`` table.
+
+    Returns:
+        The notification as a dict.
+    """
     return {
         "id": row["id"],
         "kind": row["kind"],
@@ -39,7 +51,11 @@ def _row_to_dict(row) -> dict[str, Any]:
 
 
 def list_notifications() -> list[dict[str, Any]]:
-    """Return every notification, newest first."""
+    """List every notification, newest first.
+
+    Returns:
+        One dict per notification.
+    """
     try:
         with get_connection() as conn:
             rows = conn.execute(load_query("notifications/list.sql")).fetchall()
@@ -50,7 +66,14 @@ def list_notifications() -> list[dict[str, Any]]:
 
 
 def get_notification(notification_id: int) -> dict[str, Any] | None:
-    """Return one notification, or ``None`` when it does not exist."""
+    """Fetch one notification.
+
+    Args:
+        notification_id: Notification id.
+
+    Returns:
+        The notification, or ``None`` when it does not exist.
+    """
     try:
         with get_connection() as conn:
             row = conn.execute(load_query("notifications/get.sql"), (notification_id,)).fetchone()
@@ -77,7 +100,7 @@ def add_notification(
         title: Workflow name or task name shown in the bell.
         status: ``"success"`` or ``"error"``.
         message: Plain-language result or explanation for the user.
-        run_id: ``workflow_runs.id`` or ``task_runs.id`` (as text).
+        run_id: ``workflow_runs.run_id`` or ``task_runs.id`` (as text).
         session_id: Session holding the execution, to open it.
         workflow_name: FK to ``workflows.name`` (workflow kind only).
         task_id: FK to ``scheduled_tasks.id`` (task kind only).
@@ -102,7 +125,8 @@ def add_notification(
 async def notify(**kwargs: Any) -> dict[str, Any] | None:
     """Persist a notification and push it to the web UI.
 
-    Takes the same keyword arguments as :func:`add_notification`.
+    Args:
+        **kwargs: Same keyword arguments as :func:`add_notification`.
 
     Returns:
         The stored notification, or ``None`` when it could not be stored.
@@ -121,7 +145,11 @@ async def notify(**kwargs: Any) -> dict[str, Any] | None:
 
 
 def mark_all_read() -> bool:
-    """Mark every notification as read. Returns ``True`` on success."""
+    """Mark every notification as read.
+
+    Returns:
+        ``True`` on success.
+    """
     try:
         with db_transaction() as conn:
             conn.execute(load_query("notifications/mark_all_read.sql"))
@@ -132,7 +160,14 @@ def mark_all_read() -> bool:
 
 
 def delete_notification(notification_id: int) -> bool:
-    """Delete one notification. Returns ``True`` when a row was removed."""
+    """Delete one notification.
+
+    Args:
+        notification_id: Notification id.
+
+    Returns:
+        ``True`` when a row was removed.
+    """
     try:
         with db_transaction() as conn:
             cur = conn.execute(load_query("notifications/delete_one.sql"), (notification_id,))
@@ -143,7 +178,11 @@ def delete_notification(notification_id: int) -> bool:
 
 
 def clear_notifications() -> bool:
-    """Delete every notification. Returns ``True`` on success."""
+    """Delete every notification.
+
+    Returns:
+        ``True`` on success.
+    """
     try:
         with db_transaction() as conn:
             conn.execute(load_query("notifications/delete_all.sql"))
@@ -154,7 +193,11 @@ def clear_notifications() -> bool:
 
 
 def delete_task_notifications(task_id: str) -> None:
-    """Remove the notifications of a deleted scheduled task."""
+    """Remove the notifications of a deleted scheduled task.
+
+    Args:
+        task_id: Id of the deleted task.
+    """
     try:
         with db_transaction() as conn:
             conn.execute(load_query("notifications/delete_by_task.sql"), (task_id,))

@@ -34,6 +34,11 @@ from backend.agent.utils.error_logger import log_error, reset_error_context, set
 from backend.agent.utils.notifications_helpers import notify
 from backend.agent.utils.workflow_db import MAX_ATTEMPTS
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
 logger = logging.getLogger(__name__)
 
 _RESULT_NOTIFICATION_LIMIT = 1000
@@ -41,7 +46,15 @@ _RESULT_NOTIFICATION_LIMIT = 1000
 
 
 def _shorten(text: str, limit: int = _RESULT_NOTIFICATION_LIMIT) -> str:
-    """Cut ``text`` to ``limit`` characters at a line or word boundary, marking the cut."""
+    """Cut a text to a limit at a line or word boundary, marking the cut.
+
+    Args:
+        text: Text to shorten.
+        limit: Maximum number of characters before the cut mark.
+
+    Returns:
+        The text unchanged when it fits, otherwise its beginning followed by an ellipsis.
+    """
     text = text.strip()
     if len(text) <= limit:
         return text
@@ -53,7 +66,14 @@ def _shorten(text: str, limit: int = _RESULT_NOTIFICATION_LIMIT) -> str:
 
 
 def _workspace_note(name: str) -> str:
-    """Return a line with the workflow's working folder when it has files, else ``""``."""
+    """Describe the working folder of a workflow when it has files.
+
+    Args:
+        name: Workflow name.
+
+    Returns:
+        A line with the path of the folder, or an empty string when it is empty or unavailable.
+    """
     try:
         from backend.agent.utils.config_dir import get_workspace_dir
 
@@ -69,6 +89,12 @@ class _ActiveRun:
     """Handle of a run executing in this process."""
 
     def __init__(self, name: str, cancel_event: asyncio.Event) -> None:
+        """Create the handle of a run.
+
+        Args:
+            name: Workflow name.
+            cancel_event: Event the run checks to know the user cancelled it.
+        """
         self.name = name
         self.cancel_event = cancel_event
         self.task: asyncio.Task | None = None
@@ -78,6 +104,7 @@ class WorkflowService:
     """Start, track, cancel and resume workflow runs."""
 
     def __init__(self) -> None:
+        """Create the service with no run in memory."""
         self._active: dict[str, _ActiveRun] = {}
 
     # ------------------------------------------------------------------
@@ -85,14 +112,28 @@ class WorkflowService:
     # ------------------------------------------------------------------
 
     def active_run_id(self, name: str) -> str | None:
-        """Return the id of the run of ``name`` executing now, if any."""
+        """Find the run of a workflow that is executing in this process.
+
+        Args:
+            name: Workflow name.
+
+        Returns:
+            The run id, or ``None`` when the workflow is not running.
+        """
         for run_id, active in self._active.items():
             if active.name == name:
                 return run_id
         return None
 
     def is_running(self, name: str) -> bool:
-        """Return whether a run of ``name`` is executing now."""
+        """Check whether a run of a workflow is executing in this process.
+
+        Args:
+            name: Workflow name.
+
+        Returns:
+            ``True`` when a run of that workflow is executing.
+        """
         return self.active_run_id(name) is not None
 
     # ------------------------------------------------------------------
@@ -191,7 +232,19 @@ class WorkflowService:
         source: str,
         start_attempt: int,
     ) -> asyncio.Task:
-        """Create and register the background task of a run."""
+        """Create and register the background task of a run.
+
+        Args:
+            run_id: Run identifier.
+            name: Workflow name.
+            workflow: Validated workflow data.
+            session_id: Session that holds the execution.
+            source: ``"play"`` or ``"tool"``.
+            start_attempt: Attempt the task starts from (1..3).
+
+        Returns:
+            The task that executes the run.
+        """
         active = _ActiveRun(name, asyncio.Event())
         self._active[run_id] = active
         task = asyncio.create_task(
@@ -233,10 +286,17 @@ class WorkflowService:
     # ------------------------------------------------------------------
 
     async def cancel(self, run_id: str) -> bool:
-        """Cancel a running run (it is persisted as ``cancelled``).
+        """Cancel a run (it is persisted as ``cancelled``).
+
+        A run that is not executing in this process but is still ``running`` in the
+        database (the backend restarted) is closed as cancelled so the UI stops
+        waiting for it.
+
+        Args:
+            run_id: Run identifier.
 
         Returns:
-            ``True`` when the run was executing and the cancellation was sent.
+            ``True`` when the run was cancelled, ``False`` when there is nothing to cancel.
         """
         active = self._active.get(run_id)
         if active is None or active.task is None:
@@ -334,7 +394,20 @@ class WorkflowService:
         cancel_event: asyncio.Event,
         start_attempt: int,
     ) -> dict[str, Any]:
-        """Task body: attempts, judge and finalization of a run."""
+        """Run the task body: attempts, output, judge and finalization of a run.
+
+        Args:
+            run_id: Run identifier.
+            name: Workflow name.
+            workflow: Validated workflow data.
+            session_id: Session that holds the execution.
+            source: ``"play"`` or ``"tool"``.
+            cancel_event: Set when the user cancels the run.
+            start_attempt: Attempt the run starts from (1..3).
+
+        Returns:
+            The outcome ``{status, run_id, session_id, result, error_text}``.
+        """
         token = set_error_context(session_id=session_id, turn_number=1)
         try:
             return await self._attempts(
@@ -370,7 +443,22 @@ class WorkflowService:
         cancel_event: asyncio.Event,
         start_attempt: int,
     ) -> dict[str, Any]:
-        """Run attempts with exponential backoff until success or exhaustion."""
+        """Run attempts with exponential backoff until success or exhaustion.
+
+        When every node completes, the output of the run is generated and judged.
+
+        Args:
+            run_id: Run identifier.
+            name: Workflow name.
+            workflow: Validated workflow data.
+            session_id: Session that holds the execution.
+            source: ``"play"`` or ``"tool"``.
+            cancel_event: Set when the user cancels the run.
+            start_attempt: Attempt the run starts from (1..3).
+
+        Returns:
+            The outcome ``{status, run_id, session_id, result, error_text}``.
+        """
         from backend.agent.utils.workflow_judge import explain_failure, generate_output, judge_run
         from backend.agent.utils.workflow_runner import WorkflowRunner
         from backend.instances import agent, session_manager
@@ -431,7 +519,15 @@ class WorkflowService:
 
     @staticmethod
     async def _backoff(cancel_event: asyncio.Event, seconds: float) -> bool:
-        """Wait ``seconds`` between attempts; ``True`` when cancelled meanwhile."""
+        """Wait between attempts.
+
+        Args:
+            cancel_event: Set when the user cancels the run.
+            seconds: Seconds to wait.
+
+        Returns:
+            ``True`` when the run was cancelled meanwhile.
+        """
         try:
             await asyncio.wait_for(cancel_event.wait(), timeout=seconds)
             return True
@@ -445,7 +541,14 @@ class WorkflowService:
     def _save_final_message(
         self, session_id: str, workflow: dict[str, Any], content: str, status: str
     ) -> None:
-        """Store the closing message of a run in its session."""
+        """Store the closing message of a run in its session.
+
+        Args:
+            session_id: Session that holds the execution.
+            workflow: Workflow data (its last step is the step of the message).
+            content: Text of the message.
+            status: ``"success"`` or ``"error"``.
+        """
         try:
             from backend.instances import session_manager
 
@@ -467,7 +570,19 @@ class WorkflowService:
         workflow: dict[str, Any],
         final_text: str,
     ) -> dict[str, Any]:
-        """Close a run as successful and notify."""
+        """Close a run as successful and notify.
+
+        Args:
+            run_id: Run identifier.
+            name: Workflow name.
+            session_id: Session that holds the execution.
+            source: ``"play"`` or ``"tool"`` (only ``"play"`` notifies).
+            workflow: Workflow data.
+            final_text: Output of the run.
+
+        Returns:
+            The outcome ``{status, run_id, session_id, result, error_text}``.
+        """
         answer = final_text.strip() or "Workflow completado sin respuesta final."
         note = _workspace_note(name)
         self._save_final_message(
@@ -496,14 +611,24 @@ class WorkflowService:
         failures: list[dict[str, str]],
         attempts: int,
         explanation: str | None = None,
-        explainer=None,
+        explainer: Callable[..., Awaitable[str]] | None = None,
     ) -> dict[str, Any]:
         """Close a run as failed: explain it in plain language and notify.
 
         Args:
+            run_id: Run identifier.
+            name: Workflow name.
+            session_id: Session that holds the execution.
+            source: ``"play"`` or ``"tool"`` (only ``"play"`` notifies).
+            workflow: Workflow data.
+            failures: One dict per failed node with ``node``, ``type`` and ``error``.
+            attempts: Attempts the run consumed.
             explanation: Ready-made user text (judge reason); skips the LLM.
-            explainer: ``explain_failure`` coroutine function; when ``None``
-                (and no explanation) the generic text is used.
+            explainer: Coroutine function that explains the failure with the LLM;
+                ``explain_failure`` when ``None`` (used only without ``explanation``).
+
+        Returns:
+            The outcome ``{status, run_id, session_id, result, error_text}``.
         """
         from backend.agent.utils.workflow_judge import GENERIC_FAILURE_TEXT, explain_failure
 
@@ -532,7 +657,16 @@ class WorkflowService:
                 "result": "", "error_text": text}
 
     async def _finalize_cancelled(self, run_id: str, name: str, session_id: str) -> dict[str, Any]:
-        """Close a run cancelled by the user (persisted as ``cancelled``)."""
+        """Close a run cancelled by the user (persisted as ``cancelled``).
+
+        Args:
+            run_id: Run identifier.
+            name: Workflow name.
+            session_id: Session that holds the execution.
+
+        Returns:
+            The outcome ``{status, run_id, session_id, result, error_text}``.
+        """
         workflow_db.fail_open_steps(run_id, "Cancelado por el usuario.")
         self._save_final_message(session_id, {}, "Ejecución cancelada por el usuario.", "error")
         workflow_db.finish_run(run_id, "cancelled", None, None)
@@ -543,7 +677,15 @@ class WorkflowService:
     async def _emit_run(
         self, run_id: str, name: str, status: str, attempt: int | None, session_id: str | None
     ) -> None:
-        """Tell the web UI that a run changed state."""
+        """Tell the web UI that a run changed state.
+
+        Args:
+            run_id: Run identifier.
+            name: Workflow name.
+            status: New status of the run.
+            attempt: Current attempt, when it is running.
+            session_id: Session that holds the execution.
+        """
         try:
             from backend.event_bus import event_bus
 

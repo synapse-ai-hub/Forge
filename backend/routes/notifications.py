@@ -19,7 +19,11 @@ router = APIRouter(tags=["notifications"])
 
 @router.get("/notifications")
 async def get_notifications() -> JSONResponse:
-    """Return every notification, newest first."""
+    """List every notification, newest first.
+
+    Returns:
+        JSON response with the notifications.
+    """
     return JSONResponse(
         status_code=200,
         content={"status": "success", "notifications": notifications_db.list_notifications()},
@@ -28,7 +32,11 @@ async def get_notifications() -> JSONResponse:
 
 @router.post("/notifications/read")
 async def read_notifications() -> JSONResponse:
-    """Mark every notification as read (the user opened the bell)."""
+    """Mark every notification as read (the user opened the bell).
+
+    Returns:
+        JSON response with the result.
+    """
     if not notifications_db.mark_all_read():
         return JSONResponse(
             status_code=500,
@@ -38,11 +46,17 @@ async def read_notifications() -> JSONResponse:
 
 
 def _full_output(notification: dict) -> str:
-    """Return the complete result (or the failure explanation) behind a notification.
+    """Get the complete result (or the failure explanation) behind a notification.
 
     The notification keeps a short text. A workflow run keeps its whole result
     in ``workflow_runs``; a scheduled task keeps it as the last answer of its
     session.
+
+    Args:
+        notification: Notification dict.
+
+    Returns:
+        The complete output, or the short text of the notification when it cannot be found.
     """
     try:
         if notification["kind"] == "workflow" and notification.get("run_id"):
@@ -64,7 +78,14 @@ def _full_output(notification: dict) -> str:
 
 @router.get("/notifications/{notification_id}/detail")
 async def notification_detail(notification_id: int) -> JSONResponse:
-    """Return a notification with its complete output (what the modal shows)."""
+    """Return a notification with its complete output (what the modal shows).
+
+    Args:
+        notification_id: Notification id.
+
+    Returns:
+        JSON response with the notification and its output, or 404 when it does not exist.
+    """
     notification = notifications_db.get_notification(notification_id)
     if notification is None:
         return JSONResponse(
@@ -79,7 +100,14 @@ async def notification_detail(notification_id: int) -> JSONResponse:
 
 @router.post("/notifications/{notification_id}/review")
 async def review_notification(notification_id: int) -> JSONResponse:
-    """Open a new conversation that already holds the output ("revisar con el agente")."""
+    """Open a new conversation that already holds the output ("review with the agent").
+
+    Args:
+        notification_id: Notification id.
+
+    Returns:
+        JSON response with the id of the new session, or 404 when the notification does not exist.
+    """
     notification = notifications_db.get_notification(notification_id)
     if notification is None:
         return JSONResponse(
@@ -115,7 +143,14 @@ async def review_notification(notification_id: int) -> JSONResponse:
 
 @router.delete("/notifications/{notification_id}")
 async def delete_notification(notification_id: int) -> JSONResponse:
-    """Delete one notification."""
+    """Delete one notification.
+
+    Args:
+        notification_id: Notification id.
+
+    Returns:
+        JSON response with the result, or 404 when it does not exist.
+    """
     if not notifications_db.delete_notification(notification_id):
         return JSONResponse(
             status_code=404,
@@ -126,7 +161,11 @@ async def delete_notification(notification_id: int) -> JSONResponse:
 
 @router.delete("/notifications")
 async def clear_notifications() -> JSONResponse:
-    """Delete every notification ("Limpiar")."""
+    """Delete every notification ("Clear").
+
+    Returns:
+        JSON response with the result.
+    """
     if not notifications_db.clear_notifications():
         return JSONResponse(
             status_code=500,

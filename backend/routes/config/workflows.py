@@ -16,7 +16,14 @@ logger = logging.getLogger(__name__)
 
 @router.post("/workflows/validate")
 async def validate_workflow_endpoint(payload: dict[str, Any]) -> JSONResponse:
-    """Dry-run validation of a workflow YAML without writing anything."""
+    """Dry-run validation of a workflow YAML without writing anything.
+
+    Args:
+        payload: Request body with the YAML text of the workflow.
+
+    Returns:
+        A JSONResponse with the validation result.
+    """
     try:
         import yaml as _yaml
 
@@ -47,7 +54,14 @@ async def validate_workflow_endpoint(payload: dict[str, Any]) -> JSONResponse:
 
 @router.post("/workflows/save")
 async def save_workflow_endpoint(payload: dict[str, Any]) -> JSONResponse:
-    """Validate and save a workflow YAML as workflows/<name>.yaml (flat file)."""
+    """Validate and save a workflow YAML as workflows/<name>.yaml (flat file).
+
+    Args:
+        payload: Request body with the YAML text of the workflow.
+
+    Returns:
+        A JSONResponse with the result.
+    """
     try:
         import os as _os
         import re as _re
@@ -119,6 +133,12 @@ async def generate_workflow_endpoint(payload: dict[str, Any]) -> JSONResponse:
 
     The agent follows latency, cost and efficiency rules. The result is
     validated before returning. Nothing is written to disk.
+
+    Args:
+        payload: Request body with the description of the workflow.
+
+    Returns:
+        A JSONResponse with the generated YAML or the error.
     """
     try:
         import json as _json
