@@ -1,7 +1,13 @@
--- Cost totals (total/input/output, USD) in the time range.
--- {TIME_CLAUSE} : filter on messages.created_at.
+-- Cost totals (total/input/output, USD) in the time range: the messages plus the LLM calls the workflow
+-- engine makes by itself (workflow_runs; the agent nodes are already in their messages).
+-- {TIME_CLAUSE} : filter on created_at.
 SELECT SUM(cost_total) AS total,
        SUM(cost_input) AS cin,
        SUM(cost_output) AS cout
-FROM messages
+FROM (
+    SELECT cost_total, cost_input, cost_output, created_at FROM messages
+    UNION ALL
+    SELECT cost_total, cost_input, cost_output, started_at AS created_at FROM workflow_runs
+    WHERE kind IN ('decision', 'judge', 'output', 'explain')
+)
 WHERE cost_total IS NOT NULL {TIME_CLAUSE};
