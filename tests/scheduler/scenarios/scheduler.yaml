@@ -1,25 +1,10 @@
-scenario: scheduler-crud
+scenario: scheduler-read-endpoints
 description: >
-  Verifica el ciclo de vida CRUD de una tarea programada contra el backend real:
-  creación, listado, actualización y catálogo de permisos. El bloque verify
-  confirma que la tarea persistió con los campos esperados tras la actualización.
-  El borrado se ejecuta como cleanup al final del escenario.
-cleanup: true
-verify:
-  task_id: "{task_id}"
-  name: test-agenda
-  time: "10:30"
-  days: [0, 2, 4]
-  enabled: true
-  tool_permissions:
-    consultar_rag: allow
-  skill_permissions:
-    spec-miner: allow
-  parameters:
-    temperature: 0.3
-  repetitions:
-    - time: "15:00"
-      days: [1, 3, 5]
+  Verifica contra el backend real los endpoints de lectura de la agenda: tareas
+  programadas (workflows con horario), ejecuciones iniciadas por el scheduler y
+  catálogo de recursos. Las tareas se crean con el creador de workflows (un LLM),
+  por eso este escenario no las crea.
+cleanup: false
 steps:
   - action: request
     method: GET
@@ -30,54 +15,18 @@ steps:
       json_path_exists:
         - tasks
   - action: request
-    method: POST
-    path: /api/scheduler/tasks
-    body:
-      name: test-agenda
-      prompt: "Resumí el estado del proyecto."
-      time: "09:00"
-      days: [1, 3, 5]
-      tool_permissions:
-        consultar_rag: allow
-      skill_permissions:
-        spec-miner: allow
-      parameters:
-        temperature: 0.3
-      repetitions:
-        - time: "15:00"
-          days: [1, 3, 5]
-    save:
-      task_id: data.task.id
+    method: GET
+    path: /api/scheduler/runs
     expect:
       http_status: 200
       json_status: success
       json_path_exists:
-        - data.task.id
-        - data.task.name
+        - runs
   - action: request
     method: GET
-    path: /api/scheduler/tasks
-    expect:
-      http_status: 200
-      json_status: success
-      json_path_exists:
-        - tasks
-  - action: request
-    method: PUT
-    path: /api/scheduler/tasks/{task_id}
-    body:
-      time: "10:30"
-      days: [0, 2, 4]
-    expect:
-      http_status: 200
-      json_status: success
-  - action: request
-    method: GET
-    path: /api/scheduler/permissions/catalog
+    path: /api/config/tools
     expect:
       http_status: 200
       json_status: success
       json_path_exists:
         - tools
-        - skills
-        - agents

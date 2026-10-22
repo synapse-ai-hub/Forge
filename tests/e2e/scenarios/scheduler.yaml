@@ -1,57 +1,24 @@
-scenario: scheduler-create-toggle-delete
+scenario: scheduler-list-and-missing-task
 description: >
-  Ciclo completo de tarea programada: alta, guardado del ID, toggle
-  enabled/disabled y borrado usando el ID propagado entre pasos.
-cleanup: true
+  Agenda: el listado responde y editar el horario de una tarea que no existe se
+  rechaza con error sin romper el servidor. Las tareas se crean con el creador de
+  workflows (un LLM), por eso no se crean desde este escenario.
+cleanup: false
 steps:
-  - action: request
-    method: POST
-    path: /api/scheduler/tasks
-    body:
-      prompt: "Tarea E2E: decí hola"
-      time: "03:00"
-      days: [1]
-    save:
-      task_id: task.id
-    expect:
-      http_status: 200
-      json_status: success
-
-  - action: request
-    method: PUT
-    path: /api/scheduler/tasks/{task_id}
-    body:
-      enabled: false
-    expect:
-      http_status: 200
-      json_status: success
-
   - action: request
     method: GET
     path: /api/scheduler/tasks
     expect:
       http_status: 200
       json_status: success
+      json_path_exists:
+        - tasks
 
   - action: request
-    method: DELETE
-    path: /api/scheduler/tasks/{task_id}
-    expect:
-      http_status: 200
-      json_status: success
----
-scenario: scheduler-rejects-invalid-task
-description: >
-  Validación de error: una tarea sin prompt debe rechazarse con 400 y
-  contrato de error.
-cleanup: false
-steps:
-  - action: request
-    method: POST
-    path: /api/scheduler/tasks
+    method: PUT
+    path: /api/scheduler/tasks/e2e-id-inexistente-xyz
     body:
-      time: "03:00"
-      days: [1]
+      enabled: false
     expect:
       http_status: 400
 ---

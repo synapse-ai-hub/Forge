@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactElement, type ReactNode } from "react";
 import {
   Dialog,
   DialogContent,
@@ -6,6 +6,8 @@ import {
   DialogTitle,
   DialogDescription,
 } from "./ui/dialog";
+import { ResourceCards } from "./ResourceCards";
+import { EMPTY_SELECTION, type ResourceSelection } from "../utils/resourceSelection";
 import {
   AlarmClock,
   Plus,
@@ -14,22 +16,19 @@ import {
   Clock,
   Check,
   X,
-  Sparkles,
   ChevronDown,
   ChevronRight,
   Shield,
-  Sliders,
   Repeat,
+  Play,
+  Square,
 } from "lucide-react";
 import schedulerService, {
   SchedulerTask,
   ScheduleSlot,
-  TaskParameters,
-  PermissionAction,
-  ToolPermissions,
-  CatalogItem,
-  PermissionsCatalog,
+  NewScheduledTask,
 } from "../services/schedulerService";
+import workflowService from "../services/workflowService";
 
 interface SchedulerModalProps {
   open: boolean;
@@ -38,6 +37,8 @@ interface SchedulerModalProps {
 
 const WEEKDAY_LABELS = ["D", "L", "M", "X", "J", "V", "S"];
 const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6];
+/** Color of a selected day: fixed, it does not depend on the theme of the css. */
+const DAY_SELECTED_COLOR = "#4f46e5";
 
 /** Read the system timezone (no configuration needed). */
 function getSystemTimezone(): string {
@@ -78,40 +79,17 @@ function DayPicker({ days, onChange, size = "md" }: DayPickerProps) {
           type="button"
           onClick={() => onChange(toggleDayInList(days, day))}
           title="Día de la semana"
-          className={`${sizeClass} rounded-full font-medium border transition-colors ${
+          style={
             days.includes(day)
-              ? "bg-app-primary text-white border-app-primary"
-              : "bg-white text-gray-500 border-gray-300 hover:border-app-primary"
-          }`}
+              ? { backgroundColor: DAY_SELECTED_COLOR, borderColor: DAY_SELECTED_COLOR, color: "#ffffff" }
+              : { backgroundColor: "#ffffff", borderColor: "#d1d5db", color: "#6b7280" }
+          }
+          className={`${sizeClass} rounded-full font-medium border transition-colors`}
         >
           {label}
         </button>
       ))}
     </div>
-  );
-}
-
-interface PermissionCheckboxProps {
-  name: string;
-  description: string;
-  checked: boolean;
-  onChange: () => void;
-}
-
-/** Single permission toggle rendered as a pill checkbox. */
-function PermissionCheckbox({ name, description, checked, onChange }: PermissionCheckboxProps) {
-  return (
-    <label
-      className={`flex items-center gap-1.5 text-xs px-2 py-1 rounded-lg border cursor-pointer transition-colors ${
-        checked
-          ? "bg-app-primary/10 border-app-primary text-app-primary"
-          : "bg-white border-gray-300 text-gray-600 hover:border-app-primary"
-      }`}
-      title={description}
-    >
-      <input type="checkbox" checked={checked} onChange={onChange} className="sr-only" />
-      {name}
-    </label>
   );
 }
 
@@ -147,34 +125,33 @@ function CollapsibleSection({ open, onToggle, icon, label, count, children }: Co
   );
 }
 
-export function SchedulerModal({ open, onClose }: SchedulerModalProps) {
+/**
+ * Agenda: the scheduled tasks (workflows with a schedule). A task is created by the workflow
+ * creator (an LLM) with the schedule the user picks; it can be played and cancelled like any workflow.
+ *
+ * @param props - Whether the modal is open and how to close it.
+ * @returns The modal, or ``null`` when it is closed.
+ */
+export function SchedulerModal({ open, onClose }: SchedulerModalProps): ReactElement | null {
   const [tasks, setTasks] = useState<SchedulerTask[]>([]);
   const [timezone] = useState<string>(getSystemTimezone);
-
-  /* ---- permissions catalog ---- */
-  const [catalog, setCatalog] = useState<PermissionsCatalog>({
-    tools: [],
-    skills: [],
-    agents: [],
-    workflows: [],
-  });
+  /* Name of each task that is running now → id of its run (to cancel it). */
+  const [running, setRunning] = useState<Record<string, string>>({});
+  const [starting, setStarting] = useState<string | null>(null);
 
   /* ---- add-task form ---- */
   const [newName, setNewName] = useState("");
   const [newPrompt, setNewPrompt] = useState("");
   const [newTime, setNewTime] = useState("09:00");
   const [newDays, setNewDays] = useState<number[]>(ALL_DAYS);
-  const [newToolPerms, setNewToolPerms] = useState<Record<string, PermissionAction>>({});
-  const [newSkillPerms, setNewSkillPerms] = useState<Record<string, PermissionAction>>({});
-  /* Workflows the task may run through the `workflow` tool (grouped permission). */
-  const [newWorkflowPerms, setNewWorkflowPerms] = useState<Record<string, PermissionAction>>({});
-  const [newParams, setNewParams] = useState<TaskParameters>({});
+  const [newSelection, setNewSelection] = useState<ResourceSelection>(EMPTY_SELECTION);
   const [newRepetitions, setNewRepetitions] = useState<ScheduleSlot[]>([]);
   const [formError, setFormError] = useState<string | null>(null);
+  /* Tasks added with "Agregar tarea": they are created only when "Guardar" is pressed. */
+  const [pending, setPending] = useState<NewScheduledTask[]>([]);
 
   /* ---- collapsibles state ---- */
-  const [showPermissions, setShowPermissions] = useState(false);
-  const [showParameters, setShowParameters] = useState(false);
+  const [showResources, setShowResources] = useState(false);
   const [showRepetitions, setShowRepetitions] = useState(false);
 
   /* ---- inline schedule editing ---- */
@@ -186,13 +163,12 @@ export function SchedulerModal({ open, onClose }: SchedulerModalProps) {
   /* ---- save feedback ---- */
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  /* Name of the task the creator is writing now, and what it streams. */
+  const [creating, setCreating] = useState<string | null>(null);
+  const [creatingText, setCreatingText] = useState("");
 
-  /* ---- prompt crafting ---- */
-  const [craftingLoading, setCraftingLoading] = useState(false);
-  const [craftError, setCraftError] = useState<string | null>(null);
-
-  /* ---- reload tasks from the backend ---- */
-  const reloadTasks = useCallback(async () => {
+  /** Load the scheduled tasks from the backend. */
+  const reloadTasks = useCallback(async (): Promise<void> => {
     try {
       setTasks(await schedulerService.getTasks());
     } catch (err) {
@@ -200,129 +176,158 @@ export function SchedulerModal({ open, onClose }: SchedulerModalProps) {
     }
   }, []);
 
-  /* Load persisted tasks and catalog each time the modal opens */
-  useEffect(() => {
+  /** Load which tasks are running now. */
+  const reloadRunning = useCallback(async (): Promise<void> => {
+    try {
+      const items = await workflowService.list();
+      const next: Record<string, string> = {};
+      for (const item of items) {
+        if (item.running && item.run_id) next[item.name] = item.run_id;
+      }
+      setRunning(next);
+    } catch {
+      /* The state of the runs is only a hint: the list of tasks does not depend on it. */
+    }
+  }, []);
+
+  /* Load the persisted tasks each time the modal opens */
+  useEffect((): void => {
     if (open) {
       setSavedMsg(null);
       setSaveError(null);
       setFormError(null);
-      setCraftError(null);
       setEditingId(null);
+      setPending([]);
       reloadTasks();
-      // Load catalog in background (non-blocking).
-      schedulerService.getPermissionsCatalog().then(setCatalog).catch(() => {});
+      reloadRunning();
     }
-  }, [open, reloadTasks]);
+  }, [open, reloadTasks, reloadRunning]);
+
+  /* Follow the runs while the modal is open (a run ends on its own). */
+  useEffect(() => {
+    if (!open) return undefined;
+    const timer = setInterval(reloadRunning, 5000);
+    return () => clearInterval(timer);
+  }, [open, reloadRunning]);
 
   /* Auto-dismiss the saved confirmation */
   useEffect(() => {
-    if (!savedMsg) return;
+    if (!savedMsg) return undefined;
     const timer = setTimeout(() => setSavedMsg(null), 4000);
     return () => clearTimeout(timer);
   }, [savedMsg]);
 
-  /* ---- global save: validate every task, then confirm ---- */
-  const handleSaveAll = useCallback(() => {
-    setSaveError(null);
-    for (const task of tasks) {
-      if (!task.prompt.trim()) {
-        setSaveError("Hay tareas sin descripción.");
-        return;
-      }
-      if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(task.time)) {
-        setSaveError(`Horario inválido en: "${task.prompt.slice(0, 40)}".`);
-        return;
-      }
-      if (task.days.length === 0) {
-        setSaveError(`La tarea "${task.prompt.slice(0, 40)}" no tiene días seleccionados.`);
-        return;
-      }
-    }
-    setSavedMsg("Tareas guardadas correctamente.");
-  }, [tasks]);
-
-  /* ---- add task ---- */
-  const handleAdd = useCallback(async () => {
+  /**
+   * Build the task of the form.
+   *
+   * @returns The task, or ``null`` (with the reason in ``formError``) when a field is invalid.
+   */
+  const buildFormTask = useCallback((): NewScheduledTask | null => {
     setFormError(null);
     const name = newName.trim();
     const prompt = newPrompt.trim();
     if (!name) {
       setFormError("El nombre de la tarea es obligatorio.");
-      return;
+      return null;
     }
     if (!/^[a-z0-9][a-z0-9_-]*$/.test(name)) {
       setFormError("El nombre solo puede contener minúsculas, números, guiones y guiones bajos.");
-      return;
+      return null;
+    }
+    if (tasks.some((t) => t.name === name) || pending.some((t) => t.name === name)) {
+      setFormError(`Ya hay una tarea con el nombre '${name}'.`);
+      return null;
     }
     if (!prompt) {
       setFormError("La tarea es obligatoria.");
-      return;
+      return null;
     }
     if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(newTime)) {
       setFormError("Horario inválido.");
-      return;
+      return null;
     }
     if (newDays.length === 0) {
       setFormError("Seleccioná al menos un día.");
+      return null;
+    }
+    return {
+      name,
+      prompt,
+      time: newTime,
+      days: [...newDays].sort((a, b) => a - b),
+      repetitions: newRepetitions.length > 0 ? newRepetitions : null,
+      seleccion: newSelection,
+    };
+  }, [newName, newPrompt, newTime, newDays, newRepetitions, newSelection, tasks, pending]);
+
+  /** Clear the form of the new task. */
+  const resetForm = useCallback((): void => {
+    setNewName("");
+    setNewPrompt("");
+    setNewTime("09:00");
+    setNewDays(ALL_DAYS);
+    setNewSelection(EMPTY_SELECTION);
+    setNewRepetitions([]);
+    setShowResources(false);
+    setShowRepetitions(false);
+  }, []);
+
+  /** Add the task of the form to the unsaved list; nothing is created until "Guardar". */
+  const handleAdd = useCallback((): void => {
+    const task = buildFormTask();
+    if (!task) return;
+    setPending((prev) => [...prev, task]);
+    setSavedMsg(null);
+    resetForm();
+  }, [buildFormTask, resetForm]);
+
+  /** Create the unsaved tasks, and the one in the form when it has data; the ones that fail stay in the list. */
+  const handleSaveAll = useCallback(async (): Promise<void> => {
+    setSaveError(null);
+    setSavedMsg(null);
+    const toCreate = [...pending];
+    if (newName.trim() || newPrompt.trim()) {
+      const fromForm = buildFormTask();
+      if (!fromForm) return;
+      toCreate.push(fromForm);
+    }
+    if (toCreate.length === 0) {
+      setSavedMsg("No hay tareas nuevas para guardar.");
       return;
     }
-    try {
-      const toolPerms: ToolPermissions = { ...newToolPerms };
-      if (Object.keys(newWorkflowPerms).length > 0) {
-        toolPerms.workflow = newWorkflowPerms;
+    const failed: NewScheduledTask[] = [];
+    let firstError = "";
+    for (const task of toCreate) {
+      setCreating(task.name);
+      setCreatingText("");
+      try {
+        await schedulerService.createTask(task, setCreatingText);
+      } catch (err) {
+        failed.push(task);
+        if (!firstError) {
+          firstError = `${task.name}: ${err instanceof Error ? err.message : "No se pudo crear la tarea."}`;
+        }
       }
-      const hasToolPerms = Object.keys(toolPerms).length > 0;
-      const hasSkillPerms = Object.keys(newSkillPerms).length > 0;
-      await schedulerService.createTask({
-        name,
-        prompt,
-        time: newTime,
-        days: [...newDays].sort((a, b) => a - b),
-        tool_permissions: hasToolPerms ? toolPerms : null,
-        skill_permissions: hasSkillPerms ? newSkillPerms : null,
-        parameters: Object.keys(newParams).length > 0 ? newParams : null,
-        repetitions: newRepetitions.length > 0 ? newRepetitions : null,
-      });
-      setNewName("");
-      setNewPrompt("");
-      setNewTime("09:00");
-      setNewDays(ALL_DAYS);
-      setNewToolPerms({});
-      setNewSkillPerms({});
-      setNewWorkflowPerms({});
-      setNewParams({});
-      setNewRepetitions([]);
-      setShowPermissions(false);
-      setShowParameters(false);
-      setShowRepetitions(false);
-      await reloadTasks();
-    } catch (err) {
-      setFormError(err instanceof Error ? err.message : "No se pudo crear la tarea.");
     }
-  }, [newName, newPrompt, newTime, newDays, newToolPerms, newSkillPerms, newWorkflowPerms, newParams, newRepetitions, reloadTasks]);
+    setCreating(null);
+    setCreatingText("");
+    setPending(failed);
+    if (failed.length === 0) {
+      resetForm();
+      setSavedMsg("Tareas creadas correctamente.");
+    } else {
+      setSaveError(`No se pudieron crear ${failed.length} tarea(s). ${firstError}`);
+    }
+    await reloadTasks();
+  }, [pending, newName, newPrompt, buildFormTask, resetForm, reloadTasks]);
 
-  /* ---- craft prompt via LLM ---- */
-  const handleCraftPrompt = useCallback(async () => {
-    const raw = newPrompt.trim();
-    if (!raw) {
-      setCraftError("Escribí una descripción primero.");
-      return;
-    }
-    setCraftingLoading(true);
-    setCraftError(null);
-    try {
-      const refined = await schedulerService.craftPrompt(raw);
-      setNewPrompt(refined);
-    } catch (err) {
-      setCraftError(err instanceof Error ? err.message : "No se pudo mejorar el prompt.");
-    } finally {
-      setCraftingLoading(false);
-    }
-  }, [newPrompt]);
-
-  /* ---- delete task ---- */
+  /**
+   * Delete a task with its workflow and runs.
+   *
+   * @param id - Id of the task.
+   */
   const handleDelete = useCallback(
-    async (id: string) => {
+    async (id: string): Promise<void> => {
       try {
         await schedulerService.deleteTask(id);
         if (editingId === id) setEditingId(null);
@@ -334,20 +339,66 @@ export function SchedulerModal({ open, onClose }: SchedulerModalProps) {
     [editingId, reloadTasks],
   );
 
-  /* ---- edit schedule (inline) ---- */
-  const startEdit = useCallback((task: SchedulerTask) => {
+  /**
+   * Run a task now, like any workflow.
+   *
+   * @param name - Name of the task.
+   */
+  const handlePlay = useCallback(
+    async (name: string): Promise<void> => {
+      setStarting(name);
+      setSaveError(null);
+      try {
+        await workflowService.run(name);
+        await reloadRunning();
+      } catch (err) {
+        setSaveError(err instanceof Error ? err.message : "No se pudo ejecutar la tarea.");
+      } finally {
+        setStarting(null);
+      }
+    },
+    [reloadRunning],
+  );
+
+  /**
+   * Cancel the run of a task that is running.
+   *
+   * @param name - Name of the task.
+   */
+  const handleCancel = useCallback(
+    async (name: string): Promise<void> => {
+      const runId = running[name];
+      if (!runId) return;
+      try {
+        await workflowService.cancel(runId);
+        await reloadRunning();
+      } catch (err) {
+        setSaveError(err instanceof Error ? err.message : "No se pudo cancelar la ejecución.");
+      }
+    },
+    [running, reloadRunning],
+  );
+
+  /**
+   * Start editing the schedule of a task.
+   *
+   * @param task - Task to edit.
+   */
+  const startEdit = useCallback((task: SchedulerTask): void => {
     setEditingId(task.id);
     setEditTime(task.time);
     setEditDays(task.days);
     setEditError(null);
   }, []);
 
-  const cancelEdit = useCallback(() => {
+  /** Stop editing the schedule. */
+  const cancelEdit = useCallback((): void => {
     setEditingId(null);
     setEditError(null);
   }, []);
 
-  const saveEdit = useCallback(async () => {
+  /** Save the new main time and days of the task being edited. */
+  const saveEdit = useCallback(async (): Promise<void> => {
     setEditError(null);
     if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(editTime)) {
       setEditError("Horario inválido.");
@@ -370,31 +421,19 @@ export function SchedulerModal({ open, onClose }: SchedulerModalProps) {
     }
   }, [editTime, editDays, editingId, reloadTasks]);
 
-  /* ---- permission checkbox toggle ---- */
-  const togglePermission = useCallback(
-    (
-      perms: Record<string, PermissionAction>,
-      setter: (p: Record<string, PermissionAction>) => void,
-      name: string,
-    ) => {
-      const next = { ...perms };
-      if (next[name] === "allow") {
-        delete next[name];
-      } else {
-        next[name] = "allow";
-      }
-      setter(next);
-    },
-    [],
-  );
-
-  /* ---- repetition slot helpers ---- */
-  const addRepetition = useCallback(() => {
+  /** Add a blank extra schedule to the form. */
+  const addRepetition = useCallback((): void => {
     setNewRepetitions((prev) => [...prev, { time: "09:00", days: [...ALL_DAYS] }]);
   }, []);
 
+  /**
+   * Change one extra schedule of the form.
+   *
+   * @param index - Position of the schedule.
+   * @param patch - Fields to change.
+   */
   const updateRepetition = useCallback(
-    (index: number, patch: Partial<ScheduleSlot>) => {
+    (index: number, patch: Partial<ScheduleSlot>): void => {
       setNewRepetitions((prev) =>
         prev.map((s, i) => (i === index ? { ...s, ...patch } : s)),
       );
@@ -402,7 +441,12 @@ export function SchedulerModal({ open, onClose }: SchedulerModalProps) {
     [],
   );
 
-  const removeRepetition = useCallback((index: number) => {
+  /**
+   * Remove one extra schedule of the form.
+   *
+   * @param index - Position of the schedule.
+   */
+  const removeRepetition = useCallback((index: number): void => {
     setNewRepetitions((prev) => prev.filter((_, i) => i !== index));
   }, []);
 
@@ -417,7 +461,7 @@ export function SchedulerModal({ open, onClose }: SchedulerModalProps) {
             Tareas programadas
           </DialogTitle>
           <DialogDescription>
-            Configurá tareas, permisos y horarios para el agente. Zona horaria:{" "}
+            Una tarea programada es un workflow con horarios: un modelo lo crea a partir de lo que pidas. Zona horaria:{" "}
             <span className="font-medium text-app-text">{timezone}</span>{" "}
             (tomada del sistema).
           </DialogDescription>
@@ -434,6 +478,17 @@ export function SchedulerModal({ open, onClose }: SchedulerModalProps) {
           {saveError && (
             <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-4 py-2.5">
               {saveError}
+            </div>
+          )}
+
+          {creating && (
+            <div className="text-sm rounded-lg px-4 py-2.5 border border-indigo-200 bg-indigo-50 text-app-text">
+              <p className="font-medium">Creando «{creating}»…</p>
+              {creatingText && (
+                <p className="mt-1 text-xs text-app-text-secondary whitespace-pre-wrap max-h-24 overflow-y-auto">
+                  {creatingText}
+                </p>
+              )}
             </div>
           )}
 
@@ -509,18 +564,32 @@ export function SchedulerModal({ open, onClose }: SchedulerModalProps) {
                               +{task.repetitions.length} horario{task.repetitions.length > 1 ? "s" : ""}
                             </span>
                           )}
-                          {task.tool_permissions && (
-                            <span className="ml-2 text-app-text-secondary">
-                              <Shield size={10} className="inline" /> tools
-                            </span>
-                          )}
-                          {task.skill_permissions && (
-                            <span className="ml-2 text-app-text-secondary">
-                              <Shield size={10} className="inline" /> skills
-                            </span>
-                          )}
+                          {!task.enabled && <span className="ml-2">· pausada</span>}
+                          {running[task.name] && <span className="ml-2 text-app-primary">· ejecutándose</span>}
                         </p>
                       </div>
+                      {running[task.name] ? (
+                        <button
+                          type="button"
+                          onClick={() => handleCancel(task.name)}
+                          className="action-btn action-btn--stop shrink-0"
+                          title="Cancelar ejecución"
+                          aria-label={`Cancelar ${task.name}`}
+                        >
+                          <Square size={14} fill="currentColor" />
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          disabled={starting === task.name}
+                          onClick={() => handlePlay(task.name)}
+                          className="action-btn shrink-0"
+                          title="Ejecutar ahora"
+                          aria-label={`Ejecutar ${task.name}`}
+                        >
+                          <Play size={14} fill="currentColor" />
+                        </button>
+                      )}
                       <button
                         type="button"
                         onClick={() => startEdit(task)}
@@ -539,6 +608,36 @@ export function SchedulerModal({ open, onClose }: SchedulerModalProps) {
                       </button>
                     </div>
                   )}
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {/* Tasks added but not saved yet */}
+          {pending.length > 0 && (
+            <ul className="space-y-2">
+              {pending.map((task, index) => (
+                <li
+                  key={`pending-${task.name}`}
+                  className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 flex items-center gap-3"
+                >
+                  <Clock size={15} className="shrink-0 text-amber-600" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-app-text truncate">
+                      <span className="text-app-primary">{task.name}</span>: {task.prompt}
+                    </p>
+                    <p className="text-xs text-app-text-secondary">
+                      {formatSchedule(task.time, task.days)} · sin guardar
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setPending((prev) => prev.filter((_, i) => i !== index))}
+                    className="text-red-500 hover:text-red-700 shrink-0"
+                    title="Quitar de la lista"
+                  >
+                    <X size={14} />
+                  </button>
                 </li>
               ))}
             </ul>
@@ -564,25 +663,10 @@ export function SchedulerModal({ open, onClose }: SchedulerModalProps) {
             <textarea
               value={newPrompt}
               onChange={(e) => setNewPrompt(e.target.value)}
-              placeholder="¿Qué tiene que hacer el agente? (ej.: Resumime los mails pendientes)"
+              placeholder="¿Qué tiene que hacer? (ej.: Resumime los mails pendientes)"
               rows={2}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent"
             />
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={handleCraftPrompt}
-                disabled={craftingLoading || !newPrompt.trim()}
-                className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border border-gray-300 bg-white text-app-text-secondary hover:bg-gray-50 hover:text-app-primary disabled:opacity-50 transition-colors"
-                title="Mejorar el prompt con IA"
-              >
-                <Sparkles size={13} className={craftingLoading ? "animate-spin" : ""} />
-                {craftingLoading ? "Mejorando..." : "Mejorar prompt"}
-              </button>
-              {craftError && (
-                <span className="text-xs text-red-600">{craftError}</span>
-              )}
-            </div>
 
             {/* Primary schedule */}
             <div className="flex items-center gap-3 flex-wrap">
@@ -601,150 +685,21 @@ export function SchedulerModal({ open, onClose }: SchedulerModalProps) {
               </div>
             </div>
 
-            {/* Collapsible: Permissions */}
+            {/* Collapsible: resources the task has to use */}
             <CollapsibleSection
-              open={showPermissions}
-              onToggle={() => setShowPermissions(!showPermissions)}
+              open={showResources}
+              onToggle={() => setShowResources(!showResources)}
               icon={<Shield size={13} />}
-              label="Permisos"
-              count={Object.keys(newToolPerms).length + Object.keys(newSkillPerms).length + Object.keys(newWorkflowPerms).length}
-            >
-              <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 space-y-3">
-                {catalog.tools.length > 0 && (
-                  <div>
-                    <p className="text-xs font-medium text-app-text mb-1.5">Tools</p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {catalog.tools.filter((tool: CatalogItem) => tool.name !== "workflow").map((tool: CatalogItem) => (
-                        <PermissionCheckbox
-                          key={tool.name}
-                          name={tool.name}
-                          description={tool.description}
-                          checked={newToolPerms[tool.name] === "allow"}
-                          onChange={() => togglePermission(newToolPerms, setNewToolPerms, tool.name)}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {catalog.skills.length > 0 && (
-                  <div>
-                    <p className="text-xs font-medium text-app-text mb-1.5">Skills</p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {catalog.skills.map((skill: CatalogItem) => (
-                        <PermissionCheckbox
-                          key={skill.name}
-                          name={skill.name}
-                          description={skill.description}
-                          checked={newSkillPerms[skill.name] === "allow"}
-                          onChange={() => togglePermission(newSkillPerms, setNewSkillPerms, skill.name)}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {catalog.workflows.length > 0 && (
-                  <div>
-                    <p className="text-xs font-medium text-app-text mb-1.5">Workflows</p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {catalog.workflows.map((workflow: CatalogItem) => (
-                        <PermissionCheckbox
-                          key={workflow.name}
-                          name={workflow.name}
-                          description={workflow.description}
-                          checked={newWorkflowPerms[workflow.name] === "allow"}
-                          onChange={() => togglePermission(newWorkflowPerms, setNewWorkflowPerms, workflow.name)}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {catalog.tools.length === 0 && catalog.skills.length === 0 && catalog.workflows.length === 0 && (
-                  <p className="text-xs text-app-text-secondary">No hay tools, skills ni workflows disponibles.</p>
-                )}
-              </div>
-            </CollapsibleSection>
-
-            {/* Collapsible: Parameters */}
-            <CollapsibleSection
-              open={showParameters}
-              onToggle={() => setShowParameters(!showParameters)}
-              icon={<Sliders size={13} />}
-              label="Parámetros del modelo"
-              count={Object.keys(newParams).length}
+              label="Recursos"
+              count={newSelection.agentes.length + newSelection.tools.length + newSelection.rag.length}
             >
               <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
-                <div className="grid grid-cols-2 gap-2">
-                  <label className="flex flex-col gap-1">
-                    <span className="text-[11px] text-app-text-secondary">Temperature</span>
-                    <input
-                      type="number"
-                      min="0"
-                      max="2"
-                      step="0.1"
-                      value={newParams.temperature ?? ""}
-                      onChange={(e) =>
-                        setNewParams((p) => ({
-                          ...p,
-                          temperature: e.target.value ? Number(e.target.value) : undefined,
-                        }))
-                      }
-                      placeholder="default"
-                      className="border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-400"
-                    />
-                  </label>
-                  <label className="flex flex-col gap-1">
-                    <span className="text-[11px] text-app-text-secondary">Top P</span>
-                    <input
-                      type="number"
-                      min="0"
-                      max="1"
-                      step="0.05"
-                      value={newParams.top_p ?? ""}
-                      onChange={(e) =>
-                        setNewParams((p) => ({
-                          ...p,
-                          top_p: e.target.value ? Number(e.target.value) : undefined,
-                        }))
-                      }
-                      placeholder="default"
-                      className="border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-400"
-                    />
-                  </label>
-                  <label className="flex flex-col gap-1">
-                    <span className="text-[11px] text-app-text-secondary">Max Tokens</span>
-                    <input
-                      type="number"
-                      min="256"
-                      max="128000"
-                      step="256"
-                      value={newParams.max_tokens ?? ""}
-                      onChange={(e) =>
-                        setNewParams((p) => ({
-                          ...p,
-                          max_tokens: e.target.value ? Number(e.target.value) : undefined,
-                        }))
-                      }
-                      placeholder="default"
-                      className="border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-400"
-                    />
-                  </label>
-                  <label className="flex flex-col gap-1">
-                    <span className="text-[11px] text-app-text-secondary">Seed</span>
-                    <input
-                      type="number"
-                      min="0"
-                      value={newParams.seed ?? ""}
-                      onChange={(e) =>
-                        setNewParams((p) => ({
-                          ...p,
-                          seed: e.target.value ? Number(e.target.value) : undefined,
-                        }))
-                      }
-                      placeholder="default"
-                      className="border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-400"
-                    />
-                  </label>
-                </div>
+                <ResourceCards
+                  kinds={["agentes", "tools", "rag"]}
+                  selection={newSelection}
+                  onChange={setNewSelection}
+                  idPrefix="scheduler"
+                />
               </div>
             </CollapsibleSection>
 
@@ -817,10 +772,11 @@ export function SchedulerModal({ open, onClose }: SchedulerModalProps) {
           <button
             type="button"
             onClick={handleSaveAll}
-            className="flex items-center justify-center gap-2 bg-gradient-to-r from-app-primary to-app-gradient-secondary text-app-primary-text text-sm font-medium px-5 py-2 rounded-lg hover:opacity-90"
+            disabled={creating !== null}
+            className="flex items-center justify-center gap-2 bg-gradient-to-r from-app-primary to-app-gradient-secondary text-app-primary-text text-sm font-medium px-5 py-2 rounded-lg hover:opacity-90 disabled:opacity-50"
           >
             <Check size={15} />
-            Guardar
+            {creating ? "Creando…" : "Guardar"}
           </button>
           <button
             type="button"

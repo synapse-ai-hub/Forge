@@ -1,17 +1,18 @@
-"""Helpers for the scheduler (agenda): CRUD, execution and notifications.
+"""Scheduler (agenda): the workflows that have a ``schedule`` block, and the clock that starts them.
 
-Tasks are stored in the ``scheduled_tasks`` SQLite table and executed by an
-async loop started from the application lifespan. Each execution:
+A scheduled task is a workflow whose YAML has a ``schedule`` block (see
+:func:`~backend.agent.utils.workflow_validator.normalize_schedule`). It is run by the
+workflow engine like any other workflow, so its runs, steps, spend, judge and
+notifications are the ones of :mod:`backend.agent.utils.workflow_service`; the only
+difference is ``source = "schedule"``. A task can also be played by hand.
 
-1. Creates a dedicated session (metadata ``source: "scheduler"``).
-2. Runs the normal agent loop with the task prompt.
-3. Records the result in ``task_runs``.
-4. Persists a notification (``notifications`` table, pushed to the web UI
-   through the event bus) and notifies Telegram (one message per allowed
-   chat), so both channels behave exactly like a user-triggered run.
+This module has two parts:
 
-All functions are imported by ``backend/routes/scheduler.py``,
-``backend/main.py`` and ``backend/telegram/``.
+- The view of the scheduled workflows the routes and Telegram use (``list_tasks``,
+  ``get_task``, ``update_task``, ``delete_task``, ``list_runs``).
+- :class:`SchedulerService`, the loop started from the application lifespan: every
+  :data:`CHECK_INTERVAL_SECONDS` it looks for the slots that match the current minute
+  and starts the run of their workflow.
 
 Timezone: the system local time is used directly (no configuration).
 """
@@ -19,94 +20,33 @@ Timezone: the system local time is used directly (no configuration).
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-import os
 import re
-import sqlite3
-import sys
 import uuid
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
-import yaml
-
-# ---------------------------------------------------------------------------
-# Ensure the project root is in sys.path for absolute imports
-# ---------------------------------------------------------------------------
-_current_dir = os.path.dirname(os.path.abspath(__file__))
-_project_root = os.path.dirname(os.path.dirname(os.path.dirname(_current_dir)))
-if _project_root not in sys.path:
-    sys.path.insert(0, _project_root)
-
+from backend.agent.utils import workflow_db, workflow_loader
+from backend.agent.utils.db import get_connection
 from backend.agent.utils.error_logger import log_error
-from backend.agent.utils.db import db_transaction, get_connection
-from backend.agent.utils.notifications_helpers import delete_task_notifications, notify
 from backend.agent.utils.queries import load_query
+from backend.agent.utils.workflow_loader import list_scheduled, save_schedule
+from backend.agent.utils.workflow_validator import normalize_schedule
 
 logger = logging.getLogger(__name__)
 
 CHECK_INTERVAL_SECONDS = 20
 """How often the loop checks for due tasks (must stay below one minute)."""
 
-_TIME_RE_ERROR = "Horario inválido (formato esperado HH:MM)."
-_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
-
-
-# ---------------------------------------------------------------------------
-# Serialisation helpers
-# ---------------------------------------------------------------------------
-
-
-def _parse_json_field(value: str | None, default: Any = None) -> Any:
-    """Parse a JSON text column.
-
-    Args:
-        value: The stored text, or None.
-        default: Value to return when the text cannot be parsed.
-
-    Returns:
-        The parsed value, or *default* on failure.
-    """
-    if value is None:
-        return default
-    try:
-        return json.loads(value)
-    except (json.JSONDecodeError, TypeError):
-        return default
-
-
-def _serialize_json(value: Any) -> str | None:
-    """Serialise a Python value to a JSON string.
-
-    Args:
-        value: The value to serialise.
-
-    Returns:
-        The JSON text, or ``None`` when the value is None.
-    """
-    if value is None:
-        return None
-    return json.dumps(value, ensure_ascii=False)
-
-
-def _slot_key(time_str: str, days: list[int]) -> str:
-    """Generate a unique identifier for a schedule slot.
-
-    Example: ``"09:00_1,2,3,4,5"``.
-
-    Args:
-        time_str: Time of the slot, ``HH:MM``.
-        days: Weekdays of the slot.
-
-    Returns:
-        The identifier of the slot.
-    """
-    return f"{time_str}_{','.join(str(d) for d in sorted(set(days)))}"
+_EDIT_UNAVAILABLE = (
+    "El nombre, la descripción, los permisos y los parámetros de una tarea programada "
+    "se cambian en su workflow, no desde la agenda."
+)
 
 
 def _slugify(text: str) -> str:
-    """Convert arbitrary text into a lowercase slug suitable for an agent name.
+    """Convert arbitrary text into a lowercase slug suitable for a workflow name.
 
     Keeps only ``[a-z0-9]``, replacing spaces and special characters with
     hyphens.  Leading/trailing hyphens are stripped.  Falls back to a
@@ -122,205 +62,76 @@ def _slugify(text: str) -> str:
     return slug if slug else uuid.uuid4().hex[:8]
 
 
-# ---------------------------------------------------------------------------
-# Row ↔ dict conversion
-# ---------------------------------------------------------------------------
-
-
-def _row_to_task(row: sqlite3.Row) -> dict:
-    """Convert a ``scheduled_tasks`` row into a public task dict.
+def _task_view(item: dict[str, Any]) -> dict[str, Any]:
+    """Describe a scheduled workflow as the task the agenda shows.
 
     Args:
-        row: Row of ``scheduled_tasks``.
+        item: Scheduled workflow from :func:`~backend.agent.utils.workflow_loader.list_scheduled`.
 
     Returns:
-        The task as a dict.
+        The task: the first slot is the main time, the others are the repetitions.
     """
+    name = item["name"]
+    slots = item["schedule"]["slots"]
+    try:
+        stamp = datetime.fromtimestamp((workflow_loader.get_workflows_dir() / f"{name}.yaml").stat().st_mtime).isoformat()
+    except OSError:
+        stamp = ""
     return {
-        "id": row["id"],
-        "name": row["name"],
-        "prompt": row["prompt"],
-        "time": row["time"],
-        "days": _parse_json_field(row["days"], []),
-        "enabled": bool(row["enabled"]),
-        "repetitions": _parse_json_field(row["repetitions"], []),
-        "tool_permissions": _parse_json_field(row["tool_permissions"]),
-        "skill_permissions": _parse_json_field(row["skill_permissions"]),
-        "parameters": _parse_json_field(row["parameters"]),
-        "last_run_date": row["last_run_date"],
-        "slot_runs": _parse_json_field(row["slot_runs"], {}),
-        "created_at": row["created_at"],
-        "updated_at": row["updated_at"],
+        "id": name,
+        "name": name,
+        "prompt": item.get("description", ""),
+        "time": slots[0]["time"],
+        "days": slots[0]["days"],
+        "enabled": bool(item["schedule"]["enabled"]),
+        "repetitions": slots[1:],
+        "created_at": stamp,
+        "updated_at": stamp,
     }
 
 
-# ---------------------------------------------------------------------------
-# CRUD
-# ---------------------------------------------------------------------------
-
-
-def _validate_task_fields(name: str, prompt: str, time_str: str, days: list[int]) -> str | None:
-    """Validate the common task fields, returning an error message or ``None``.
-
-    Args:
-        name: Task name (already stripped).
-        prompt: Task description (already stripped).
-        time_str: Local time in ``HH:MM``.
-        days: Selected weekdays (0=Sunday .. 6=Saturday).
-
-    Returns:
-        An error message string if any field is invalid, otherwise ``None``.
-    """
-    if not name:
-        return "El nombre de la tarea es obligatorio."
-    if not _NAME_RE.match(name):
-        return "El nombre solo puede contener minúsculas, números, guiones y guiones bajos."
-    if not prompt:
-        return "La descripción de la tarea es obligatoria."
-    if not _is_valid_time(time_str):
-        return _TIME_RE_ERROR
-    if not days or any(not isinstance(d, int) or d < 0 or d > 6 for d in days):
-        return "Seleccioná al menos un día válido (0-6)."
-    return None
-
-
-def list_tasks() -> list[dict]:
-    """Return all scheduled tasks sorted by time.
+def list_tasks() -> list[dict[str, Any]]:
+    """Return the scheduled tasks (workflows with a schedule) sorted by time.
 
     Returns:
         List of task dicts (possibly empty on error).
     """
     try:
-        with get_connection() as conn:
-            rows = conn.execute(
-                load_query("scheduler/list_tasks.sql"),
-            ).fetchall()
-            return [_row_to_task(row) for row in rows]
+        return sorted(
+            (_task_view(item) for item in list_scheduled()),
+            key=lambda task: (task["time"], task["name"]),
+        )
     except Exception as exc:
         log_error(str(exc), source="backend/agent/utils/scheduler_helpers.py:list_tasks")
         logger.warning("Failed to list scheduled tasks: %s", exc)
         return []
 
 
-def get_task(task_id: str) -> dict | None:
+def get_task(task_id: str) -> dict[str, Any] | None:
     """Fetch a single scheduled task.
 
     Args:
-        task_id: Task identifier.
+        task_id: Task identifier (the name of its workflow).
 
     Returns:
         The task, or ``None`` if it does not exist.
     """
-    try:
-        with get_connection() as conn:
-            row = conn.execute(
-                load_query("scheduler/get_task.sql"), (task_id,)
-            ).fetchone()
-            return _row_to_task(row) if row else None
-    except Exception as exc:
-        log_error(str(exc), source="backend/agent/utils/scheduler_helpers.py:get_task")
-        logger.warning("Failed to get scheduled task %s: %s", task_id, exc)
-        return None
+    for task in list_tasks():
+        if task["id"] == task_id:
+            return task
+    return None
 
 
-def add_task(
-    name: str,
-    prompt: str,
-    time_str: str,
-    days: list[int],
-    tool_permissions: dict | None = None,
-    skill_permissions: dict | None = None,
-    parameters: dict | None = None,
-    repetitions: list[dict] | None = None,
-) -> dict:
-    """Create a new scheduled task.
+def get_task_by_name(name: str) -> dict[str, Any] | None:
+    """Fetch a scheduled task by the name of its workflow.
 
     Args:
-        name: Task name (also used as sub-agent identifier).
-        prompt: What the agent should do when the task fires.
-        time_str: Local time in ``HH:MM`` (24h).
-        days: Selected weekdays, 0=Sunday .. 6=Saturday.
-        tool_permissions: Tool permissions dict for the sub-agent.
-        skill_permissions: Skill permissions dict for the sub-agent.
-        parameters: Model parameters dict (temperature, top_p, etc.).
-        repetitions: Additional schedule slots ``[{"time": "HH:MM", "days": [0..6]}]``.
+        name: Workflow name.
 
     Returns:
-        Contract-style dict with ``status``, ``message`` and ``task``.
+        The task, or ``None`` if the workflow has no schedule.
     """
-    name = (name or "").strip()
-    prompt = (prompt or "").strip()
-    error = _validate_task_fields(name, prompt, time_str, days)
-    if error:
-        return {"status": "error", "message": error}
-
-    # Task names share the .md file namespace: reject duplicates so deleting
-    # one task never breaks another.
-    try:
-        for existing in list_tasks():
-            if (existing.get("name") or "").lower() == name.lower():
-                return {
-                    "status": "error",
-                    "message": f"Ya existe una tarea con el nombre '{name}'. Elegí otro nombre.",
-                }
-    except Exception:
-        pass
-
-    # Every task gets a dedicated sub-agent named after the task; reject it
-    # if that name is already taken by a user-created agent.
-    if _agent_name_conflict(name):
-        return {
-            "status": "error",
-            "message": f"El nombre '{name}' coincide con un agente existente. Elegí otro nombre.",
-        }
-
-    now = datetime.now().isoformat()
-    task_id = uuid.uuid4().hex
-    try:
-        with db_transaction() as conn:
-            conn.execute(
-                load_query("scheduler/insert_task.sql"),
-                (
-                    task_id,
-                    name,
-                    prompt,
-                    time_str,
-                    json.dumps(sorted(set(days))),
-                    _serialize_json(repetitions),
-                    _serialize_json(tool_permissions),
-                    _serialize_json(skill_permissions),
-                    _serialize_json(parameters),
-                    now,
-                    now,
-                ),
-            )
-        task = get_task(task_id)
-        # Create the sub-agent (permissions only, no system prompt) on
-        # activation. If it cannot be created (name collision or write
-        # failure), roll back so we don't leave a task that can never run.
-        try:
-            agent_name = _ensure_scheduler_agent(task)
-        except Exception as exc:
-            log_error(str(exc), source="backend/agent/utils/scheduler_helpers.py:add_task(agent)")
-            agent_name = None
-        if agent_name is None:
-            with db_transaction() as conn:
-                conn.execute(
-                    load_query("scheduler/delete_task.sql"), (task_id,)
-                )
-            return {
-                "status": "error",
-                "message": "No se pudo crear el sub-agente de la tarea (nombre en conflicto o error de escritura).",
-            }
-        return {
-            "status": "success",
-            "message": "Tarea programada creada.",
-            "task": task,
-        }
-    except Exception as exc:
-        log_error(str(exc), source="backend/agent/utils/scheduler_helpers.py:add_task")
-        logger.warning("Failed to add scheduled task: %s", exc)
-        return {"status": "error", "message": "No se pudo crear la tarea programada."}
+    return get_task(name)
 
 
 def update_task(
@@ -330,134 +141,71 @@ def update_task(
     time_str: str | None = None,
     days: list[int] | None = None,
     enabled: bool | None = None,
-    tool_permissions: dict | None = None,
-    skill_permissions: dict | None = None,
-    parameters: dict | None = None,
-    repetitions: list[dict] | None = None,
-) -> dict:
-    """Update a scheduled task.
+    tool_permissions: dict[str, Any] | None = None,
+    skill_permissions: dict[str, Any] | None = None,
+    parameters: dict[str, Any] | None = None,
+    repetitions: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Update the schedule of a task (its ``schedule`` block is written in the workflow YAML).
 
     Args:
-        task_id: The task identifier.
-        name: New name, or ``None`` to keep the current one.
-        prompt: New prompt, or ``None`` to keep the current one.
-        time_str: New local time ``HH:MM``, or ``None`` to keep it.
-        days: New weekday list, or ``None`` to keep it.
-        enabled: New enabled flag, or ``None`` to keep it.
-        tool_permissions: New tool permissions, or ``None`` to keep current.
-        skill_permissions: New skill permissions, or ``None`` to keep current.
-        parameters: New model parameters, or ``None`` to keep current.
-        repetitions: New additional slots, or ``None`` to keep current.
+        task_id: Task identifier (the name of its workflow).
+        name: Not editable here.
+        prompt: Not editable here.
+        time_str: New main time in ``HH:MM``.
+        days: New main weekdays, 0=Sunday .. 6=Saturday.
+        enabled: Pause (``False``) or resume (``True``) the task.
+        tool_permissions: Not editable here.
+        skill_permissions: Not editable here.
+        parameters: Not editable here.
+        repetitions: New additional slots; replaces the current ones.
 
     Returns:
-        Contract-style dict with ``status``, ``message`` and ``task``.
+        Contract-style dict with ``status``, ``message`` and, on success, ``task``.
     """
-    current = get_task(task_id)
-    if current is None:
+    if any(value is not None for value in (name, prompt, tool_permissions, skill_permissions, parameters)):
+        return {"status": "error", "message": _EDIT_UNAVAILABLE}
+    task = get_task(task_id)
+    if task is None:
         return {"status": "error", "message": "La tarea no existe."}
-
-    new_name = name.strip() if isinstance(name, str) else current["name"]
-    new_prompt = prompt.strip() if isinstance(prompt, str) else current["prompt"]
-    new_time = time_str if time_str else current["time"]
-    new_days = sorted(set(days)) if days else current["days"]
-    error = _validate_task_fields(new_name, new_prompt, new_time, new_days)
-    if error:
-        return {"status": "error", "message": error}
-    new_enabled = current["enabled"] if enabled is None else bool(enabled)
-    # For permissions/params: a dict (even empty) means "clear", None means "keep".
-    new_tool_perms = tool_permissions if isinstance(tool_permissions, dict) else current.get("tool_permissions")
-    new_skill_perms = skill_permissions if isinstance(skill_permissions, dict) else current.get("skill_permissions")
-    new_params = parameters if isinstance(parameters, dict) else current.get("parameters")
-    new_reps = repetitions if isinstance(repetitions, list) else current.get("repetitions")
-
-    # Every task gets a dedicated sub-agent named after the task. Reject if
-    # the (new) name collides with a user-created agent (on rename, or when
-    # the task is created/updated with a name already taken).
-    if _agent_name_conflict(new_name):
-        return {
-            "status": "error",
-            "message": f"El nombre '{new_name}' coincide con un agente existente. Elegí otro nombre.",
-        }
-
-    # Sync the sub-agent BEFORE persisting so a failed write never leaves the
-    # DB pointing at a name without its .md, and a rename never deletes the old
-    # .md before the new one exists. Runs regardless of the enabled flag so the
-    # "every task has a sub-agent" invariant holds even while disabled.
-    sync_task = dict(current)
-    sync_task["name"] = new_name
-    sync_task["tool_permissions"] = new_tool_perms
-    sync_task["skill_permissions"] = new_skill_perms
-    sync_task["parameters"] = new_params
-    try:
-        agent_name = _ensure_scheduler_agent(sync_task)
-    except Exception as exc:
-        log_error(str(exc), source="backend/agent/utils/scheduler_helpers.py:update_task(agent)")
-        agent_name = None
-    if agent_name is None:
-        return {
-            "status": "error",
-            "message": "No se pudo crear el sub-agente de la tarea (nombre en conflicto o error de escritura).",
-        }
-
-    try:
-        with db_transaction() as conn:
-            conn.execute(
-                load_query("scheduler/update_task.sql"),
-                (
-                    new_name,
-                    new_prompt,
-                    new_time,
-                    json.dumps(new_days),
-                    int(new_enabled),
-                    _serialize_json(new_reps),
-                    _serialize_json(new_tool_perms),
-                    _serialize_json(new_skill_perms),
-                    _serialize_json(new_params),
-                    datetime.now().isoformat(),
-                    task_id,
-                ),
-            )
-        # A renamed task removes its old scheduler agent (the new one already
-        # exists from the pre-persist sync above).
-        if new_name != current["name"]:
-            _cleanup_scheduler_agent(current["name"])
-        task = get_task(task_id)
-        return {
-            "status": "success",
-            "message": "Tarea actualizada.",
-            "task": task,
-        }
-    except Exception as exc:
-        log_error(str(exc), source="backend/agent/utils/scheduler_helpers.py:update_task")
-        logger.warning("Failed to update scheduled task %s: %s", task_id, exc)
-        return {"status": "error", "message": "No se pudo actualizar la tarea."}
+    slots = [{
+        "time": time_str if time_str is not None else task["time"],
+        "days": days if days is not None else task["days"],
+    }]
+    slots += repetitions if repetitions is not None else task["repetitions"]
+    schedule, error = normalize_schedule({
+        "enabled": enabled if enabled is not None else task["enabled"],
+        "slots": slots,
+    })
+    if error or schedule is None:
+        return {"status": "error", "message": error or "Horario inválido."}
+    saved = save_schedule(task["name"], schedule)
+    if saved["status"] != "success":
+        return saved
+    return {"status": "success", "message": "Tarea actualizada.", "task": get_task(task_id)}
 
 
-def delete_task(task_id: str) -> dict:
-    """Delete a scheduled task together with its recorded runs and sub-agent.
+def delete_task(task_id: str) -> dict[str, str]:
+    """Delete a scheduled task: its workflow YAML and its runs, commits and notifications.
 
     Args:
-        task_id: The task identifier.
+        task_id: Task identifier (the name of its workflow).
 
     Returns:
         Contract-style dict with ``status`` and ``message``.
     """
-    # Read the task before deleting so we can clean up the sub-agent.
+    from backend.agent.utils.workflow_service import workflow_service
+
     task = get_task(task_id)
+    if task is None:
+        return {"status": "error", "message": "La tarea no existe."}
+    if workflow_service.is_running(task["name"]):
+        return {"status": "error", "message": "La tarea se está ejecutando. Cancelala antes de eliminarla."}
     try:
-        with db_transaction() as conn:
-            cursor = conn.execute(
-                load_query("scheduler/delete_runs_by_task.sql"), (task_id,)
-            )
-            cursor = conn.execute(
-                load_query("scheduler/delete_task.sql"), (task_id,)
-            )
-        if cursor.rowcount == 0:
-            return {"status": "error", "message": "La tarea no existe."}
-        delete_task_notifications(task_id)
-        # Remove the sub-agent .md if it exists.
-        if task and task.get("name"):
-            _cleanup_scheduler_agent(task["name"])
+        path = Path(workflow_loader.get_workflows_dir()) / f"{task['name']}.yaml"
+        path.unlink(missing_ok=True)
+        if not workflow_db.delete_workflow(task["name"]):
+            raise RuntimeError("No se pudieron borrar los registros de la tarea.")
         return {"status": "success", "message": "Tarea eliminada."}
     except Exception as exc:
         log_error(str(exc), source="backend/agent/utils/scheduler_helpers.py:delete_task")
@@ -465,461 +213,34 @@ def delete_task(task_id: str) -> dict:
         return {"status": "error", "message": "No se pudo eliminar la tarea."}
 
 
-# ---------------------------------------------------------------------------
-# Sub-agent helpers
-# ---------------------------------------------------------------------------
-
-
-def _get_agents_dir() -> str:
-    """Locate the agents config directory, creating it if needed.
-
-    Returns:
-        Path of the directory as text.
-    """
-    from backend.agent.utils.config_dir import get_agents_dir
-    agents_dir = get_agents_dir()
-    agents_dir.mkdir(parents=True, exist_ok=True)
-    return str(agents_dir)
-
-
-def _agent_md_path(name: str) -> str:
-    """Return the full path to an agent's markdown file.
-
-    Args:
-        name: The agent name (filename without ``.md``).
-
-    Returns:
-        The absolute path to ``<agents_dir>/<name>.md``.
-    """
-    return os.path.join(_get_agents_dir(), f"{name}.md")
-
-
-def _has_scheduler_flag(md_path: str) -> bool:
-    """Return ``True`` if an agent ``.md`` was created by the scheduler.
-
-    Checks the ``scheduler_task: true`` marker in the frontmatter so
-    user-created agents with the same name are never overwritten/deleted.
-
-    Args:
-        md_path: Full path to the agent markdown file.
-
-    Returns:
-        ``True`` when the file carries the scheduler marker.
-    """
-    try:
-        with open(md_path, encoding="utf-8") as f:
-            content = f.read()
-    except (OSError, UnicodeDecodeError):
-        return False
-    from backend.agent.permissions import _parse_frontmatter
-
-    return bool(_parse_frontmatter(content).get("scheduler_task"))
-
-
-def _agent_name_conflict(name: str) -> bool:
-    """Return ``True`` if a user-created agent already uses ``name``.
-
-    A scheduler task whose name collides with a user-created agent must not
-    overwrite it nor run with its (possibly broader) permissions/system
-    prompt, so the collision is treated as a hard error.
-
-    Args:
-        name: The task/agent name (filename without ``.md``).
-
-    Returns:
-        ``True`` if ``<agents_dir>/<name>.md`` exists without the
-        ``scheduler_task`` marker.
-    """
-    target = _agent_md_path(name)
-    return os.path.isfile(target) and not _has_scheduler_flag(target)
-
-
-def _ensure_scheduler_agent(task: dict) -> str | None:
-    """Create/refresh the sub-agent ``.md`` for a scheduled task.
-
-    Every scheduled task gets its own sub-agent named after the task. The
-    agent carries only the task's permissions (frontmatter, empty when the
-    task has none) and an **empty body** (no system prompt): the refined
-    prompt is sent as the user message at execution time and the permissions
-    are filtered by the normal agent loop.
-
-    If the name collides with a user-created agent or the file cannot be
-    written, returns ``None`` (the caller must treat this as an error).
-
-    Args:
-        task: Task dict from :func:`get_task`.
-
-    Returns:
-        The agent name to pass to ``AgentLoop.run()``, or ``None`` on failure.
-    """
-    tool_perms = task.get("tool_permissions")
-    skill_perms = task.get("skill_permissions")
-
-    task_name = task["name"]
-    params = task.get("parameters") or {}
-
-    # Build the frontmatter dict and dump it with yaml.safe_dump so strings
-    # with quotes/backslashes and nested dicts are escaped correctly. The
-    # `permissions` block uses the plural sub-blocks `get_tool_permissions` and
-    # `get_skill_permissions` read: `tools` (flat or grouped), `tasks` (the
-    # nested `task` permission) and `skills`.
-    frontmatter: dict = {
-        "name": task_name,
-        "description": f"Sub-agente programado: {task_name}",
-        "scheduler_task": True,
-        "permissions": {},
-    }
-    if tool_perms:
-        tools_block = {k: v for k, v in tool_perms.items() if k not in ("task", "workflow")}
-        if tools_block:
-            frontmatter["permissions"]["tools"] = tools_block
-        tasks_block = tool_perms.get("task")
-        if isinstance(tasks_block, dict) and tasks_block:
-            frontmatter["permissions"]["tasks"] = tasks_block
-        workflows_block = tool_perms.get("workflow")
-        if isinstance(workflows_block, dict) and workflows_block:
-            frontmatter["permissions"]["workflows"] = workflows_block
-    if skill_perms:
-        frontmatter["permissions"]["skills"] = skill_perms
-    if params:
-        frontmatter["parameters"] = params
-
-    content = (
-        "---\n"
-        + yaml.safe_dump(frontmatter, allow_unicode=True, sort_keys=False)
-        + "---\n"
-    )
-
-    # Never overwrite a user-created agent with the same name.
-    if _agent_name_conflict(task_name):
-        log_error(
-            f"Agent '{task_name}' already exists (user-created); cannot create scheduler agent.",
-            source="backend/agent/utils/scheduler_helpers.py:_ensure_scheduler_agent",
-        )
-        logger.warning("Agent '%s' already exists (user-created); scheduler agent not created.", task_name)
-        return None
-
-    target = _agent_md_path(task_name)
-    try:
-        with open(target, "w", encoding="utf-8") as f:
-            f.write(content)
-        logger.info("Scheduler agent synced: %s", target)
-    except OSError as exc:
-        log_error(str(exc), source="backend/agent/utils/scheduler_helpers.py:_ensure_scheduler_agent")
-        logger.warning("Failed to create scheduler agent %s: %s", task_name, exc)
-        return None
-
-    return task_name
-
-
-def _cleanup_scheduler_agent(task_name: str) -> None:
-    """Remove the sub-agent ``.md`` created by the scheduler for a task.
-
-    Only removes files carrying the ``scheduler_task`` marker so
-    user-created agents with the same name are never deleted.
-
-    Args:
-        task_name: The task/agent name (filename without ``.md``).
-    """
-    target = _agent_md_path(task_name)
-    try:
-        if os.path.isfile(target) and _has_scheduler_flag(target):
-            os.remove(target)
-            logger.info("Scheduler agent removed: %s", target)
-    except OSError as exc:
-        log_error(str(exc), source="backend/agent/utils/scheduler_helpers.py:_cleanup_scheduler_agent")
-        logger.warning("Failed to remove scheduler agent %s: %s", task_name, exc)
-
-
-# ---------------------------------------------------------------------------
-# Slot dedup helpers
-# ---------------------------------------------------------------------------
-
-
-def mark_slot_fired(task_id: str, slot_key: str, date_str: str) -> None:
-    """Mark a specific slot as fired on the given date (dedup per slot).
-
-    Updates the ``slot_runs`` JSON dict on the ``scheduled_tasks`` row.
-
-    Args:
-        task_id: The task identifier.
-        slot_key: Unique slot identifier from :func:`_slot_key`.
-        date_str: Today's date (``YYYY-MM-DD``).
-    """
-    try:
-        with db_transaction() as conn:
-            row = conn.execute(
-                load_query("scheduler/get_slot_runs.sql"), (task_id,)
-            ).fetchone()
-            slot_runs = _parse_json_field(row["slot_runs"] if row else None, {})
-            slot_runs[slot_key] = date_str
-            conn.execute(
-                load_query("scheduler/update_slot_runs.sql"),
-                (json.dumps(slot_runs, ensure_ascii=False), task_id),
-            )
-    except Exception as exc:
-        log_error(str(exc), source="backend/agent/utils/scheduler_helpers.py:mark_slot_fired")
-        logger.warning("Failed to mark slot fired: %s", exc)
-
-
-# ---------------------------------------------------------------------------
-# Runs log
-# ---------------------------------------------------------------------------
-
-
-def list_runs(limit: int = 50) -> list[dict]:
-    """Return the most recent task executions (newest first).
+def list_runs(limit: int = 50) -> list[dict[str, Any]]:
+    """Return the most recent runs started by the scheduler (newest first).
 
     Args:
         limit: Maximum number of runs to return.
 
     Returns:
-        List of run dicts joined with the task name and prompt (possibly empty).
+        List of run dicts (``id``, ``task_id``, ``name``, ``prompt``,
+        ``status``, ``detail``, ``started_at``, ``finished_at``), possibly empty.
     """
     try:
         with get_connection() as conn:
-            rows = conn.execute(
-                load_query("scheduler/list_runs.sql"),
-                (int(limit),),
-            ).fetchall()
-            return [
-                {
-                    "id": row["id"],
-                    "task_id": row["task_id"],
-                    "prompt": row["prompt"],
-                    "name": row["name"],
-                    "session_id": row["session_id"],
-                    "status": row["status"],
-                    "detail": row["detail"],
-                    "started_at": row["started_at"],
-                    "finished_at": row["finished_at"],
-                }
-                for row in rows
-            ]
+            rows = conn.execute(load_query("scheduler/list_runs.sql"), (int(limit),)).fetchall()
+            return [dict(row) for row in rows]
     except Exception as exc:
         log_error(str(exc), source="backend/agent/utils/scheduler_helpers.py:list_runs")
-        logger.warning("Failed to list task runs: %s", exc)
+        logger.warning("Failed to list scheduled runs: %s", exc)
         return []
 
 
-def record_run(
-    task_id: str,
-    session_id: str | None,
-    status: str,
-    detail: str,
-    started_at: str,
-    finished_at: str,
-) -> int | None:
-    """Persist a task execution result in ``task_runs``.
-
-    Args:
-        task_id: Task that ran.
-        session_id: Session where the agent worked, when there was one.
-        status: ``"success"`` or ``"error"``.
-        detail: First characters of the answer, or the failure reason.
-        started_at: Local time the run started.
-        finished_at: Local time the run ended.
-
-    Returns:
-        The id of the new ``task_runs`` row, or ``None`` when it failed.
-    """
-    try:
-        with db_transaction() as conn:
-            cursor = conn.execute(
-                load_query("scheduler/insert_run.sql"),
-                (task_id, session_id, status, detail, started_at, finished_at),
-            )
-            return cursor.lastrowid
-    except Exception as exc:
-        log_error(str(exc), source="backend/agent/utils/scheduler_helpers.py:record_run")
-        logger.warning("Failed to record task run: %s", exc)
-        return None
-
-
-def _is_valid_time(time_str: str) -> bool:
-    """Check that a time matches the ``HH:MM`` 24h format.
-
-    Args:
-        time_str: Text to check.
-
-    Returns:
-        True when it matches.
-    """
-    return bool(isinstance(time_str, str) and re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", time_str))
-
-
-# ---------------------------------------------------------------------------
-# Execution + notifications
-# ---------------------------------------------------------------------------
-
-async def execute_task(task: dict) -> None:
-    """Run a scheduled task through the normal agent loop and notify.
-
-    Creates a dedicated session, streams the agent loop (consuming SSE chunks
-    but detecting failures), records the run and notifies the web UI
-    (event bus) and every allowed Telegram chat.
-
-    Args:
-        task: The task dict (as returned by :func:`get_task`).
-    """
-    from backend.instances import agent, session_manager
-
-    task_id = task["id"]
-    prompt = task["prompt"]
-    started_at = datetime.now().isoformat()
-    session_id = uuid.uuid4().hex
-
-    # Create the session first so messages have a parent row.
-    try:
-        session_manager.create_session(session_id, metadata={"source": "scheduler"})
-    except Exception as exc:
-        log_error(str(exc), source="backend/agent/utils/scheduler_helpers.py:execute_task(create_session)")
-        logger.warning("Scheduler could not create session: %s", exc)
-
-    status = "success"
-    detail = ""
-    last_chunk = ""
-    try:
-        from backend.agent.loop import AgentLoop
-
-        # The sub-agent .md must already exist (created on add_task, refreshed
-        # on update_task). Never rewrite it here — just verify it's available.
-        agent_name = task["name"]
-        target = _agent_md_path(agent_name)
-        if not os.path.isfile(target):
-            status = "error"
-            detail = "No se pudo realizar la tarea: el agente correspondiente no está disponible."
-            log_error(detail, source="backend/agent/utils/scheduler_helpers.py:execute_task(agent)")
-        else:
-            agent_loop = AgentLoop(agent=agent, session_manager=session_manager)
-            # Pass the task's own permissions directly (source of truth) so the
-            # loop filters tools/skills/parameters exactly like a normal
-            # delegation, without re-reading the .md.
-            run_kwargs: dict = {
-                "session_id": session_id,
-                "user_message": prompt,
-                "agent_name": agent_name,
-                "tool_permissions": task.get("tool_permissions") or {},
-                "skill_permissions": task.get("skill_permissions") or {},
-                "parameters": task.get("parameters") or {},
-            }
-            async for _event in agent_loop.run(**run_kwargs):
-                # run() yields raw SSE strings; consume the stream so the loop
-                # advances. Terminal failures are detected afterwards via the
-                # persisted assistant message status (see
-                # get_last_assistant_message), since run() swallows internal
-                # errors and emits a generic chunk + [DONE]. We also track the
-                # last chunk to catch the max_iterations marker, which ends the
-                # stream without persisting a final assistant message.
-                if isinstance(_event, str) and _event.startswith("data: "):
-                    try:
-                        payload = json.loads(_event[len("data: "):].strip())
-                    except (json.JSONDecodeError, ValueError):
-                        continue
-                    if payload.get("type") == "chunk":
-                        last_chunk = payload.get("content", "")
-    except Exception as exc:
-        status = "error"
-        detail = str(exc)
-        log_error(str(exc), source="backend/agent/utils/scheduler_helpers.py:execute_task")
-        logger.warning("Scheduled task failed: %s", exc)
-
-    finished_at = datetime.now().isoformat()
-
-    # Read the final assistant answer from the DB (single source of truth).
-    final_text = ""
-    if status == "success":
-        try:
-            msg = session_manager.get_last_assistant_message(session_id, turn_number=1)
-            final_text = (msg.get("content") or "").strip() if msg else ""
-            # The loop only persists the assistant message with status="success"
-            # on the happy path; fatal/retry-exhausted errors save it without
-            # that status. Detect those so a failed run is not reported as success.
-            last_status = msg.get("status") if msg else None
-            if last_status != "success":
-                status = "error"
-                detail = "El agente no completó la tarea (error del proveedor)."
-        except Exception as exc:
-            log_error(str(exc), source="backend/agent/utils/scheduler_helpers.py:execute_task(final_text)")
-            logger.warning("Could not read scheduler final text: %s", exc)
-        if not final_text:
-            status = "error"
-            detail = "El agente no produjo respuesta."
-        # max_iterations ends the stream without persisting a final assistant
-        # message (the last one on DB is an intermediate tool-call message with
-        # status="success"), so detect its marker chunk explicitly.
-        if isinstance(last_chunk, str) and "límite de iteraciones" in last_chunk:
-            status = "error"
-            detail = "El agente alcanzó el límite de iteraciones."
-
-    if status == "success":
-        detail = final_text[:300]
-
-    run_row_id = record_run(task_id, session_id, status, detail, started_at, finished_at)
-
-    finished_local = datetime.now().strftime("%d/%m/%Y %H:%M")
-    await notify(
-        kind="task",
-        task_id=task_id,
-        title=task.get("name") or prompt[:60],
-        status=status,
-        message=detail,
-        run_id=str(run_row_id) if run_row_id is not None else None,
-        session_id=session_id,
-    )
-    await _notify_telegram(status, prompt, detail, finished_local)
-
-
-async def _notify_telegram(status: str, prompt: str, detail: str, finished_local: str) -> None:
-    """Send the execution result to every allowed Telegram chat.
-
-    Sent unconditionally (even when the bot toggle is off): the toggle only
-    controls whether Telegram works as a chat channel, but scheduled-task
-    notifications must always arrive.
-
-    Args:
-        status: ``"success"`` or ``"error"``.
-        prompt: The task description.
-        detail: Result summary (final answer or error message).
-        finished_local: Human-readable local finish timestamp.
-    """
-    try:
-        from backend.telegram.instance import telegram_bot
-
-        if not telegram_bot.token:
-            return
-        icon = "✅" if status == "success" else "❌"
-        header = "Tarea programada ejecutada" if status == "success" else "Tarea programada fallida"
-        lines = [
-            f"{icon} {header}",
-            f"Tarea: {prompt}",
-            f"Fecha y hora: {finished_local}",
-        ]
-        if detail:
-            summary = detail if len(detail) <= 500 else f"{detail[:500]}…"
-            lines.append(f"Resultado: {summary}")
-        text = "\n".join(lines)
-        for chat_id in telegram_bot.allowed_chat_ids:
-            await telegram_bot.send_message(chat_id, text)
-    except Exception as exc:
-        log_error(str(exc), source="backend/agent/utils/scheduler_helpers.py:_notify_telegram")
-        logger.warning("Failed to notify Telegram about scheduled task: %s", exc)
-
-
-# ---------------------------------------------------------------------------
-# Scheduler loop
-# ---------------------------------------------------------------------------
-
 class SchedulerService:
-    """Async loop that checks due tasks and executes them."""
+    """Async loop that looks for due slots and starts the run of their workflow."""
 
     def __init__(self) -> None:
-        """Create the service with no task running."""
+        """Create the service with no loop running."""
         self._task: asyncio.Task | None = None
         self._running = False
-        # Only one scheduled execution at a time.
-        self._exec_lock = asyncio.Lock()
-        self._fired_tasks: set[asyncio.Task] = set()
+        self._attempted: set[tuple[str, str]] = set()
 
     async def start(self) -> None:
         """Start the background check loop (idempotent)."""
@@ -942,7 +263,7 @@ class SchedulerService:
         logger.info("Scheduler service stopped.")
 
     async def _loop(self) -> None:
-        """Periodically check tasks and fire the ones due right now."""
+        """Periodically check the schedules and start the runs that are due."""
         while self._running:
             try:
                 await self._check_due_tasks()
@@ -951,67 +272,43 @@ class SchedulerService:
                 logger.warning("Scheduler loop error: %s", exc)
             await asyncio.sleep(CHECK_INTERVAL_SECONDS)
 
-    async def _run_task_guarded(self, task: dict) -> None:
-        """Execute one task holding the serial lock.
-
-        Runs as a background asyncio task so a long execution never blocks
-        the minute check and other due tasks are still evaluated.
-
-        Args:
-            task: The scheduled task to run.
-        """
-        async with self._exec_lock:
-            try:
-                logger.info("Executing scheduled task: %s", task["prompt"][:60])
-                await execute_task(task)
-            except Exception as exc:
-                log_error(str(exc), source="backend/agent/utils/scheduler_helpers.py:_run_task_guarded")
-                logger.warning("Scheduled task failed: %s", exc)
-
     async def _check_due_tasks(self) -> None:
-        """Queue every enabled task whose time matches the current minute.
+        """Start the run of every enabled workflow with a slot that matches the current minute.
 
-        Supports multiple slots per task: the primary slot (``time``/``days``)
-        plus any additional slots in ``repetitions``.  Each slot is deduped
-        independently via ``slot_runs``. Executions are launched as background
-        tasks so a long task never makes a later task miss its minute.
+        A slot is due when its time is the current minute and today is one of its days.
+        A workflow already has its run for that minute when ``workflow_runs`` holds a
+        scheduled run that started in it, so a slot never starts twice. A start that
+        fails (missing resources, workflow already running) is tried once per minute.
         """
+        from backend.agent.utils.workflow_service import workflow_service
+
         now = datetime.now()
-        today = now.strftime("%Y-%m-%d")
+        minute = now.strftime("%Y-%m-%dT%H:%M")
         current_time = now.strftime("%H:%M")
         # JS-style weekday (0=Sunday .. 6=Saturday) to match the UI convention.
         js_weekday = (now.weekday() + 1) % 7
+        self._attempted = {key for key in self._attempted if key[1] == minute}
 
-        for task in list_tasks():
-            if not task["enabled"]:
+        for item in list_scheduled():
+            schedule = item["schedule"]
+            if not schedule["enabled"]:
                 continue
-
-            # Build the full list of slots to evaluate.
-            slots = [{"time": task["time"], "days": task["days"]}]
-            for rep in (task.get("repetitions") or []):
-                if isinstance(rep, dict) and rep.get("time") and rep.get("days"):
-                    slots.append({"time": rep["time"], "days": rep["days"]})
-
-            for slot in slots:
-                if slot["time"] != current_time:
-                    continue
-                if js_weekday not in slot["days"]:
-                    continue
-
-                slot_key = _slot_key(slot["time"], slot["days"])
-                slot_runs = task.get("slot_runs") or {}
-                if slot_runs.get(slot_key) == today:
-                    continue
-
-                # Mark before queueing so a restart never double-fires the task.
-                mark_slot_fired(task["id"], slot_key, today)
-                logger.info("Queueing scheduled task: %s", task["prompt"][:60])
-                fired = asyncio.create_task(self._run_task_guarded(dict(task)))
-                self._fired_tasks.add(fired)
-                fired.add_done_callback(self._fired_tasks.discard)
-                # Break after first slot match per task to avoid double-execution
-                # in the same check cycle.
-                break
+            name = item["name"]
+            due = any(
+                slot["time"] == current_time and js_weekday in slot["days"]
+                for slot in schedule["slots"]
+            )
+            if not due or (name, minute) in self._attempted:
+                continue
+            self._attempted.add((name, minute))
+            if workflow_db.scheduled_run_exists(name, minute):
+                continue
+            logger.info("Starting scheduled workflow: %s", name)
+            started = await workflow_service.start_run(name, source="schedule")
+            if not started.get("ok"):
+                message = str(started.get("message") or "No se pudo iniciar la tarea programada.")
+                log_error(message, source="backend/agent/utils/scheduler_helpers.py:_check_due_tasks")
+                logger.warning("Scheduled workflow %s not started: %s", name, message)
 
 
 # Module-level singleton used by the lifespan and the routes.
