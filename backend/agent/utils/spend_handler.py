@@ -698,7 +698,7 @@ def record_creator_call(
     """Record a direct LLM call made outside the chat loop.
 
     Creator flows (skill/tool/agent creators), the skills and tools
-    evaluators and the agenda prompt crafter call ``llm_process`` /
+    evaluators call ``llm_process`` /
     ``llm_streaming`` directly, so they never produce ``messages`` rows.
     Their usage is contemplated here instead, one row per call in the
     ``creators`` table with the same token and cost breakdown as

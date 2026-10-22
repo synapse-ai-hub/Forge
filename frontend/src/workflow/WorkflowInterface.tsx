@@ -10,8 +10,13 @@ import { flushSync } from "react-dom";
 import { Send, Square, Download } from "lucide-react";
 import { MessageRow } from "../components/chatBlocks";
 import { CreateModelSelector } from "../components/CreateModelSelector";
-import { RecursoSelector } from "./RecursoSelector";
-import configService from "../services/configService";
+import { ResourceCards } from "../components/ResourceCards";
+import {
+  EMPTY_SELECTION,
+  selectionFromSetup,
+  selectionToRequest,
+  type ResourceSelection,
+} from "../utils/resourceSelection";
 import type { Message, ContentBlock } from "../App";
 import { saveFileWithPicker, fetchConversationMarkdown } from "../utils/conversationExport";
 import { API_BASE_URL } from "../config/api";
@@ -47,14 +52,8 @@ export function WorkflowInterface() {
   /* Sin proveedores cloud configurados: la creación queda bloqueada */
   const [noProviders, setNoProviders] = useState(false);
 
-  /* Recursos existentes que el usuario puede indicar para el workflow (opcionales) */
-  const [agentesDisp, setAgentesDisp] = useState<{ name: string; description?: string }[]>([]);
-  const [toolsDisp, setToolsDisp] = useState<{ name: string; description?: string }[]>([]);
-  const [ragDisp, setRagDisp] = useState<{ name: string }[]>([]);
-  const [recursosLoading, setRecursosLoading] = useState(true);
-  const [agentes, setAgentes] = useState<string[]>([]);
-  const [tools, setTools] = useState<string[]>([]);
-  const [rag, setRag] = useState<string[]>([]);
+  /* Recursos que el usuario eligió en las tarjetas de permisos: son obligatorios para el creador */
+  const [seleccion, setSeleccion] = useState<ResourceSelection>(EMPTY_SELECTION);
 
   const [messages, setMessages] = useState<Message[]>([]);
   const historialRef = useRef<HistorialMsg[]>([]);
@@ -131,25 +130,6 @@ export function WorkflowInterface() {
     } else {
       wheelUpRef.current = false;
     }
-  }, []);
-
-  /* ---- recursos existentes para los dropdowns del setup ---- */
-  useEffect(() => {
-    let cancelled = false;
-    Promise.all([
-      configService.getAgents().catch(() => []),
-      configService.getTools().catch(() => []),
-      configService.listKnowledge().catch(() => []),
-    ]).then(([a, t, k]) => {
-      if (cancelled) return;
-      setAgentesDisp(a);
-      setToolsDisp(t);
-      setRagDisp(k.map((name) => ({ name })));
-      setRecursosLoading(false);
-    });
-    return () => {
-      cancelled = true;
-    };
   }, []);
 
   /* ---- heartbeat ---- */
@@ -243,9 +223,7 @@ export function WorkflowInterface() {
             model: createModel,
             provider: createProvider,
             iterate,
-            agentes,
-            tools,
-            rag,
+            ...selectionToRequest(seleccion),
           }),
           signal: abort.signal,
         });
@@ -493,7 +471,7 @@ export function WorkflowInterface() {
         setHistoryKey((k) => k + 1);
       }
     },
-    [isStreaming, descripcion, nombre, createModel, createProvider, isIterating, agentes, tools, rag],
+    [isStreaming, descripcion, nombre, createModel, createProvider, isIterating, seleccion],
   );
 
   /* ---- enviar desde el chat ---- */
@@ -551,7 +529,8 @@ export function WorkflowInterface() {
   );
 
   /* ---- historial del creador: empezar una conversación nueva o reabrir una ---- */
-  const resetConversation = useCallback(() => {
+  /** Start a new conversation of the creator: stop the stream and clear the page. */
+  const resetConversation = useCallback((): void => {
     abortRef.current?.abort();
     creatorIdRef.current = newCreatorId();
     historialRef.current = [];
@@ -564,22 +543,23 @@ export function WorkflowInterface() {
     setResultMsg(null);
     setResultType(null);
     setIsIterating(false);
-    setAgentes([]);
-    setTools([]);
-    setRag([]);
+    setSeleccion(EMPTY_SELECTION);
     setHistoryKey((k) => k + 1);
   }, []);
 
-  const restoreConversation = useCallback((c: CreatorConversation) => {
+  /**
+   * Reopen a stored conversation of the creator to keep modifying what was created.
+   *
+   * @param c - Conversation loaded from the history.
+   */
+  const restoreConversation = useCallback((c: CreatorConversation): void => {
     abortRef.current?.abort();
     const setup = c.setup as Record<string, any>;
     creatorIdRef.current = c.creator_id;
     historialRef.current = c.historial;
     setNombre(typeof setup.name === "string" ? setup.name : "");
     setDescripcion(typeof setup.descripcion === "string" ? setup.descripcion : "");
-    setAgentes(Array.isArray(setup.agentes) ? setup.agentes : []);
-    setTools(Array.isArray(setup.tools) ? setup.tools : []);
-    setRag(Array.isArray(setup.rag) ? setup.rag : []);
+    setSeleccion(selectionFromSetup(setup));
     setMessages(c.messages.map((m) => ({ ...m, id: generateId(), isStreaming: false }) as Message));
     const answered = c.result && c.result.action !== "question" ? c.result : null;
     setResultType(answered ? (answered.status === "success" ? "success" : "error") : null);
@@ -693,34 +673,11 @@ export function WorkflowInterface() {
                 </p>
               </div>
 
-              <RecursoSelector
-                id="workflow-agentes"
-                label="Agentes"
-                hint="Agentes existentes que el workflow debe usar como nodos."
-                opciones={agentesDisp}
-                seleccionados={agentes}
-                onChange={setAgentes}
-                loading={recursosLoading}
-              />
-
-              <RecursoSelector
-                id="workflow-tools"
-                label="Tools"
-                hint="Tools existentes que el workflow debe ejecutar como nodos."
-                opciones={toolsDisp}
-                seleccionados={tools}
-                onChange={setTools}
-                loading={recursosLoading}
-              />
-
-              <RecursoSelector
-                id="workflow-rag"
-                label="Colecciones RAG"
-                hint="Colecciones existentes que el workflow debe consultar."
-                opciones={ragDisp}
-                seleccionados={rag}
-                onChange={setRag}
-                loading={recursosLoading}
+              <ResourceCards
+                kinds={["agentes", "tools", "rag"]}
+                selection={seleccion}
+                onChange={setSeleccion}
+                idPrefix="workflow"
               />
 
               <CreateModelSelector

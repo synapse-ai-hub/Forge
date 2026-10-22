@@ -4,8 +4,8 @@
 --   assistant: text and reasoning the creator streamed.
 --   tool: a tool call of the creator with its arguments (tool_calls) and result (tool_results).
 --   result: how the request ended (action, item_name, status, message, seconds in total_time).
---   call: one LLM call with its tokens and cost. Calls of the evaluators and the agenda prompt
---     crafter have no conversation (creator_id NULL). spend is not touched here: llm_process
+--   call: one LLM call with its tokens and cost. Calls of the evaluators
+--     have no conversation (creator_id NULL). spend is not touched here: llm_process
 --     already records it. The usage of a request lives in its call rows.
 -- The conversations of a creator are listed in its history sidebar and can be reopened to keep
 -- modifying what was created. creator_id has no foreign key: no table holds the conversations,

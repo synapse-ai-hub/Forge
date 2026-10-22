@@ -1,0 +1,11 @@
+{# name: correct_workflow
+   description: Mensaje de usuario que devuelve al creador de workflows los problemas que encontró el sistema al validar el archivo, para que los corrija.
+   version: 0.0.1
+   updated: 2026-10-21 #}
+El sistema validó el workflow y encontró estos problemas:
+
+{% for problema in problemas %}
+- {{ problema }}
+{% endfor %}
+
+Corregí el archivo (y el toml que corresponda) con `edit`, usando solo lo que figura en los recursos del sistema y las reglas de los nodos, y validalo de nuevo.

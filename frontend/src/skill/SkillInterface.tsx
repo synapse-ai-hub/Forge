@@ -601,7 +601,8 @@ export function SkillInterface() {
   );
 
   /* ---- historial del creador: empezar una conversación nueva o reabrir una ---- */
-  const resetConversation = useCallback(() => {
+  /** Start a new conversation of the creator: stop the stream and clear the page. */
+  const resetConversation = useCallback((): void => {
     abortRef.current?.abort();
     creatorIdRef.current = newCreatorId();
     historialRef.current = [];
@@ -619,7 +620,12 @@ export function SkillInterface() {
     setHistoryKey((k) => k + 1);
   }, []);
 
-  const restoreConversation = useCallback((c: CreatorConversation) => {
+  /**
+   * Reopen a stored conversation of the creator to keep modifying what was created.
+   *
+   * @param c - Conversation loaded from the history.
+   */
+  const restoreConversation = useCallback((c: CreatorConversation): void => {
     abortRef.current?.abort();
     const setup = c.setup as Record<string, any>;
     creatorIdRef.current = c.creator_id;

@@ -1,6 +1,6 @@
 {# name: iterate_workflow
    description: Modifica un workflow existente según lo que pide el usuario.
-   version: 0.0.2
+   version: 0.0.1
    updated: 2026-10-21 #}
 ## Instrucciones para iterar sobre un workflow existente
 
@@ -25,27 +25,20 @@ Si necesitás aclaraciones sobre algo ambiguo, pedilas. Pero si el pedido es cla
 
 ```yaml
 name: "<nombre>"
-description: "<descripcion>"
+description: "<qué hace el workflow y qué se espera de la salida>"
 version: "1"
 retries: 2
 on_failure: continue
 nodes:
-  - id: "nodo1"
-    type: "agent"
-    step: 1
-    agent_name: "<agente>"
-    prompt_file: "<prompt>"
-  - id: "nodo2"
-    type: "tool"
-    step: 2
-    tool: "<tool>"
-    final: true
+  - <nodos>
 ```
+
+{% include "nodes_workflow.jinja" %}
 
 ### Reglas
 
 - **Leé el archivo actual** antes de modificarlo con `read`.
-- El `prompt_file` de un nodo `agent` es un toml en `~/.config/synapseForge/workflows/prompts/` con el mensaje de usuario del agente (instrucciones, archivos a revisar, lo que se espera). Para cambiar lo que hace el agente, editá ese toml.
+- Para cambiar lo que hace un nodo `agent`, editá su toml (`{{ carpeta_prompts }}/<prompt_file>.toml`).
 - **Modificá solo lo que el usuario pide**. No cambies otras cosas.
 - **Usá `edit`** para cambios puntuales. **Usá `write`** si hay que reescribir grandes partes.
 - **Mantené el schema válido**: steps contiguos desde 1, un solo `final: true`, refs válidas.
@@ -55,6 +48,8 @@ nodes:
 {% include "design_workflow.jinja" %}
 
 {% include "workspace_workflow.jinja" %}
+
+{% include "recursos_creador.jinja" %}
 
 ### Archivo actual del workflow
 

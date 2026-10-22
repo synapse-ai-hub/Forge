@@ -84,7 +84,7 @@ def _listar_workflows_locales() -> list[dict[str, Any]]:
                 continue
             resultados.append({
                 "name": entry.stem,
-                "description": description[:200],
+                "description": description,
                 "path": str(entry),
             })
         except Exception as exc:
@@ -134,7 +134,7 @@ async def _evaluar_si_existe(
                 wdesc = str(w.get("description", "") or "")
                 if not wname:
                     continue
-                lines.append(f"- **{wname}**: {wdesc[:200]}")
+                lines.append(f"- **{wname}**: {wdesc}")
             except Exception as exc:
                 logger.warning("Entrada de workflow inválida: %s", exc)
                 continue
@@ -280,6 +280,7 @@ def verificar_refs(workflow: dict[str, Any]) -> dict[str, Any]:
             "detalle": "No se pudo leer el workflow.",
         }]}
 
+    parametros: dict[str, dict[str, Any]] = {}
     try:
         from backend.agent.utils.agent_helpers import get_agents_list, get_tools_list
 
@@ -289,9 +290,11 @@ def verificar_refs(workflow: dict[str, Any]) -> dict[str, Any]:
             registry = getattr(getattr(agent, "tools", None), "_tools_registry", []) or []
             for entry in registry:
                 if isinstance(entry, dict):
-                    fname = (entry.get("function", {}) or {}).get("name", "")
+                    func = entry.get("function", {}) or {}
+                    fname = func.get("name", "")
                     if fname:
                         herramientas.add(fname)
+                        parametros[fname] = func.get("parameters") or {}
         except Exception as exc:
             logger.warning("No se pudo leer registry de tools: %s", exc)
     except Exception as exc:
@@ -345,6 +348,23 @@ def verificar_refs(workflow: dict[str, Any]) -> dict[str, Any]:
                 elif ref not in herramientas:
                     faltantes.append({"nodo": nid, "tipo": "tool", "ref": ref,
                                       "detalle": f"No se encontró la tool '{ref}' (nodo '{nid}'). Revisá que exista entre las tools."})
+                else:
+                    schema = parametros.get(ref) or {}
+                    validos = schema.get("properties") or {}
+                    args = node.get("args") if isinstance(node.get("args"), dict) else {}
+                    inexistentes = sorted(k for k in args if k not in validos)
+                    sin_pasar = sorted(k for k in (schema.get("required") or []) if k not in args)
+                    if inexistentes or sin_pasar:
+                        partes = []
+                        if inexistentes:
+                            partes.append(f"argumentos que no existen: {', '.join(inexistentes)}")
+                        if sin_pasar:
+                            partes.append(f"falta pasar: {', '.join(sin_pasar)}")
+                        faltantes.append({"nodo": nid, "tipo": "args", "ref": ref,
+                                          "detalle": (
+                                              f"Nodo '{nid}': la tool '{ref}' recibe {'; '.join(partes)}. "
+                                              f"Parámetros de la tool: {', '.join(sorted(validos)) or '(ninguno)'}."
+                                          )})
             elif ntype == "rag":
                 ref = str(node.get("collection", "") or "")
                 if not _ref_es_segura(ref):

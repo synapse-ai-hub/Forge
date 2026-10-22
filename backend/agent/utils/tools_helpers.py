@@ -66,7 +66,7 @@ def _listar_tools_locales() -> list[dict[str, Any]]:
             continue
         resultados.append({
             "name": entry.stem,
-            "description": description[:200],
+            "description": description,
             "path": str(entry),
         })
     return resultados
@@ -100,7 +100,7 @@ async def _evaluar_si_existe(
         return None
 
     if tools_locales:
-        lines = [f"- **{t['name']}**: {t['description'][:200]}" for t in tools_locales]
+        lines = [f"- **{t['name']}**: {t['description']}" for t in tools_locales]
         tools_text = "\n".join(lines)
     else:
         tools_text = "(No hay tools externas creadas todavía.)"

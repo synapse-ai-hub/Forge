@@ -22,7 +22,7 @@ import os
 import sys
 import time
 from datetime import datetime
-from typing import Any, AsyncGenerator
+from typing import Any, AsyncGenerator, Awaitable, Callable
 
 # ---------------------------------------------------------------------------
 # Ensure the project root is in sys.path for absolute imports
@@ -33,12 +33,74 @@ if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
 from backend.agent.loop.constants import LLM_BACKOFF_BASE_SECONDS, MAX_LLM_RETRIES
-from backend.agent.permissions import is_tool_allowed
+from backend.agent.permissions import get_tool_permissions, is_tool_allowed
 from backend.agent.utils import provider_keys
 from backend.agent.utils.rate_limit_handler import classify_error_category, get_retry_delay
 from backend.instances import agent
 
 logger = logging.getLogger(__name__)
+
+async def build_resource_context(
+    agentes: list[str] | None = None,
+    tools: list[str] | None = None,
+    tool_args: dict[str, dict[str, Any]] | None = None,
+    skills: list[str] | None = None,
+    rag: list[str] | None = None,
+    with_skills: bool = False,
+    with_mcp: bool = False,
+) -> dict[str, Any]:
+    """Collect what a creator has to see: everything the system has, and what the user picked.
+
+    The creators see all the agents, tools, skills and RAG collections (the router only sees
+    what its permissions allow). The user picks resources in the permission cards of the form:
+    those are mandatory, the creator may add others. The data goes to the jinja prompts as it
+    is (``recursos_creador.jinja`` renders it); nothing is formatted here.
+
+    Args:
+        agentes: Agents the user picked.
+        tools: Tools the user picked.
+        tool_args: Arguments the user filled for the tools they picked (tool name → arguments).
+        skills: Skills the user picked.
+        rag: RAG collections the user picked.
+        with_skills: Whether the skills are part of what the creator can use.
+        with_mcp: Whether the MCP servers are part of what the creator can use.
+
+    Returns:
+        The variables of the prompts: ``seleccion`` (what the user picked) and
+        ``agentes_disponibles``, ``tools_disponibles``, ``skills_disponibles``,
+        ``rag_disponibles`` and ``mcp_disponibles`` (everything that exists).
+    """
+    from backend.agent.utils.agent_helpers import get_agents_list, get_mcp_list, get_skills_list, get_tools_list
+    from backend.agent.utils.rag_helpers import list_collections
+
+    agentes_disponibles = []
+    for item in get_agents_list():
+        permissions = json.loads(get_tool_permissions(item["name"]).get("data") or "{}")
+        agentes_disponibles.append({
+            **item,
+            "tools": sorted(name for name, action in permissions.items() if action == "allow" or isinstance(action, dict)),
+        })
+    mcp_disponibles: list[dict[str, Any]] = []
+    if with_mcp:
+        try:
+            mcp_disponibles = [m for m in await get_mcp_list() if m.get("status") != "disabled"]
+        except Exception as exc:
+            logger.warning("No se pudieron listar los servidores MCP: %s", exc)
+    return {
+        "seleccion": {
+            "agentes": list(agentes or []),
+            "tools": list(tools or []),
+            "tool_args": dict(tool_args or {}),
+            "skills": list(skills or []),
+            "rag": list(rag or []),
+        },
+        "agentes_disponibles": agentes_disponibles,
+        "tools_disponibles": get_tools_list(),
+        "skills_disponibles": get_skills_list() if with_skills else [],
+        "rag_disponibles": list_collections(),
+        "mcp_disponibles": mcp_disponibles,
+    }
+
 
 _DEFAULT_MAX_ITERATIONS = 25
 _DEFAULT_TEMPERATURE = 0.3
@@ -366,13 +428,16 @@ async def stream_tool_calling_loop(
     temperature: float = _DEFAULT_TEMPERATURE,
     top_p: float = _DEFAULT_TOP_P,
     max_tokens: int = _DEFAULT_MAX_TOKENS,
+    run_tool: Callable[[str, dict[str, Any]], Awaitable[Any]] | None = None,
+    on_usage: Callable[[str | None, str | None, dict[str, Any] | None], None] | None = None,
 ) -> AsyncGenerator[dict[str, Any], None]:
     """Run the agent tool-calling loop and yield SSE event dicts.
 
     Streams the LLM response with the given ``tools`` and executes every
-    tool call through ``agent.tools._execute_tool``. ``msgs`` is mutated in
-    place (assistant message with tool calls + tool result messages are
-    appended) so callers can inspect the full conversation afterwards.
+    tool call through ``run_tool`` (``agent.tools._execute_tool`` by default).
+    ``msgs`` is mutated in place (assistant message with tool calls + tool
+    result messages are appended) so callers can inspect the full conversation
+    afterwards. Nothing is persisted in ``messages``.
 
     Args:
         msgs: Mutable conversation list; system and user messages are
@@ -387,13 +452,35 @@ async def stream_tool_calling_loop(
         temperature: Sampling temperature.
         top_p: Nucleus sampling parameter.
         max_tokens: Maximum output tokens per request.
+        run_tool: Coroutine function that runs a tool call from its name and
+            arguments; ``agent.tools._execute_tool`` when ``None``.
+        on_usage: Called with the provider, the model and the usage report of
+            every LLM call (zero tokens when no usage was captured); when
+            ``None`` the call is recorded in ``creators``.
 
     Yields:
         SSE event dicts: ``chunk``, ``reasoning``, ``tool_call``,
-        ``tool_result``, ``aborted`` or ``error``.
+        ``tool_result``, ``retry``, ``aborted`` or ``error``.
     """
     if model is None or provider is None:
         model, provider = _resolve_create_model_provider()
+
+    def _usage(iter_usage: dict[str, Any] | None) -> None:
+        """Hand the usage of one LLM call to ``on_usage`` or record it in ``creators``.
+
+        Args:
+            iter_usage: Usage report of the call, or ``None`` when none was captured.
+        """
+        try:
+            if on_usage is not None:
+                on_usage(provider, model, iter_usage)
+                return
+            from backend.agent.utils.spend_handler import record_creator_call
+
+            record_creator_call("creator:generate", provider, model, iter_usage)
+        except Exception:
+            pass
+
     # Only the tools offered to the LLM may run (deny by default).
     offered_tools = {(t.get("function") or {}).get("name") for t in tools}
     iteration = 0
@@ -436,12 +523,7 @@ async def stream_tool_calling_loop(
 
         except Exception as e:
             logger.exception("Error en streaming create agent: %s", e)
-            try:
-                from backend.agent.utils.spend_handler import record_creator_call
-
-                record_creator_call("creator:generate", provider, model, iter_usage)
-            except Exception:
-                pass
+            _usage(iter_usage)
             # The failed attempt never reached the agent's spend record:
             # count it here (zero tokens when no usage was captured).
             try:
@@ -461,14 +543,8 @@ async def stream_tool_calling_loop(
             continue
         llm_attempt = 0
 
-        # Contemplate this generation LLM call (tracked in creators
-        # since it never produces messages rows).
-        try:
-            from backend.agent.utils.spend_handler import record_creator_call
-
-            record_creator_call("creator:generate", provider, model, iter_usage)
-        except Exception:
-            pass
+        # Contemplate this LLM call (it never produces messages rows).
+        _usage(iter_usage)
 
         # ── Process tool calls ──────────────────────────────────────────
         if tool_calls:
@@ -489,6 +565,8 @@ async def stream_tool_calling_loop(
                 try:
                     if tc_name not in offered_tools:
                         result = {"status": "error", "message": f"Permission denied for tool '{tc_name}'."}
+                    elif run_tool is not None:
+                        result = await run_tool(tc_name, tc_args)
                     else:
                         result = await agent.tools._execute_tool(tc_name, **tc_args)
                 except Exception as e:

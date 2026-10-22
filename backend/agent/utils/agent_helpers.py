@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from typing import Any
 
 from backend.agent.utils.config_dir import get_skills_dir
 from backend.agent.permissions import list_agents
@@ -57,7 +58,7 @@ def get_skills_list() -> list[dict[str, str]]:
     return result
 
 
-def get_tools_list() -> list[dict[str, str]]:
+def get_tools_list() -> list[dict[str, Any]]:
     """Return all available tools from the agent's registry.
 
     Reads the already-built ``_tools_registry`` (native + external tools)
@@ -65,23 +66,28 @@ def get_tools_list() -> list[dict[str, str]]:
     here because they are managed separately via the MCP endpoint.
 
     Returns:
-        List of tool dicts with ``name`` and ``description`` keys.
+        List of tool dicts with ``name``, ``description`` and ``parameters`` (the JSON
+        Schema of its arguments, as the router receives it) keys.
     """
     if agent is None or agent.tools is None:
         return []
 
     registry = getattr(agent.tools, "_tools_registry", [])
-    result: list[dict[str, str]] = []
+    result: list[dict[str, Any]] = []
     for entry in registry:
         func = entry.get("function", {})
         name = func.get("name", "")
         description = func.get("description", "")
         if name and not is_mcp_tool(name):
-            result.append({"name": name, "description": description})
+            result.append({
+                "name": name,
+                "description": description,
+                "parameters": func.get("parameters") or {"type": "object", "properties": {}, "required": []},
+            })
     return result
 
 
-def get_agents_list() -> list[dict[str, str]]:
+def get_agents_list() -> list[dict[str, Any]]:
     """Return list of sub-agents, excluding AGENT.md and ROUTER.md.
 
     Reuses ``list_agents()`` from permissions, which already reads the

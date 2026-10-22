@@ -124,17 +124,18 @@ def set_task_child(
 
 
 def extract_task_child_id(result_data: Any) -> str | None:
-    """Extract the child session id from a task or workflow tool result.
+    """Extract the child session id of a task, or the run id of a workflow, from a tool result.
 
     The task and workflow tools wrap their answer as ``<task id="...">`` /
     ``<workflow id="...">`` XML in the result payload, so the parent can
-    see the child id without any change to the tools themselves.
+    see the id without any change to the tools themselves. A workflow never
+    opens a session: its id is the ``run_id`` of ``workflow_runs``.
 
     Args:
         result_data: Tool result (contract dict or raw string).
 
     Returns:
-        The child session id, or None when absent.
+        The child session id (task) or run id (workflow), or None when absent.
     """
     try:
         if isinstance(result_data, dict):
@@ -259,10 +260,15 @@ def build_resume_message(session_id: str) -> str | None:
                 result = _tool_result_text(row)
                 detail = f"Último resultado registrado: {result}" if result else "Sin resultado registrado."
                 child = row.get("child_id")
-                if row["tool_name"] in ("task", "workflow"):
+                if row["tool_name"] == "task":
                     lines.append(
                         f"{position}. {row['tool_name']}({row['tool_args']}) — "
                         f"sub-sesión: {child or 'no creada'}. {detail}"
+                    )
+                elif row["tool_name"] == "workflow":
+                    lines.append(
+                        f"{position}. {row['tool_name']}({row['tool_args']}) — "
+                        f"ejecución: {child or 'no registrada'}. {detail}"
                     )
                 else:
                     suffix = f" sub-sesión: {child}." if child else ""

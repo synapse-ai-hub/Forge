@@ -18,9 +18,8 @@ _project_root = os.path.dirname(os.path.dirname(os.path.dirname(_current_dir)))
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
-from backend.agent.utils.skills_helpers import _listar_skills_locales
-from backend.agent.utils.tools_helpers import _listar_tools_locales
 from backend.agent.utils.create_helpers import (
+    build_resource_context,
     stream_tool_calling_loop,
     stream_interview_loop,
     resolve_create_model_provider,
@@ -150,29 +149,10 @@ async def post_create_agent_stream(req: CreateAgentRequest) -> StreamingResponse
         if req.iterate:
             yield _sse({"type": "agent_action", "content": {"action": "iterating"}})
 
-            # Obtener tools, skills, subagentes, MCPs y RAG disponibles
-            try:
-                available_tools = _listar_tools_locales()
-                available_skills = _listar_skills_locales()
-                available_subagents = _listar_agentes_locales()
-                from backend.agent.utils.agent_helpers import get_mcp_list
-                available_mcps = await get_mcp_list()
-                available_mcps = [m for m in available_mcps if m.get("status") != "disabled"]
-                from backend.agent.utils.rag_helpers import list_collections
-                available_rag = list_collections()
-            except Exception as e:
-                logger.warning("No se pudieron listar recursos: %s", e)
-                available_tools = []
-                available_skills = []
-                available_subagents = []
-                available_mcps = []
-                available_rag = []
-
-            tools_list_text = "\n".join(f"- {t['name']}: {t['description'][:150]}" for t in available_tools) if available_tools else "(ninguna)"
-            skills_list_text = "\n".join(f"- {s['name']}: {s['description'][:150]}" for s in available_skills) if available_skills else "(ninguna)"
-            subagents_list_text = "\n".join(f"- {a['name']}: {a['description'][:150]}" for a in available_subagents) if available_subagents else "(ninguno)"
-            mcp_list_text = "\n".join(f"- {m.get('label', 'mcp')}" for m in available_mcps) if available_mcps else "(ninguno)"
-            rag_list_text = "\n".join(f"- {r}" for r in available_rag) if available_rag else "(ninguna)"
+            recursos = await build_resource_context(
+                agentes=req.agentes, tools=req.tools, tool_args=req.tool_args,
+                skills=req.skills, rag=req.rag, with_skills=True, with_mcp=True,
+            )
 
             agent_carpeta = str(_AGENTS_DIR)
             try:
@@ -181,11 +161,7 @@ async def post_create_agent_stream(req: CreateAgentRequest) -> StreamingResponse
                     nombre=nombre or "(inferir)",
                     carpeta=agent_carpeta,
                     conversacion=_formatear_mensajes(mensajes),
-                    tools_disponibles=tools_list_text,
-                    skills_disponibles=skills_list_text,
-                    subagentes_disponibles=subagents_list_text,
-                    mcp_disponibles=mcp_list_text,
-                    rag_disponibles=rag_list_text,
+                    **recursos,
                 )
             except FileNotFoundError:
                 logger.exception("Prompt iterate_agent.jinja no encontrado.")
@@ -245,6 +221,10 @@ async def post_create_agent_stream(req: CreateAgentRequest) -> StreamingResponse
                 descripcion=descripcion,
                 nombre=nombre or "(inferir)",
                 mensajes=_formatear_mensajes(mensajes),
+                **await build_resource_context(
+                    agentes=req.agentes, tools=req.tools, tool_args=req.tool_args,
+                    skills=req.skills, rag=req.rag, with_skills=True, with_mcp=True,
+                ),
             )
         except FileNotFoundError:
             logger.exception("Prompt interview_agent.jinja no encontrado.")
@@ -314,29 +294,10 @@ async def post_create_agent_stream(req: CreateAgentRequest) -> StreamingResponse
         # ════════════════════════════════════════════════════════════════
         yield _sse({"type": "agent_action", "content": {"action": "creating"}})
 
-        # Obtener listas disponibles para el prompt de generación
-        try:
-            available_tools = _listar_tools_locales()
-            available_skills = _listar_skills_locales()
-            available_subagents = _listar_agentes_locales()
-            from backend.agent.utils.agent_helpers import get_mcp_list
-            available_mcps = await get_mcp_list()
-            available_mcps = [m for m in available_mcps if m.get("status") != "disabled"]
-            from backend.agent.utils.rag_helpers import list_collections
-            available_rag = list_collections()
-        except Exception as e:
-            logger.warning("No se pudieron listar recursos: %s", e)
-            available_tools = []
-            available_skills = []
-            available_subagents = []
-            available_mcps = []
-            available_rag = []
-
-        tools_list_text = "\n".join(f"- {t['name']}: {t['description'][:150]}" for t in available_tools) if available_tools else "(ninguna)"
-        skills_list_text = "\n".join(f"- {s['name']}: {s['description'][:150]}" for s in available_skills) if available_skills else "(ninguna)"
-        subagents_list_text = "\n".join(f"- {a['name']}: {a['description'][:150]}" for a in available_subagents) if available_subagents else "(ninguno)"
-        mcp_list_text = "\n".join(f"- {m.get('label', 'mcp')}" for m in available_mcps) if available_mcps else "(ninguno)"
-        rag_list_text = "\n".join(f"- {r}" for r in available_rag) if available_rag else "(ninguna)"
+        recursos = await build_resource_context(
+            agentes=req.agentes, tools=req.tools, tool_args=req.tool_args,
+            skills=req.skills, rag=req.rag, with_skills=True, with_mcp=True,
+        )
 
         conversacion = _formatear_mensajes(mensajes) if mensajes else f"**Usuario**: {task}"
         carpeta = str(_AGENTS_DIR)
@@ -350,11 +311,7 @@ async def post_create_agent_stream(req: CreateAgentRequest) -> StreamingResponse
                 carpeta=carpeta,
                 tools_seleccionadas=tools_text,
                 skills_seleccionadas=skills_text,
-                tools_disponibles=tools_list_text,
-                skills_disponibles=skills_list_text,
-                subagentes_disponibles=subagents_list_text,
-                mcp_disponibles=mcp_list_text,
-                rag_disponibles=rag_list_text,
+                **recursos,
             )
         except FileNotFoundError:
             logger.exception("Prompt create_agent.jinja no encontrado.")

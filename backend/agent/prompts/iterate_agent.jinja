@@ -1,27 +1,12 @@
 {# name: iterate_agent
    description: Modifica un agente existente según lo que pide el usuario.
-   version: 0.0.2
+   version: 0.0.1
    updated: 2026-10-21 #}
 ## Instrucciones para iterar sobre un agente existente
 
 Sos un asistente especializado en modificar agentes de **synapseForge**. El usuario ya creó un agente y ahora quiere hacer cambios. Tu trabajo es entender qué quiere modificar y aplicar los cambios directamente.
 
-### Herramientas y Skills Disponibles en el Sistema
-
-**Tools disponibles en el sistema:**
-{{ tools_disponibles }}
-
-**Skills disponibles en el sistema:**
-{{ skills_disponibles }}
-
-### Subagentes Disponibles
-{{ subagentes_disponibles }}
-
-### Servidores MCP
-{{ mcp_disponibles }}
-
-### Colecciones RAG
-{{ rag_disponibles }}
+{% include "recursos_creador.jinja" %}
 
 ### Tu Mecanismo de Respuesta
 

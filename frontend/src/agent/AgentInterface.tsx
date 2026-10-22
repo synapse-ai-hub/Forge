@@ -10,6 +10,13 @@ import { flushSync } from "react-dom";
 import { Send, Square, Download } from "lucide-react";
 import { MessageRow } from "../components/chatBlocks";
 import { CreateModelSelector } from "../components/CreateModelSelector";
+import { ResourceCards } from "../components/ResourceCards";
+import {
+  EMPTY_SELECTION,
+  selectionFromSetup,
+  selectionToRequest,
+  type ResourceSelection,
+} from "../utils/resourceSelection";
 import type { Message, ContentBlock } from "../App";
 import { saveFileWithPicker, fetchConversationMarkdown } from "../utils/conversationExport";
 import { API_BASE_URL } from "../config/api";
@@ -37,6 +44,8 @@ export function AgentInterface() {
   const [setupDone, setSetupDone] = useState(false);
   const [nombre, setNombre] = useState("");
   const [descripcion, setDescripcion] = useState("");
+  /* Recursos que el usuario eligió en las tarjetas de permisos: son obligatorios para el creador */
+  const [seleccion, setSeleccion] = useState<ResourceSelection>(EMPTY_SELECTION);
   const [nameError, setNameError] = useState<string | null>(null);
   const [setupError, setSetupError] = useState<string | null>(null);
   /* Selección efímera de modelo cloud para esta tarea (no se persiste) */
@@ -213,6 +222,7 @@ export function AgentInterface() {
             model: createModel,
             provider: createProvider,
             iterate,
+            ...selectionToRequest(seleccion),
           }),
           signal: abort.signal,
         });
@@ -448,7 +458,7 @@ export function AgentInterface() {
         setHistoryKey((k) => k + 1);
       }
     },
-    [isStreaming, descripcion, nombre, createModel, createProvider, isIterating],
+    [isStreaming, descripcion, nombre, createModel, createProvider, isIterating, seleccion],
   );
 
   /* ---- enviar desde el chat ---- */
@@ -506,7 +516,8 @@ export function AgentInterface() {
   );
 
   /* ---- historial del creador: empezar una conversación nueva o reabrir una ---- */
-  const resetConversation = useCallback(() => {
+  /** Start a new conversation of the creator: stop the stream and clear the page. */
+  const resetConversation = useCallback((): void => {
     abortRef.current?.abort();
     creatorIdRef.current = newCreatorId();
     historialRef.current = [];
@@ -514,6 +525,7 @@ export function AgentInterface() {
     setSetupDone(false);
     setNombre("");
     setDescripcion("");
+    setSeleccion(EMPTY_SELECTION);
     setInput("");
     setChatError(null);
     setResultMsg(null);
@@ -522,13 +534,19 @@ export function AgentInterface() {
     setHistoryKey((k) => k + 1);
   }, []);
 
-  const restoreConversation = useCallback((c: CreatorConversation) => {
+  /**
+   * Reopen a stored conversation of the creator to keep modifying what was created.
+   *
+   * @param c - Conversation loaded from the history.
+   */
+  const restoreConversation = useCallback((c: CreatorConversation): void => {
     abortRef.current?.abort();
     const setup = c.setup as Record<string, any>;
     creatorIdRef.current = c.creator_id;
     historialRef.current = c.historial;
     setNombre(typeof setup.name === "string" ? setup.name : "");
     setDescripcion(typeof setup.descripcion === "string" ? setup.descripcion : "");
+    setSeleccion(selectionFromSetup(setup));
     setMessages(c.messages.map((m) => ({ ...m, id: generateId(), isStreaming: false }) as Message));
     const answered = c.result && c.result.action !== "question" ? c.result : null;
     setResultType(answered ? (answered.status === "success" ? "success" : "error") : null);
@@ -641,6 +659,13 @@ export function AgentInterface() {
                   Describí el rol, qué debe hacer y qué NO debe hacer. El LLM va a inferir qué tools y skills necesita.
                 </p>
               </div>
+
+              <ResourceCards
+                kinds={["agentes", "tools", "skills", "rag"]}
+                selection={seleccion}
+                onChange={setSeleccion}
+                idPrefix="agent"
+              />
 
               <CreateModelSelector
                 onApply={(m, p) => {

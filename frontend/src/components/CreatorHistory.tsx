@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactElement } from "react";
 import { MessageSquare, Plus, Trash2 } from "lucide-react";
 import creatorHistoryService, {
   type CreatorConversation,
@@ -23,6 +23,12 @@ interface CreatorHistoryProps {
   disabled?: boolean;
 }
 
+/**
+ * Format a stored timestamp for the list.
+ *
+ * @param value - Local time in ISO format.
+ * @returns Day, month and time, or an empty string when the value is not a date.
+ */
 function formatTimestamp(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "";
@@ -35,6 +41,12 @@ function formatTimestamp(value: string): string {
   });
 }
 
+/**
+ * Pick the title of a conversation in the list.
+ *
+ * @param item - Conversation of the history.
+ * @returns The name of the item it created, or its first message cut to 60 characters.
+ */
 function titleOf(item: CreatorConversationItem): string {
   if (item.item_name) return item.item_name;
   const first = (item.first_message || "").trim().replace(/\s+/g, " ");
@@ -50,13 +62,14 @@ export function CreatorHistory({
   onNew,
   onDeletedActive,
   disabled = false,
-}: CreatorHistoryProps) {
+}: CreatorHistoryProps): ReactElement {
   const [items, setItems] = useState<CreatorConversationItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
+  /** Load the conversations of the creator into the list. */
+  const load = useCallback(async (): Promise<void> => {
     try {
       setItems(await creatorHistoryService.list(kind));
       setError(null);
@@ -67,11 +80,16 @@ export function CreatorHistory({
     }
   }, [kind]);
 
-  useEffect(() => {
+  useEffect((): void => {
     load();
   }, [load, refreshKey]);
 
-  const open = async (id: string) => {
+  /**
+   * Open a conversation of the list.
+   *
+   * @param id - Id of the conversation.
+   */
+  const open = async (id: string): Promise<void> => {
     if (disabled || busyId) return;
     setBusyId(id);
     try {
@@ -83,7 +101,13 @@ export function CreatorHistory({
     }
   };
 
-  const remove = async (id: string, e: React.MouseEvent) => {
+  /**
+   * Delete a conversation after asking for confirmation.
+   *
+   * @param id - Id of the conversation.
+   * @param e - Click event, so the row does not open.
+   */
+  const remove = async (id: string, e: React.MouseEvent): Promise<void> => {
     e.stopPropagation();
     if (disabled || busyId || !window.confirm("¿Eliminar esta conversación?")) return;
     setBusyId(id);
