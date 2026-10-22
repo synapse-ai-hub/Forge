@@ -195,7 +195,8 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
   const [freshNotificationIds, setFreshNotificationIds] = useState<number[]>([]);
   const unreadCount = notifications.filter((n) => !n.read).length;
 
-  const toggleNotifications = () => {
+  /** Open or close the bell: opening marks the notifications as read and keeps the new ones highlighted. */
+  const toggleNotifications = (): void => {
     if (showNotifications) {
       setShowNotifications(false);
       return;

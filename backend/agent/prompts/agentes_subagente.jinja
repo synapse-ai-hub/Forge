@@ -1,0 +1,11 @@
+{# name: agentes_subagente
+   description: Agentes a los que un sub-agente puede delegar (su permiso task). Se agrega al system prompt del sub-agente.
+   version: 0.0.1
+   updated: 2026-10-21 #}
+## Agentes Disponibles
+
+{% for a in agentes %}
+- {{ a.name }}: {{ a.description }}
+{% else %}
+(ninguno)
+{% endfor %}

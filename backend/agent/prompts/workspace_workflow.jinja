@@ -1,10 +1,10 @@
 {# name: workspace_workflow
    description: Carpeta de trabajo de los workflows y cómo instalar librerías desde un nodo run. Se incluye en los prompts de workflows.
    version: 0.0.1
-   updated: 2026-10-20 #}
+   updated: 2026-10-21 #}
 ### Carpeta de trabajo de los nodos `run`
 
-- Cada workflow tiene su **carpeta de trabajo propia**: `~/.config/synapseForge/workspace/<nombre-del-workflow>/`. Los comandos de los nodos `run` y el `shell` de los nodos `agent` **arrancan ahí**, nunca en la carpeta del proyecto.
+- Cada workflow tiene su **carpeta de trabajo propia**: `{{ carpeta_workspace }}/<nombre-del-workflow>/`. Los comandos de los nodos `run` y el `shell` de los nodos `agent` **arrancan ahí**, nunca en la carpeta del proyecto.
 - `git clone`, descargas y archivos generados quedan en esa carpeta. Usá rutas **relativas** (`git clone <url> repo`) y que el nodo siguiente use el mismo nombre. No uses rutas absolutas ni `cd` a carpetas fuera del workspace.
 - `workdir` es una subcarpeta del workspace (relativa, sin `..`), no de la carpeta del proyecto.
 - Hacé los comandos **repetibles**: el workflow se ejecuta muchas veces sobre la misma carpeta. Por ejemplo, `git clone <url> repo || git -C repo pull`.

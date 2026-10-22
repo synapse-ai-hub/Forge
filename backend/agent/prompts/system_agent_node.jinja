@@ -1,0 +1,10 @@
+{# name: system_agent_node
+   description: System prompt de un nodo agent de un workflow: el prompt del agente (su .md) y las skills que permite. Corre en memoria, sin sesión.
+   version: 0.0.1
+   updated: 2026-10-21 #}
+{{ base }}
+{% if skills %}
+
+## Skills Disponibles
+{{ skills }}
+{% endif %}

@@ -46,12 +46,23 @@ export interface CreatorConversation {
   } | null;
 }
 
-/** Generate the id of a new creator conversation. */
+/**
+ * Generate the id of a new creator conversation.
+ *
+ * @returns A random id without dashes.
+ */
 export function newCreatorId(): string {
   const random = globalThis.crypto?.randomUUID?.();
   return (random || `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`).replace(/-/g, "");
 }
 
+/**
+ * List the conversations of a creator, newest first.
+ *
+ * @param kind - Creator whose conversations are listed.
+ * @returns The conversations, or an empty list when there are none.
+ * @throws Error when the request fails.
+ */
 async function list(kind: CreatorKind): Promise<CreatorConversationItem[]> {
   const res = await fetch(`${API_BASE_URL}/api/create/history?kind=${encodeURIComponent(kind)}`);
   if (!res.ok) throw new Error("Error obteniendo el historial");
@@ -59,6 +70,13 @@ async function list(kind: CreatorKind): Promise<CreatorConversationItem[]> {
   return (data.conversations || []) as CreatorConversationItem[];
 }
 
+/**
+ * Load a conversation with everything the page needs to continue it.
+ *
+ * @param creatorId - Id of the conversation.
+ * @returns The stored conversation.
+ * @throws Error when it does not exist or the request fails.
+ */
 async function get(creatorId: string): Promise<CreatorConversation> {
   const res = await fetch(`${API_BASE_URL}/api/create/history/${encodeURIComponent(creatorId)}`);
   const data = await res.json().catch(() => null);
@@ -66,6 +84,12 @@ async function get(creatorId: string): Promise<CreatorConversation> {
   return data.conversation as CreatorConversation;
 }
 
+/**
+ * Delete a conversation of a creator.
+ *
+ * @param creatorId - Id of the conversation.
+ * @throws Error when it cannot be deleted.
+ */
 async function remove(creatorId: string): Promise<void> {
   const res = await fetch(`${API_BASE_URL}/api/create/history/${encodeURIComponent(creatorId)}`, {
     method: "DELETE",

@@ -29,6 +29,12 @@ export interface SkillInfo {
 export interface ToolInfo {
   name: string;
   description: string;
+  /** JSON Schema of the arguments of the tool, as the router receives it. */
+  parameters?: {
+    type?: string;
+    properties?: Record<string, { type?: string; description?: string }>;
+    required?: string[];
+  };
 }
 
 export interface AgentInfo {

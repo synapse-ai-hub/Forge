@@ -11,6 +11,8 @@ import logging
 import os
 import re
 import sys
+from typing import Any
+
 from fastapi import APIRouter
 from pydantic import BaseModel
 
@@ -94,6 +96,11 @@ class CreateAgentRequest(BaseModel):
     provider: str | None = None  # Provider cloud elegido para esta tarea (efímero)
     iterate: bool = False  # True = fase de iteración (modificar creación existente)
     creator_id: str | None = None  # Conversation of the creator (history)
+    agentes: list[str] | None = None  # Agents picked in the permission cards (mandatory)
+    tools: list[str] | None = None  # Tools picked in the permission cards (mandatory)
+    tool_args: dict[str, dict[str, Any]] | None = None  # Arguments the user filled for those tools
+    skills: list[str] | None = None  # Skills picked in the permission cards (mandatory)
+    rag: list[str] | None = None  # RAG collections picked in the permission cards (mandatory)
 
 
 # ── Tools permitidas para el agente creador ─────────────────────────

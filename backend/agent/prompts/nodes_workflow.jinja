@@ -1,0 +1,54 @@
+{# name: nodes_workflow
+   description: Sintaxis de cada tipo de nodo de un workflow, con un ejemplo corto de cada uno, y el toml del prompt de un nodo agent. Se incluye en los prompts de workflows.
+   version: 0.0.1
+   updated: 2026-10-21 #}
+### Sintaxis de cada tipo de nodo
+
+Un ejemplo de cada tipo, solo para la sintaxis: no son un diseño para copiar. Un workflow usa únicamente los nodos que necesita, con los recursos de la lista.
+
+`tool`: `tool` y `args` con **solo** los parámetros que esa tool tiene en la lista, con su tipo.
+```yaml
+  - id: "leer"
+    type: "tool"
+    step: 1
+    tool: "<tool>"
+    args: {<parámetro>: <valor>}
+```
+
+`rag`: `collection` y, opcional, `query`.
+```yaml
+  - id: "buscar"
+    type: "rag"
+    step: 1
+    collection: "<colección>"
+    query: "<consulta>"
+```
+
+`run`: `run` con el comando de shell, `timeout` (1000-300000 ms) y, opcional, `workdir`.
+```yaml
+  - id: "clonar"
+    type: "run"
+    step: 1
+    run: "git clone <url> repo || git -C repo pull"
+    timeout: 60000
+```
+
+`agent`: `agent_name` y `prompt_file`.
+```yaml
+  - id: "analizar"
+    type: "agent"
+    step: 1
+    agent_name: "<agente>"
+    prompt_file: "analizar"
+```
+
+- `prompt_file` es el **nombre del toml, sin `.toml` y sin carpeta**: `prompt_file: "analizar"` lee `{{ carpeta_prompts }}/analizar.toml`. `prompt_file: "analizar.toml"` o una ruta son inválidos.
+- El agente usa su propio `.md`: de ahí salen su system prompt, sus permisos y sus parámetros. El toml es su **mensaje de usuario**, igual que el prompt que el router le escribe a un sub-agente con la tool `task`. Tiene que pasarle las instrucciones, los archivos o rutas a revisar y lo que se espera que devuelva. La estructura la decidís vos: cada clave se convierte en una sección del mensaje y las tablas se anidan.
+
+```toml
+objetivo = "<qué tiene que hacer>"
+archivos = ["repo/README.md"]
+devolver = "<qué datos o análisis devolver>"
+```
+
+- Opcionales en cualquier nodo: `retries` (0-10). `final: true` va en un solo nodo: el último que produce datos.

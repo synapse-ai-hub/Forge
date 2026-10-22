@@ -122,7 +122,7 @@ async def _evaluar_si_existe(
         return None
 
     if skills_locales:
-        lines = [f"- **{s['name']}**: {s['description'][:200]}" for s in skills_locales]
+        lines = [f"- **{s['name']}**: {s['description']}" for s in skills_locales]
         skills_text = "\n".join(lines)
     else:
         skills_text = "(No hay skills creadas todavía.)"

@@ -299,7 +299,7 @@ def test_a_call_outside_a_conversation_has_no_creator_id(db: Callable[..., list[
     Args:
         db: Function that queries the temporary database.
     """
-    record_creator_call("agenda:craft-prompt", "OPENAI", "gpt-test", {"prompt_tokens": 5})
+    record_creator_call("evaluator:skills", "OPENAI", "gpt-test", {"prompt_tokens": 5})
     row = db("select creator_id,kind,role from creators")[0]
     assert (row["creator_id"], row["kind"], row["role"]) == (None, "other", "call")
 

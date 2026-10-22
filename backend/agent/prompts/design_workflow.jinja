@@ -12,6 +12,7 @@
 
 ### La salida final la genera el motor
 
-- Cuando terminan todos los nodos, synapseForge hace **una llamada a un LLM** con los resultados de todos ellos y genera la salida del workflow (un reporte o el estado de lo ejecutado); después un modelo la valida. **No crees un nodo para armar el reporte, resumir o unir resultados**: eso ya lo hace el motor.
+- Cuando terminan todos los nodos, synapseForge hace **una llamada a un LLM** con la `description` del workflow y los resultados de todos los nodos, y genera la salida (un reporte, un resumen o el estado de lo ejecutado); después un modelo la valida. **No crees un nodo para armar el reporte, resumir, filtrar lo que hay que omitir o unir resultados**: eso ya lo hace el motor.
+- Por eso la `description` tiene que decir qué se espera de la salida: qué resumir, qué omitir y en qué forma. Si el pedido es traer datos y resumirlos (por ejemplo, un resumen de mails), alcanza con el nodo que trae los datos (`tool`, `run` o `rag`), con `final: true`.
 - `final: true` marca el último nodo que produce datos. Su resultado se usa como salida solo si el motor no puede generarla. No tiene que ser un agente que redacte.
 - En el prompt de un agente pedile los datos y el análisis, no "el reporte final".
