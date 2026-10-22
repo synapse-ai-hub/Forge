@@ -119,6 +119,8 @@ class ToolsBase:
 
             Uses the type annotation to select the JSON type and unwraps ``Optional`` /
             ``Union[..., None]`` so that ``str | None`` yields ``{"type": "string"}``.
+            Generic aliases are mapped through their origin, and ``array``
+            schemas always carry ``items`` (required by Gemini).
 
             Args:
                 param: The parameter to convert.
@@ -151,8 +153,27 @@ class ToolsBase:
                     annotation = non_none[0]  # fallback: use first non-None
 
             json_type = Tools._PY_TYPE_TO_JSON.get(annotation)
+            item_args: tuple = ()
+            if json_type is None:
+                # Support generic aliases (list[dict], dict[str, Any], ...):
+                # map them through their origin (list -> array, dict -> object).
+                origin = getattr(annotation, "__origin__", None)
+                if origin is not None:
+                    json_type = Tools._PY_TYPE_TO_JSON.get(origin)
+                    item_args = getattr(annotation, "__args__", ()) or ()
             if json_type is None:
                 return None
+
+            if json_type == "array":
+                # Gemini function declarations reject arrays without ``items``.
+                item_type = None
+                if item_args:
+                    item_type = Tools._PY_TYPE_TO_JSON.get(item_args[0])
+                    if item_type is None:
+                        item_origin = getattr(item_args[0], "__origin__", None)
+                        if item_origin is not None:
+                            item_type = Tools._PY_TYPE_TO_JSON.get(item_origin)
+                return {"type": "array", "items": {"type": item_type or "string"}}
 
             return {"type": json_type}
     def __init__(self) -> None:
@@ -257,7 +278,10 @@ class ToolsBase:
                     continue
                 schema = self._param_to_schema(param)
                 if schema is not None:
-                    pdesc = param_descs.get(param_name)
+                    pdesc = param_descs.get(param_name) or ""
+                    if param.default is not inspect.Parameter.empty and param.default is not None:
+                        if "default" not in pdesc.lower() and "defecto" not in pdesc.lower():
+                            pdesc = f"{pdesc} Default: {param.default!r}.".strip()
                     if pdesc:
                         schema["description"] = pdesc
                     properties[param_name] = schema
@@ -358,6 +382,31 @@ class ToolsBase:
             descs: dict[str, str] = {}
             if not doc:
                 return descs
+
+            in_args = False
+            base_indent: int | None = None
+            current: str | None = None
+            for line in doc.split("\n"):
+                stripped = line.strip()
+                if stripped == "Args:":
+                    in_args = True
+                    continue
+                if not in_args or not stripped:
+                    continue
+                indent = len(line) - len(line.lstrip())
+                if base_indent is None:
+                    base_indent = indent
+                # A line less indented than the parameters is the next section (``Returns:``, ...)
+                if indent < base_indent:
+                    break
+                match = re.match(r"^(\w+)(?:\s*\([^)]*\))?:\s*(.*)", stripped) if indent == base_indent else None
+                if match:
+                    current = match.group(1)
+                    descs[current] = match.group(2).strip()
+                elif current is not None:
+                    # Continuation of the description of the previous parameter
+                    descs[current] = f"{descs[current]} {stripped}".strip()
+            return descs
 
             lines = doc.split("\n")
             in_args = False

@@ -35,7 +35,11 @@ def show(label: str, result: dict) -> bool:
     """
     print(f"[{label}] status: {result.get('status')}")
     print(f"[{label}] message: {result.get('message')}")
-    data = result.get("data") or []
+    data = result.get("data")
+    if isinstance(data, str):
+        print(f"[{label}] data: {data}")
+        return result.get("status") == "success"
+    data = data or []
     print(f"[{label}] emails: {len(data)}")
     for email in data:
         print(f"[{label}] - {email.get('date_local') or email.get('date')} | {email.get('sender')} | {email.get('subject')}")
