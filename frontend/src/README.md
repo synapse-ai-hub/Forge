@@ -85,7 +85,7 @@ frontend/
 │  │  ├─ Sidebar.tsx           # Barra lateral con tabs (sessions, config, agent, create)
 │  │  ├─ sessionsTab.tsx       # Lista de sesiones de chat
 │  │  ├─ configTab.tsx         # Configuración (proveedor, modelo, modelo de decisión, contexto, verbose, archivos de contexto)
-│  │  ├─ agentInfoTab.tsx      # Panel de agentes (tools, skills, agents, mcp, rag, workflows)
+│  │  ├─ agentInfoTab.tsx      # Panel de agentes (tools, skills, agents, mcp, rag, workflows, router)
 │  │  ├─ createTab.tsx         # Creación de skills/tools/agentes/workflows/RAG
 │  │  ├─ chatBlocks.tsx        # Componentes compartidos (MessageRow, MarkdownRenderer, ToolCallBlock, ReasoningBlock, FileChip, etc.)
 │  │  ├─ ContextGauge.tsx      # Gauge de ventana de contexto
@@ -101,7 +101,7 @@ frontend/
 │  │  └─ ui/                   # shadcn/ui: avatar, button, dialog, input, separator, textarea, collapsible, utils
 │  ├─ services/                # Capa de comunicación con API
 │  │  ├─ chatService.ts        # Streaming SSE a /api/chat
-│  │  ├─ configService.ts      # Providers, models, modelo de decisión, workflows (validar/guardar/generar), MCP, verbose, contexto
+│  │  ├─ configService.ts      # Providers, models, modelo de decisión, router, workflows (validar/guardar/generar), MCP, verbose, contexto
 │  │  ├─ workflowService.ts    # Workflows: listado con estado, play, cancelar y eliminar
 │  │  ├─ notificationService.ts# Notificaciones persistidas de la campanita
 │  │  ├─ feedbackService.ts    # 👍/👎 sobre las respuestas (por sesión y turno)

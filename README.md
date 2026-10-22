@@ -238,7 +238,6 @@ synapseForge/
 ├─ workflows/         # Deterministic workflows (<name>.yaml)
 ├─ knowledge/         # RAG collections (ChromaDB)
 ├─ mcp.json           # MCP servers
-├─ config.yaml        # Router permissions (optional)
 └─ .secret_key        # Key that encrypts the stored API keys (generated)
 ```
 
