@@ -43,14 +43,17 @@ async def list_skills() -> JSONResponse:
         )
 
 @router.get("/tools")
-async def list_tools() -> JSONResponse:
+async def list_tools(include_mcp: bool = False) -> JSONResponse:
     """List all available tools (native + external) without permission filtering.
+
+    Args:
+        include_mcp: When ``True``, MCP tools are listed too.
 
     Returns:
         JSON response with the tools.
     """
     try:
-        tools = get_tools_list()
+        tools = get_tools_list(include_mcp=include_mcp)
         return JSONResponse(
             status_code=200,
             content={"status": "success", "tools": tools},
@@ -72,6 +75,11 @@ async def refresh() -> JSONResponse:
         JSON response with the result.
     """
     try:
+        if agent is None or agent.tools is None:
+            return JSONResponse(
+                status_code=500,
+                content={"status": "error", "message": "Error refreshing tools", "tools": []},
+            )
         agent.tools._external_tools = agent.tools._scan_external_tools()
         agent.tools._tools_registry = agent.tools._build_tools_registry()
         tools = get_tools_list()

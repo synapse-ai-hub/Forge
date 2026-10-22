@@ -244,6 +244,12 @@ interface ResourceCardsProps {
   /** Prefix of the ids of the dropdowns (there can be several forms in a page). */
   idPrefix: string;
   disabled?: boolean;
+  /** List MCP tools too in the tools dropdown (the router panel needs them). */
+  includeMcp?: boolean;
+  /** Render picked tools as plain chips (no argument cards). */
+  hideToolArgs?: boolean;
+  /** Intro text; defaults to the creators one (picked = mandatory). */
+  intro?: string;
 }
 
 /**
@@ -253,7 +259,7 @@ interface ResourceCardsProps {
  * @param props - Kinds to offer, what is picked and how to change it.
  * @returns The cards.
  */
-export function ResourceCards({ kinds, selection, onChange, idPrefix, disabled = false }: ResourceCardsProps): ReactElement {
+export function ResourceCards({ kinds, selection, onChange, idPrefix, disabled = false, includeMcp = false, hideToolArgs = false, intro }: ResourceCardsProps): ReactElement {
   const [agentes, setAgentes] = useState<Option[]>([]);
   const [tools, setTools] = useState<ToolInfo[]>([]);
   const [skills, setSkills] = useState<Option[]>([]);
@@ -264,7 +270,7 @@ export function ResourceCards({ kinds, selection, onChange, idPrefix, disabled =
     let cancelled = false;
     Promise.all([
       kinds.includes("agentes") ? configService.getAgents().catch(() => []) : Promise.resolve([]),
-      kinds.includes("tools") ? configService.getTools().catch(() => []) : Promise.resolve([]),
+      kinds.includes("tools") ? configService.getTools(includeMcp).catch(() => []) : Promise.resolve([]),
       kinds.includes("skills") ? configService.getSkills().catch(() => []) : Promise.resolve([]),
       kinds.includes("rag") ? configService.listKnowledge().catch(() => []) : Promise.resolve([]),
     ]).then(([a, t, s, k]) => {
@@ -285,8 +291,8 @@ export function ResourceCards({ kinds, selection, onChange, idPrefix, disabled =
   return (
     <div className="space-y-3">
       <p className="text-xs text-app-text-secondary">
-        Lo que elijas es obligatorio: el creador lo tiene que usar. Puede sumar otros si lo considera necesario, y si no
-        elegís nada, decide él.
+        {intro ??
+          "Lo que elijas es obligatorio: el creador lo tiene que usar. Puede sumar otros si lo considera necesario, y si no elegís nada, decide él."}
       </p>
       {kinds.includes("agentes") && (
         <Picker
@@ -314,7 +320,7 @@ export function ResourceCards({ kinds, selection, onChange, idPrefix, disabled =
             for (const name of Object.keys(toolArgs)) if (!names.includes(name)) delete toolArgs[name];
             onChange({ ...selection, tools: names, toolArgs });
           }}
-          renderPicked={(name) => (
+          renderPicked={hideToolArgs ? undefined : (name) => (
             <ToolCard
               tool={tools.find((t) => t.name === name)}
               name={name}

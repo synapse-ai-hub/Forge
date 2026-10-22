@@ -23,6 +23,7 @@ from backend.routes.config import (
     models,
     parameters,
     providers,
+    router_config,
     runtime,
     workflows,
 )
@@ -45,5 +46,5 @@ __all__ = [
 
 router = APIRouter(prefix="/config", tags=["config"])
 
-for _sub in (runtime, providers, parameters, models, decision, listings, workflows):
+for _sub in (runtime, providers, parameters, models, decision, listings, workflows, router_config):
     router.include_router(_sub.router)

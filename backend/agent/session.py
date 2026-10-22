@@ -663,6 +663,58 @@ class SessionManager:
         finally:
             conn.close()
 
+    def get_router_config(self) -> dict | None:
+        """Read the single router-config row.
+
+        Returns:
+            Dict with the ``agentes``, ``tools``, ``skills`` and ``rag``
+            JSON arrays (as stored text), or ``None`` when no row exists
+            or an error occurs.
+        """
+        conn = self._get_connection()
+        try:
+            with self._lock:
+                row = conn.execute(
+                    load_query("router/get_router_config.sql")
+                ).fetchone()
+            return dict(row) if row else None
+        except Exception as e:
+            log_error(str(e), source="backend/agent/session.py")
+            logger.exception("Failed to get router config")
+            return None
+        finally:
+            conn.close()
+
+    def save_router_config(
+        self, agentes: str, tools: str, skills: str, rag: str
+    ) -> dict:
+        """Persist the single router-config row (UPSERT, id = 1).
+
+        Args:
+            agentes: JSON array of allowed sub-agent names.
+            tools: JSON array of allowed tool names.
+            skills: JSON array of allowed skill names.
+            rag: JSON array of allowed RAG collection names.
+
+        Returns:
+            A contract response dict indicating success or failure.
+        """
+        conn = self._get_connection()
+        try:
+            with self._lock:
+                conn.execute(
+                    load_query("router/upsert_router_config.sql"),
+                    (agentes, tools, skills, rag, datetime.now().isoformat()),
+                )
+                conn.commit()
+            return make_success_response(message="Router config saved.", usage=zero_usage())
+        except Exception as e:
+            log_error(str(e), source="backend/agent/session.py")
+            logger.exception("Failed to save router config")
+            return make_error_response(message="Failed to save router config.", usage=zero_usage())
+        finally:
+            conn.close()
+
     def get_providers(self) -> list[dict]:
         """Return all cached providers with their model lists.
 
