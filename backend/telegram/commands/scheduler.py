@@ -151,15 +151,29 @@ class SchedulerCommandsMixin:
                     chat_id, "No entendí los días. Ejemplos: 'todos', 'L X V', '0 2 4'."
                 )
                 return
-            result = scheduler_db.add_task(
-                name=scheduler_db._slugify(data.get("prompt", "")),
-                prompt=data.get("prompt", ""),
-                time_str=data.get("time", ""),
-                days=days,
-            )
             self._awaiting.pop(chat_id, None)
             self._mode_data.pop(chat_id, None)
-            await self.send_message(chat_id, result["message"])
+            await self.send_message(chat_id, "Creando la tarea programada, puede tardar un momento…")
+            import asyncio
+
+            from backend.routes.create.workflow import CreateWorkflowRequest, create_scheduled_task
+
+            prompt = data.get("prompt", "")
+            request = CreateWorkflowRequest(
+                descripcion=prompt,
+                name=scheduler_db._slugify(prompt)[:40].strip("-"),
+                schedule={"enabled": True, "slots": [{"time": data.get("time", ""), "days": days}]},
+            )
+
+            async def create() -> None:
+                """Create the task with the workflow creator and tell the chat how it ended."""
+                result = await create_scheduled_task(request)
+                await self.send_message(chat_id, result["message"])
+
+            creating = asyncio.create_task(create())
+            running = self.__dict__.setdefault("_creating_tasks", set())
+            running.add(creating)
+            creating.add_done_callback(running.discard)
 
     async def _cmd_horario(self, chat_id: int, arg: str) -> None:
         """Handle ``/horario``: edit the schedule of a scheduled task.

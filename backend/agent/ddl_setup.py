@@ -22,8 +22,6 @@ _DDL_SCRIPTS: tuple[str, ...] = (
     "ddl/error_log.sql",
     "ddl/context_files.sql",
     "ddl/attachments.sql",
-    "ddl/scheduled_tasks.sql",
-    "ddl/task_runs.sql",
     "ddl/model_catalog.sql",
     "ddl/decision_catalog.sql",
     "ddl/billing.sql",

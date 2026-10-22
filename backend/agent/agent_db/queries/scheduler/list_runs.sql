@@ -1,4 +1,6 @@
--- Most recent task executions joined with task name and prompt.
-SELECT r.*, t.prompt, t.name FROM task_runs r
-LEFT JOIN scheduled_tasks t ON t.id = r.task_id
-ORDER BY r.started_at DESC LIMIT ?;
+-- Most recent executions started by the scheduler (runs of the workflows that have a schedule).
+SELECT run_id AS id, workflow_name AS task_id, workflow_name AS name, NULL AS prompt,
+       status, COALESCE(result, error_text) AS detail, started_at, finished_at
+FROM workflow_runs
+WHERE kind = 'run' AND source = 'schedule'
+ORDER BY started_at DESC LIMIT ?;
