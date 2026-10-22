@@ -3,6 +3,7 @@
 import imaplib
 import logging
 import os
+from typing import Any
 
 from backend.agent.utils.contract import make_error_response, make_success_response, zero_usage
 from backend.agent.utils.email_parser import is_older_than, parse_email, parse_relative_date
@@ -13,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 class CheckEmailMixin:
     """Native tool ``check_email``: check the IMAP mailbox for unseen emails."""
-    async def check_email(self, folder: str = "INBOX", sender: str | None = None, date: str = "1h", mark_read: bool = True) -> dict:
+    async def check_email(self, folder: str = "INBOX", sender: str | None = None, date: str = "1h", mark_read: bool = False) -> dict[str, Any]:
             """Check the IMAP mailbox for unseen emails and return them parsed.
 
             Connects via IMAP (SSL), searches for UNSEEN messages in the given
@@ -28,16 +29,19 @@ class CheckEmailMixin:
                 date: Relative age filter: ``1h``-``23h`` (hours), ``<n>d``
                     (days), ``<n>m`` (months), ``<n>y`` (years) or ``all``
                     (no date filter). Default ``"1h"``.
-                mark_read: When ``True`` (default) fetched messages are marked
-                    as read. When ``False`` they are peeked (``BODY.PEEK[]``)
+                mark_read: When ``True`` fetched messages are marked as read.
+                    When ``False`` (default) they are peeked (``BODY.PEEK[]``)
                     and stay unseen.
 
             Returns:
                 dict with ``{status, message, data, usage}``.
-                ``data`` contains a list of parsed emails, each with
-                ``message_id``, ``sender``, ``subject``, ``date`` (raw header),
-                ``date_local`` (server local time), ``body``
-                and ``attachments`` (list of filenames).
+                ``data`` contains cleaned text with one line per email
+                (``date | sender | subject``) when there are any,
+                or the text ``"No hay mails pendientes"`` when there are none.
+
+            Raises:
+                No exception escapes: every failure is returned as an error
+                contract dict.
             """
             try:
                 cutoff, date_error = parse_relative_date(date)
@@ -81,7 +85,7 @@ class CheckEmailMixin:
                     if typ != "OK" or not data or not data[0]:
                         return make_success_response(
                             message="No hay mensajes no leidos.",
-                            data=[],
+                            data="No hay mails pendientes",
                             usage=zero_usage(),
                         )
 
@@ -126,9 +130,14 @@ class CheckEmailMixin:
                         log_error(str(e), source="tools.py:check_email(logout)")
                         pass
 
+                lines = [
+                    f"{r.get('date_local') or r.get('date')} | {r.get('sender')} | {r.get('subject')}"
+                    for r in results
+                ]
+                text = "\n".join(lines)
                 return make_success_response(
                     message=f"{len(results)} mensaje(s) no leido(s) encontrado(s).",
-                    data=results,
+                    data=text if text else "No hay mails pendientes",
                     usage=zero_usage(),
                 )
             except Exception as e:
