@@ -272,26 +272,23 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
               <tr><td><code>workflows/</code></td><td>Archivos <code>.yaml</code> planos, uno por workflow determinista, y una carpeta opcional <code>prompts/</code> con prompts propios</td></tr>
               <tr><td><code>knowledge/</code></td><td>Colecciones RAG (ChromaDB) creadas desde la interfaz de creación</td></tr>
               <tr><td><code>mcp.json</code></td><td>Configuración de los servidores MCP disponibles (array JSON)</td></tr>
-              <tr><td><code>config.yaml</code></td><td>(Opcional) Permisos del agente principal: tools, skills y sub-agentes a los que puede delegar</td></tr>
             </tbody>
           </table>
           <p>Todo esto se lee en tiempo de ejecución, así que podés agregar, modificar o quitar archivos sin reinstalar nada. Las skills y los agentes se leen cada vez que se usan; las tools externas y los servidores MCP se vuelven a leer al pulsar <strong>Actualizar</strong> en el panel de agentes o al reiniciar el backend.</p>
-          <h3><code>config.yaml</code> — permisos del agente principal</h3>
-          <p>El agente principal (el router) toma sus permisos de <code>~/.config/synapseForge/config.yaml</code>, con la misma lógica que el frontmatter de los agentes:</p>
-          <pre><code>permissions:
-  tools:
-    read: allow
-  skills:
-    mi_skill: allow
-  tasks:
-    explorador: allow</code></pre>
-          <p>Las claves son siempre <code>tools</code>, <code>skills</code> y <code>tasks</code> (en plural). Las skills listadas se inyectan en el system prompt del router igual que en un sub-agente.</p>
+          <h3>Permisos del agente principal (panel Router)</h3>
+          <p>El agente principal (el router) se configura únicamente desde la interfaz, en la pestaña <strong>Router</strong> del panel de agentes, con listas desplegables por dimensión:</p>
           <ul>
-            <li>Si el archivo <strong>no existe</strong> → el agente principal opera con un conjunto base de tools de lectura y delegación: <code>task</code>, <code>help</code>, <code>search_memory</code>, <code>read</code>, <code>websearch</code> y <code>webfetch</code>. No tiene skills.</li>
-            <li>Si existe → usa <strong>solo</strong> los permisos que declara: no se suma ninguna tool base.</li>
-            <li><code>task</code> está disponible únicamente si el yaml la lista en <code>tools</code> o en <code>tasks</code>; <code>tasks</code> limita a qué sub-agentes puede delegar.</li>
+            <li><strong>Subagentes</strong> — A quiénes puede delegar trabajo.</li>
+            <li><strong>Tools</strong> — Qué herramientas puede usar (los servidores MCP aparecen agrupados en un contenedor con scroll).</li>
+            <li><strong>Skills</strong> — Qué habilidades se le inyectan en su prompt.</li>
+            <li><strong>RAG</strong> — Qué colecciones de la base de conocimiento puede consultar.</li>
           </ul>
-          <p>El system prompt del router incluye solo las secciones de las tools que tiene habilitadas, así que cada tool de menos son tokens de contexto que se ahorran.</p>
+          <ul>
+            <li>Si no guardás nada → opera con un conjunto base de lectura y delegación, sin skills.</li>
+            <li>Si guardás una selección → usa <strong>solo</strong> eso: no se suma nada base.</li>
+            <li>Haya o no selección, siempre puede consultar la documentación del sistema y la memoria de tus conversaciones; lo que agregues en RAG se suma a eso.</li>
+          </ul>
+          <p>Los cambios se aplican en el siguiente mensaje, sin reiniciar el backend. El prompt del router incluye solo las secciones de las tools habilitadas, así que cada tool de menos son tokens de contexto que se ahorran.</p>
         </section>
 
         <section id="rag">
@@ -607,6 +604,7 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
             <li><strong>MCP</strong> — Lista los servidores MCP con su estado (Conectado, Error o Desactivado) y un interruptor para activar o desactivar cada uno.</li>
             <li><strong>RAG</strong> — Lista las colecciones de la base de conocimiento.</li>
             <li><strong>Workflows</strong> — Una tarjeta por workflow guardado, con un botón <strong>play</strong> para ejecutarlo (y cancelarlo mientras corre).</li>
+            <li><strong>Router</strong> — Permisos del agente principal: listas desplegables de subagentes, tools, skills y colecciones RAG (los servidores MCP aparecen en un contenedor con scroll). Sin selección guardada usa el conjunto base; los cambios se aplican en el siguiente mensaje.</li>
           </ul>
           <h3>Panel de configuración</h3>
           <p>En el panel lateral, hay una pestaña de <strong>Configuración</strong> con las siguientes opciones:</p>
@@ -781,6 +779,9 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
               <tr><td>POST</td><td><code>/api/config/tools/refresh</code></td><td>Releer las tools externas y reconstruir el registry (incluye MCP).</td></tr>
               <tr><td>GET</td><td><code>/api/config/agents</code></td><td>Listar sub-agentes disponibles.</td></tr>
               <tr><td>GET</td><td><code>/api/config/mcp</code></td><td>Listar servidores MCP con su estado.</td></tr>
+              <tr><td>GET</td><td><code>/api/config/router</code></td><td>Permisos del agente principal (selección guardada + permisos efectivos).</td></tr>
+              <tr><td>PUT</td><td><code>/api/config/router</code></td><td>Guardar la selección de permisos del agente principal.</td></tr>
+              <tr><td>GET</td><td><code>/api/config/router/selection</code></td><td>Selección guardada del agente principal (vacía si no hay).</td></tr>
               <tr><td>GET</td><td><code>/api/workflows</code></td><td>Listar los workflows con su estado (en ejecución, última ejecución).</td></tr>
               <tr><td>POST</td><td><code>/api/workflows/{name}/run</code></td><td>Ejecutar un workflow en segundo plano (botón play).</td></tr>
               <tr><td>DELETE</td><td><code>/api/workflows/{name}</code></td><td>Eliminar un workflow con sus ejecuciones y notificaciones.</td></tr>
