@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactElement } from "react";
 import { CheckCircle2, Loader2, MessageSquare, X, XCircle } from "lucide-react";
 import { Button } from "./ui/button";
 import { MarkdownRenderer } from "./chatBlocks";
@@ -12,6 +12,12 @@ interface NotificationModalProps {
   onReviewed: (sessionId: string) => void;
 }
 
+/**
+ * Format the time of a notification for the window title.
+ *
+ * @param iso - Local time in ISO format.
+ * @returns Date and time, or an empty string when the value is not a date.
+ */
 function formatDate(iso: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return "";
@@ -26,7 +32,7 @@ function formatDate(iso: string): string {
 }
 
 /** Movable window with the complete output of a workflow run or scheduled task. */
-export function NotificationModal({ notification, onClose, onReviewed }: NotificationModalProps) {
+export function NotificationModal({ notification, onClose, onReviewed }: NotificationModalProps): ReactElement | null {
   const [output, setOutput] = useState("");
   const [loading, setLoading] = useState(false);
   const [reviewing, setReviewing] = useState(false);
@@ -61,30 +67,47 @@ export function NotificationModal({ notification, onClose, onReviewed }: Notific
 
   useEffect(() => {
     if (id === null) return;
-    const onKey = (e: KeyboardEvent) => {
+    /**
+     * Close the window with Escape.
+     *
+     * @param e - Key pressed.
+     */
+    const onKey = (e: KeyboardEvent): void => {
       if (e.key === "Escape") onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [id, onClose]);
 
-  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+  /**
+   * Start dragging the window from its title bar.
+   *
+   * @param e - Pointer event on the title bar.
+   */
+  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>): void => {
     if ((e.target as HTMLElement).closest("button")) return;
     drag.current = { startX: e.clientX, startY: e.clientY, originX: offset.x, originY: offset.y };
     e.currentTarget.setPointerCapture(e.pointerId);
   };
 
-  const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+  /**
+   * Move the window while it is dragged.
+   *
+   * @param e - Pointer event on the title bar.
+   */
+  const onPointerMove = (e: React.PointerEvent<HTMLDivElement>): void => {
     const d = drag.current;
     if (!d) return;
     setOffset({ x: d.originX + e.clientX - d.startX, y: d.originY + e.clientY - d.startY });
   };
 
-  const onPointerUp = () => {
+  /** Stop dragging the window. */
+  const onPointerUp = (): void => {
     drag.current = null;
   };
 
-  const review = useCallback(async () => {
+  /** Open a new conversation with the output as context ("Revisar con el agente"). */
+  const review = useCallback(async (): Promise<void> => {
     if (id === null) return;
     setReviewing(true);
     setError(null);
@@ -125,7 +148,7 @@ export function NotificationModal({ notification, onClose, onReviewed }: Notific
             <p className="text-xs text-app-text-secondary">
               {formatDate(notification.created_at)}
               {" · "}
-              {notification.kind === "workflow" ? "Workflow" : "Tarea programada"}
+              {notification.kind === "schedule" ? "Tarea programada" : "Workflow"}
               {" · "}
               {notification.status === "success" ? "Ejecutado con éxito" : "Falló"}
             </p>

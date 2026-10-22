@@ -96,6 +96,69 @@ def load_workflow(name: str) -> dict[str, Any]:
         return {"status": "error", "message": f"Error cargando workflow '{name}'.", "data": None, "usage": usage}
 
 
+def list_scheduled() -> list[dict[str, Any]]:
+    """List the workflows that have a ``schedule`` block (the scheduled tasks).
+
+    Returns:
+        One dict per scheduled workflow with ``name``, ``description`` and ``schedule``
+        (see :func:`~backend.agent.utils.workflow_validator.normalize_schedule`);
+        the invalid workflows are left out.
+    """
+    scheduled: list[dict[str, Any]] = []
+    for name in list_workflows():
+        loaded = load_workflow(name)
+        if loaded.get("status") != "success":
+            continue
+        data = loaded["data"]
+        if data.get("schedule"):
+            scheduled.append({
+                "name": data["name"],
+                "description": data.get("description", ""),
+                "schedule": data["schedule"],
+            })
+    return scheduled
+
+
+def save_schedule(name: str, schedule: dict[str, Any] | None) -> dict[str, Any]:
+    """Write the ``schedule`` block of a workflow file (``None`` removes it).
+
+    The rest of the file is kept; the YAML is written again, so its comments are lost.
+
+    Args:
+        name: Workflow name.
+        schedule: Validated schedule (``{"enabled", "slots"}``), or ``None`` to remove it.
+
+    Returns:
+        Contract dict ``{status, message}``.
+    """
+    if not _safe_name(name):
+        return {"status": "error", "message": f"Workflow '{name}' inválido."}
+    try:
+        workflows_dir = get_workflows_dir()
+        base = os.path.realpath(workflows_dir)
+        target = os.path.realpath(workflows_dir / f"{name}.yaml")
+        if not target.startswith(base + os.sep):
+            return {"status": "error", "message": "Ruta de workflow no permitida."}
+        path = Path(target)
+        if not path.is_file():
+            return {"status": "error", "message": f"Workflow '{name}' no existe."}
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            return {"status": "error", "message": f"Workflow '{name}' inválido."}
+        if schedule is None:
+            data.pop("schedule", None)
+        else:
+            data["schedule"] = schedule
+        path.write_text(
+            yaml.safe_dump(data, allow_unicode=True, sort_keys=False, default_flow_style=False),
+            encoding="utf-8",
+        )
+        return {"status": "success", "message": "Horario guardado."}
+    except Exception as exc:
+        log_error(str(exc), source="workflow_loader.py:save_schedule")
+        return {"status": "error", "message": f"No se pudo guardar el horario de '{name}'."}
+
+
 def _render_toml(value: Any, level: int) -> str:
     """Render a parsed TOML value as readable text (tables become sections).
 

@@ -216,6 +216,37 @@ def fetch_context_window_turns() -> int:
         return -1
 
 
+def router_agents(tools: Iterable[str], task_perms: dict | None = None) -> list[dict[str, str]]:
+    """List the agents the router can delegate to.
+
+    Args:
+        tools: Names of the tools enabled for the router; without ``task`` there are no agents.
+        task_perms: Nested ``task`` permission; when given, only the agents it allows are listed.
+
+    Returns:
+        One dict per agent with ``name`` and ``description`` (the ``agentes`` of ``system_prompt.jinja``).
+    """
+    if "task" not in tools:
+        return []
+    agents_result = list_agents()
+    agents = (
+        json.loads(agents_result["data"])
+        if agents_result.get("status") == "success"
+        else []
+    )
+    if isinstance(task_perms, dict) and task_perms:
+        from backend.agent.permissions import wildcard_match
+
+        agents = [
+            a for a in agents
+            if any(
+                action == "allow" and wildcard_match(key, a["name"])
+                for key, action in task_perms.items()
+            )
+        ]
+    return agents
+
+
 def build_system_prompt(
     agent_name: str | None = None,
     tools: Iterable[str] | None = None,
@@ -297,44 +328,13 @@ def build_system_prompt(
 # Router: system_prompt.jinja es SIEMPRE la base; AGENT.md se inyecta como ## Behavior.
     if tools is None:
         tools = _all_tool_names()
-    base_prompt = agent.prompt("system_prompt", tools=tools)
+    # The agents section is part of the template (system_prompt.jinja).
+    base_prompt = agent.prompt("system_prompt", tools=tools, agentes=router_agents(tools, task_perms))
 
-    
-
-    
-
-    # Agents from the agents folder
-    agents_result = list_agents()
-    agents = (
-        json.loads(agents_result["data"])
-        if agents_result.get("status") == "success"
-        else []
-    )
-    if "task" not in tools:
-        agents = []
-    elif isinstance(task_perms, dict) and task_perms:
-        from backend.agent.permissions import wildcard_match
-
-        agents = [
-            a for a in agents
-            if any(
-                action == "allow" and wildcard_match(key, a["name"])
-                for key, action in task_perms.items()
-            )
-        ]
-    agents_str = ""
-    if agents:
-        agents_str = "\n".join(
-            f"- {a['name']}: {a['description']}" for a in agents
-        )
-
-    # Concatenate: base + date + agents + context (no .format())
+    # Concatenate: base (with its agents) + paralelización + context (no .format())
     parts = []
     if base_prompt:
         parts.append(base_prompt)
-    
-    if agents_str:
-        parts.append(f"## Agentes\n{agents_str}")
 
     # Fase 6: el router decide cuándo paralelizar. Llamadas independientes
     # en el mismo bloque corren en paralelo con gather y barrera.

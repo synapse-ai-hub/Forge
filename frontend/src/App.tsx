@@ -339,13 +339,24 @@ const handleTelegramToggle = useCallback((val: boolean) => {
 
   /* Clicking a notification opens a window with its complete output. */
   const [openedNotification, setOpenedNotification] = useState<AppNotification | null>(null);
-  const handleSelectNotification = useCallback((n: AppNotification) => {
+  /**
+   * Open the window with the complete output of a notification.
+   *
+   * @param n - Notification the user clicked.
+   */
+  const handleSelectNotification = useCallback((n: AppNotification): void => {
     setOpenedNotification(n);
   }, []);
-  const handleCloseNotification = useCallback(() => setOpenedNotification(null), []);
+  /** Close the window of the notification. */
+  const handleCloseNotification = useCallback((): void => setOpenedNotification(null), []);
   /* "Revisar con el agente": the new conversation (with the output) shows up in the sidebar. */
+  /**
+   * Show the conversation created by "Revisar con el agente" in the sidebar and open it.
+   *
+   * @param sessionId - Session created with the output as context.
+   */
   const handleReviewed = useCallback(
-    (sessionId: string) => {
+    (sessionId: string): void => {
       setRefreshTrigger((t) => t + 1);
       handleSelectSession(sessionId);
     },
@@ -411,18 +422,14 @@ const handleTelegramToggle = useCallback((val: boolean) => {
         window.dispatchEvent(new CustomEvent("model-changed"));
       } else if (data.type === "notification") {
         // A workflow run or a scheduled task finished: persisted by the
-        // backend. Add it to the bell and refresh the sidebar so the session
-        // of the execution shows up.
+        // backend. Add it to the bell (a run never opens a session).
         const incoming = data.content as AppNotification;
         setNotifications((prev) =>
           prev.some((n) => n.id === incoming.id) ? prev : [incoming, ...prev]
         );
-        setRefreshTrigger((t) => t + 1);
       } else if (data.type === "workflow_run") {
-        // A workflow run changed state: tell the workflow cards and refresh
-        // the sidebar (the run session appears when it starts).
+        // A workflow run changed state: tell the workflow cards.
         window.dispatchEvent(new CustomEvent("workflow-run", { detail: data.content }));
-        setRefreshTrigger((t) => t + 1);
       } else if (data.type === "telegram_create") {
         // Telegram as remote control ("or"): open/close the same create window
         // (skill.html / rag.html / tool.html) the user would open from the web UI.

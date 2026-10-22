@@ -19,7 +19,6 @@ CREATE TABLE IF NOT EXISTS workflow_run_steps (
     state TEXT NOT NULL DEFAULT 'open',  -- open | done | failed | stale
     result TEXT,  -- complete output of the node
     error TEXT,  -- failure message when state is failed
-    child_session_id TEXT,  -- session of the sub-agent, in agent nodes
     created_at TEXT NOT NULL,  -- local time the node was dispatched
     updated_at TEXT NOT NULL  -- local time of the last change
 );

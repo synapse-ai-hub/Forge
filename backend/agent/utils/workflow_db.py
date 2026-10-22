@@ -51,19 +51,17 @@ def ensure_workflow(name: str) -> None:
 
 def create_run(
     name: str,
-    session_id: str | None,
     parent_session_id: str | None = None,
     source: str = "play",
 ) -> str | None:
-    """Open a run in ``running`` state.
+    """Open a run in ``running`` state (a run never opens a session).
 
     Args:
         name: Workflow name.
-        session_id: Session that holds the execution (parent of the node
-            child sessions).
         parent_session_id: Session of the agent that called the workflow
             through the tool, if any.
-        source: ``"play"`` (UI) or ``"tool"`` (called by an agent).
+        source: ``"play"`` (UI), ``"tool"`` (called by an agent) or ``"schedule"``
+            (started by the scheduler).
 
     Returns:
         The new run id, or ``None`` when it could not be stored.
@@ -74,7 +72,7 @@ def create_run(
         with db_transaction() as conn:
             conn.execute(
                 load_query("workflows/insert_run.sql"),
-                (run_id, name, session_id, parent_session_id, source, _now()),
+                (run_id, name, parent_session_id, source, _now()),
             )
         return run_id
     except Exception as exc:
@@ -82,18 +80,26 @@ def create_run(
         return None
 
 
-def set_run_session(run_id: str, session_id: str) -> None:
-    """Attach the execution session to a run.
+def scheduled_run_exists(name: str, minute: str) -> bool:
+    """Tell whether the scheduler already started a run of a workflow in a minute.
 
     Args:
-        run_id: Run identifier.
-        session_id: Session that holds the execution.
+        name: Workflow name.
+        minute: The minute to check, as ``YYYY-MM-DDTHH:MM`` (local time).
+
+    Returns:
+        ``True`` when a scheduled run started in that minute (``True`` as well when it
+        cannot be checked, so a run is never started twice).
     """
     try:
-        with db_transaction() as conn:
-            conn.execute(load_query("workflows/set_run_session.sql"), (session_id, run_id))
+        with get_connection() as conn:
+            row = conn.execute(
+                load_query("workflows/scheduled_run_exists.sql"), (name, minute)
+            ).fetchone()
+            return row is not None
     except Exception as exc:
-        log_error(str(exc), source="workflow_db.py:set_run_session")
+        log_error(str(exc), source="workflow_db.py:scheduled_run_exists")
+        return True
 
 
 def get_run(run_id: str) -> dict[str, Any] | None:
@@ -242,13 +248,12 @@ def open_step(
         return None
 
 
-def commit_step(row_id: int | None, result: str, child_session_id: str | None = None) -> None:
+def commit_step(row_id: int | None, result: str) -> None:
     """Commit the complete result of a node (the row goes to ``done``).
 
     Args:
         row_id: Commit row id (``None`` is ignored).
         result: Complete output of the node.
-        child_session_id: Session of the sub-agent, in agent nodes.
     """
     if row_id is None:
         return
@@ -256,19 +261,18 @@ def commit_step(row_id: int | None, result: str, child_session_id: str | None = 
         with db_transaction() as conn:
             conn.execute(
                 load_query("workflows/mark_step_done.sql"),
-                (result, child_session_id, _now(), row_id),
+                (result, _now(), row_id),
             )
     except Exception as exc:
         log_error(str(exc), source="workflow_db.py:commit_step")
 
 
-def fail_step(row_id: int | None, error: str, child_session_id: str | None = None) -> None:
+def fail_step(row_id: int | None, error: str) -> None:
     """Mark a node as failed with its technical error.
 
     Args:
         row_id: Commit row id (``None`` is ignored).
         error: Failure message.
-        child_session_id: Session of the sub-agent, in agent nodes.
     """
     if row_id is None:
         return
@@ -276,7 +280,7 @@ def fail_step(row_id: int | None, error: str, child_session_id: str | None = Non
         with db_transaction() as conn:
             conn.execute(
                 load_query("workflows/mark_step_failed.sql"),
-                (error, child_session_id, _now(), row_id),
+                (error, _now(), row_id),
             )
     except Exception as exc:
         log_error(str(exc), source="workflow_db.py:fail_step")
@@ -350,37 +354,6 @@ def list_steps(run_id: str) -> list[dict[str, Any]]:
         return []
 
 
-def _child_usage(child_session_id: str | None) -> tuple[Any, ...]:
-    """Add up the spend of a sub-agent session.
-
-    Args:
-        child_session_id: Session of the sub-agent, or ``None`` when the node has none.
-
-    Returns:
-        ``(provider, model, prompt_tokens, completion_tokens, total_tokens, total_time,
-        cost_input, cost_output, cost_total)``; zeros and ``None`` without a session.
-    """
-    empty = (None, None, 0, 0, 0, 0.0, 0.0, 0.0, 0.0)
-    if not child_session_id:
-        return empty
-    try:
-        with get_connection() as conn:
-            row = conn.execute(
-                load_query("workflows/child_usage.sql"),
-                (child_session_id, child_session_id, child_session_id),
-            ).fetchone()
-        if row is None:
-            return empty
-        return (
-            row["provider"], row["model"], row["prompt_tokens"], row["completion_tokens"],
-            row["total_tokens"], row["total_time"], row["cost_input"], row["cost_output"],
-            row["cost_total"],
-        )
-    except Exception as exc:
-        log_error(str(exc), source="workflow_db.py:_child_usage")
-        return empty
-
-
 def record_node(
     run_id: str,
     attempt: int,
@@ -391,15 +364,18 @@ def record_node(
     status: str,
     result: str | None = None,
     error: str | None = None,
-    child_session_id: str | None = None,
     started_at: str | None = None,
     tool_name: str | None = None,
     seconds: float = 0.0,
+    provider: str | None = None,
+    model: str | None = None,
+    usage: dict[str, Any] | None = None,
 ) -> bool:
     """Record one execution of a node as a row of its run.
 
-    An agent node adds up the spend of its child session. The other nodes run
-    a tool, so the row keeps the tool and the seconds the node took.
+    An agent node keeps the model it used and the sum of its LLM calls (tokens,
+    time and cost). The other nodes run a tool, so the row keeps the tool and the
+    seconds the node took.
 
     Args:
         run_id: Run identifier.
@@ -411,30 +387,92 @@ def record_node(
         status: ``success``, ``error`` or ``cancelled``.
         result: Complete output of the node, when it succeeded.
         error: Failure message, when it failed.
-        child_session_id: Session of the sub-agent, in agent nodes.
         started_at: Local time the node was dispatched (now when ``None``).
         tool_name: Tool the node ran (``shell``, ``rag`` or the tool), ``None`` in agent nodes.
         seconds: Seconds the node took; kept as ``total_time`` in the nodes that run a tool.
+        provider: Provider of the LLM calls of an agent node.
+        model: Model of the LLM calls of an agent node.
+        usage: Sum of the usage of the LLM calls of an agent node (``prompt_tokens``,
+            ``completion_tokens``, ``total_tokens``, ``total_time``).
 
     Returns:
         ``True`` when the row was stored.
     """
     try:
+        from backend.agent.utils.spend_handler import calculate_cost
+
+        usage = usage or {}
+        prompt_tokens = int(usage.get("prompt_tokens") or 0)
+        completion_tokens = int(usage.get("completion_tokens") or 0)
+        total_tokens = int(usage.get("total_tokens") or 0) or (prompt_tokens + completion_tokens)
+        total_time = float(seconds) if tool_name else float(usage.get("total_time") or 0)
+        cost_input = cost_output = cost_total = 0.0
+        if provider and model:
+            cost_input, cost_output, cost_total = calculate_cost(
+                provider.strip(), model.strip(), prompt_tokens, completion_tokens
+            )
         now = _now()
-        usage = list(_child_usage(child_session_id))
-        if tool_name:
-            usage[5] = float(seconds)
         with db_transaction() as conn:
             cur = conn.execute(
                 load_query("workflows/insert_node_row.sql"),
                 (
-                    attempt, step, substep, node_id, node_type, tool_name, status, child_session_id,
-                    result, error, *usage, started_at or now, now, run_id,
+                    attempt, step, substep, node_id, node_type, tool_name, status,
+                    result, error, provider, model, prompt_tokens, completion_tokens,
+                    total_tokens, total_time, cost_input, cost_output, cost_total,
+                    started_at or now, now, run_id,
                 ),
             )
             return cur.rowcount > 0
     except Exception as exc:
         log_error(str(exc), source="workflow_db.py:record_node")
+        return False
+
+
+def record_tool_call(
+    run_id: str,
+    attempt: int,
+    step: int,
+    substep: int,
+    node_id: str,
+    tool_name: str,
+    status: str,
+    result: str | None,
+    error: str | None,
+    seconds: float,
+    started_at: str,
+    finished_at: str,
+) -> bool:
+    """Record one tool call of an agent node as a row of its run (kind ``tool``).
+
+    Args:
+        run_id: Run identifier.
+        attempt: Attempt that executed the node.
+        step: Step of the node.
+        substep: Position of the node inside its step.
+        node_id: Id of the agent node in the YAML.
+        tool_name: Tool the agent called.
+        status: ``success`` or ``error``.
+        result: Output of the tool, when it succeeded.
+        error: Failure message, when it failed.
+        seconds: Seconds the tool took (``total_time``).
+        started_at: Local time the call started.
+        finished_at: Local time the call ended.
+
+    Returns:
+        ``True`` when the row was stored.
+    """
+    try:
+        with db_transaction() as conn:
+            cur = conn.execute(
+                load_query("workflows/insert_tool_row.sql"),
+                (
+                    attempt, step, substep, node_id, tool_name, status, result, error,
+                    float(seconds), started_at, finished_at, run_id,
+                ),
+            )
+            return cur.rowcount > 0
+    except Exception as exc:
+        log_error(str(exc), source="workflow_db.py:record_tool_call")
         return False
 
 

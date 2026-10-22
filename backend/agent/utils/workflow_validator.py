@@ -2,6 +2,11 @@
 
 User-friendly source of truth. Same ``step`` means parallel with barrier,
 different ``step`` means sequential. No LangGraph dependency.
+
+A workflow may carry a ``schedule`` block (a scheduled task): ``enabled`` and a
+list of ``slots``, each with a ``time`` (``HH:MM``) and the ``days`` it runs
+(0 = Sunday .. 6 = Saturday). The first slot is the main one; the others are
+repetitions.
 """
 
 from __future__ import annotations
@@ -18,6 +23,45 @@ _ON_FAILURE = ("continue", "abort")
 _RUN_TIMEOUT_MIN_MS = 1000
 _RUN_TIMEOUT_MAX_MS = 300000
 _RUN_TIMEOUT_DEFAULT_MS = 30000
+_TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+
+
+def normalize_schedule(raw: Any) -> tuple[dict[str, Any] | None, str | None]:
+    """Validate and normalize the ``schedule`` block of a workflow.
+
+    Args:
+        raw: The ``schedule`` value read from the YAML (``None`` when absent).
+
+    Returns:
+        ``(schedule, None)`` with ``{"enabled": bool, "slots": [{"time", "days"}]}``
+        (or ``None`` when there is no schedule), or ``(None, message)`` when it is invalid.
+    """
+    if raw is None:
+        return None, None
+    if not isinstance(raw, dict):
+        return None, "Campo 'schedule' inválido: debe ser un objeto con 'enabled' y 'slots'."
+    enabled = raw.get("enabled", True)
+    if not isinstance(enabled, bool):
+        return None, "Campo 'schedule.enabled' debe ser true o false."
+    slots_raw = raw.get("slots")
+    if not isinstance(slots_raw, list) or not slots_raw:
+        return None, "Campo 'schedule.slots' debe ser una lista con al menos un horario."
+    slots: list[dict[str, Any]] = []
+    for i, slot in enumerate(slots_raw):
+        if not isinstance(slot, dict):
+            return None, f"Horario {i} de 'schedule.slots' inválido: debe ser un objeto con 'time' y 'days'."
+        time_value = slot.get("time")
+        if not isinstance(time_value, str) or not _TIME_RE.match(time_value):
+            return None, f"Horario {i} de 'schedule.slots' con 'time' inválido (formato HH:MM)."
+        days = slot.get("days")
+        if (
+            not isinstance(days, list)
+            or not days
+            or any(isinstance(d, bool) or not isinstance(d, int) or d < 0 or d > 6 for d in days)
+        ):
+            return None, f"Horario {i} de 'schedule.slots' con 'days' inválido (lista de 0 a 6, 0 = domingo)."
+        slots.append({"time": time_value, "days": sorted(set(days))})
+    return {"enabled": enabled, "slots": slots}, None
 
 
 def _valid_run_workdir(workdir: str) -> bool:
@@ -78,6 +122,10 @@ def validate_workflow(data: dict[str, Any]) -> dict[str, Any]:
     on_failure = str(data.get("on_failure", "continue")).strip()
     if on_failure not in _ON_FAILURE:
         return {"status": "error", "message": "Campo 'on_failure' debe ser 'continue' o 'abort'.", "data": None, "usage": usage}
+
+    schedule, schedule_error = normalize_schedule(data.get("schedule"))
+    if schedule_error:
+        return {"status": "error", "message": schedule_error, "data": None, "usage": usage}
 
     seen_ids: set[str] = set()
     normalized: list[dict[str, Any]] = []
@@ -158,6 +206,7 @@ def validate_workflow(data: dict[str, Any]) -> dict[str, Any]:
             "version": str(data.get("version", "1")),
             "retries": retries_default,
             "on_failure": on_failure,
+            "schedule": schedule,
             "nodes": normalized,
         },
         "usage": usage,

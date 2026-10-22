@@ -47,7 +47,6 @@ def _public_run(run: dict | None) -> dict | None:
     return {
         "id": run["id"],
         "workflow_name": run["workflow_name"],
-        "session_id": run.get("session_id"),
         "source": run.get("source"),
         "status": run["status"],
         "attempt": run.get("attempt"),
@@ -111,7 +110,7 @@ async def run_workflow(name: str) -> JSONResponse:
             content={
                 "status": "success",
                 "message": f"Workflow «{name}» en ejecución.",
-                "data": {"run_id": started["run_id"], "session_id": started["session_id"]},
+                "data": {"run_id": started["run_id"]},
             },
         )
     except Exception as exc:

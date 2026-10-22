@@ -48,7 +48,7 @@ class WorkflowMixin:
         status = outcome.get("status")
         if status == "success":
             xml = (
-                f'<workflow id="{outcome.get("session_id")}" name="{name}" state="completed">'
+                f'<workflow id="{outcome.get("run_id")}" name="{name}" state="completed">'
                 f"<workflow_result>{outcome.get('result', '')}</workflow_result>"
                 f"</workflow>"
             )
