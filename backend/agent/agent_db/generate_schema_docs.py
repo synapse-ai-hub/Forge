@@ -232,9 +232,8 @@ _SOFT_REFERENCES = [
     ("error_log.session_id", "`sessions.session_id`"),
     ("error_log.parent_id", "`sessions.session_id`"),
     ("external_usage.session_id", "`sessions.session_id`"),
-    ("step_frontier.child_id", "`sessions.session_id`"),
-    ("workflow_run_steps.child_session_id", "`sessions.session_id`"),
-    ("notifications.run_id", "`workflow_runs.run_id` or `task_runs.id`, depending on the kind"),
+    ("step_frontier.child_id", "`sessions.session_id` (task) or `workflow_runs.run_id` (workflow)"),
+    ("notifications.run_id", "`workflow_runs.run_id`"),
     ("workflow_run_steps.run_id", "`workflow_runs.run_id`"),
 ]
 """Columns that hold the id of another table but are not declared as foreign keys."""

@@ -26,7 +26,7 @@ Documentación de los endpoints HTTP expuestos por `backend/main.py` y `backend/
 
 Las respuestas siguen dos formatos:
 
-- **Contrato:** `{status, message, data, usage}` (sessions, context files, metrics, RAG, billing, conversation, workflows y `craft-prompt`).
+- **Contrato:** `{status, message, data, usage}` (sessions, context files, metrics, RAG, billing, conversation y workflows).
 - **Directo:** `{status, ...campos}` o `{status, message}` (config, listados, scheduler, agent items y telegram).
 
 `status` es `"success"` o `"error"`. Los errores de validación de los endpoints directos devuelven además el código HTTP correspondiente.
@@ -41,7 +41,7 @@ Las respuestas siguen dos formatos:
 - **`context_files`**: archivos de contexto (instrucciones y documentos).
 - **`metrics`**: métricas de sesiones, mensajes, tools, errores, modelos y costos, con exportación a CSV.
 - **`rag`**: colecciones RAG, compatibilidad de embeddings, reindexado, archivos y URLs.
-- **`scheduler`**: tareas programadas (agenda), ejecuciones y refinado de prompts.
+- **`scheduler`**: tareas programadas (agenda): listar, editar el horario, eliminar y ver las ejecuciones. Se crean con `POST /api/create/workflow` enviando `schedule`.
 - **`workflows`**: listado de workflows con su estado, ejecución con play, cancelación e historial de ejecuciones.
 - **`notifications`**: notificaciones persistidas (campanita del header).
 - **`create`**: creación de skills, tools, agentes y workflows vía streaming SSE.
@@ -514,70 +514,33 @@ Agrega una página web a una colección.
 
 ### 7. Scheduler (`backend/routes/scheduler.py`)
 
-Cada tarea tiene un sub-agente propio con los permisos que se le asignan; su nombre no puede coincidir con el de otro agente.
+Una tarea programada es un workflow cuyo YAML tiene un bloque `schedule`; su id es el nombre del workflow. Se crea con el creador de workflows (`POST /api/create/workflow` con `schedule`, ver abajo). Corre en el motor de workflows (`source = schedule`) y también se puede ejecutar con play y cancelar como cualquier workflow.
 
 #### `GET /api/scheduler/tasks`
 
 Lista todas las tareas programadas ordenadas por horario.
 
-**Respuesta:** `{status, tasks: Task[]}`. `Task` incluye `id`, `name`, `prompt`, `time`, `days`, `enabled`, `repetitions`, `tool_permissions`, `skill_permissions`, `parameters`, `last_run_date`, `slot_runs`, `created_at` y `updated_at`.
-
-#### `POST /api/scheduler/tasks`
-
-Crea una tarea programada.
-
-**Body (JSON):**
-
-```json
-{
-  "name": "resumen-diario",
-  "prompt": "texto",
-  "time": "09:00",
-  "days": [0, 1, 2, 3, 4, 5, 6],
-  "tool_permissions": {},
-  "skill_permissions": {},
-  "parameters": {},
-  "repetitions": []
-}
-```
-
-`name` admite minúsculas, números, guiones y guiones bajos. `days` va de 0 (domingo) a 6 (sábado). Sin `time` se usa `09:00` y sin `days`, todos los días.
-
-**Respuesta:** `{status, message, task}`. `400` si falla la validación.
+**Respuesta:** `{status, tasks: Task[]}`. `Task` incluye `id`, `name`, `prompt`, `time`, `days`, `enabled`, `repetitions`, `created_at` y `updated_at`. La tarea es el workflow con bloque `schedule`: `prompt` es su descripción, `time` y `days` son el primer horario y `repetitions` los demás.
 
 #### `PUT /api/scheduler/tasks/{task_id}`
 
-Actualiza una tarea programada. Todos los campos del body son opcionales; cambiar el horario reinicia la guarda diaria de ejecución.
+Actualiza el horario de una tarea programada (se reescribe el bloque `schedule` de su YAML). Solo se pueden cambiar `time`, `days`, `repetitions` y `enabled`; el resto se cambia en el workflow.
 
-**Body (JSON):** los mismos campos que en la creación, más `enabled`.
+**Body (JSON):** `time`, `days`, `repetitions` y `enabled`, todos opcionales.
 
 **Respuesta:** `{status, message, task}`. `400` si falla.
 
 #### `DELETE /api/scheduler/tasks/{task_id}`
 
-Elimina una tarea programada y sus ejecuciones registradas.
+Elimina una tarea programada: su YAML y sus ejecuciones, commits y notificaciones. No se puede eliminar mientras corre.
 
 **Respuesta:** `{status, message}`. `404` si no existe.
 
 #### `GET /api/scheduler/runs`
 
-Devuelve las ejecuciones más recientes de tareas (más nuevas primero).
+Devuelve las ejecuciones más recientes iniciadas por el scheduler, que son las corridas de `workflow_runs` con `source = schedule` (más nuevas primero).
 
 **Respuesta:** `{status, runs: Run[]}`.
-
-#### `POST /api/scheduler/craft-prompt`
-
-Refina una descripción en lenguaje natural hasta convertirla en un prompt claro para el agente, con el modelo seleccionado.
-
-**Body (JSON):** `{"prompt": "texto del usuario"}`.
-
-**Respuesta:** contrato con `data: {prompt}`.
-
-#### `GET /api/scheduler/permissions/catalog`
-
-Devuelve las tools, skills, agentes y workflows disponibles para armar los permisos de una tarea.
-
-**Respuesta:** `{status, tools, skills, agents, workflows}`. `workflows` trae `name` y `description`; sus permisos se guardan como el grupo `tool_permissions.workflow` (`{nombre: "allow"}`).
 
 ---
 
@@ -609,7 +572,7 @@ Crea una tool externa (`.py`).
 
 Crea un agente.
 
-**Body (JSON):** `{"descripcion", "name", "mensajes", "model", "provider", "iterate"}`.
+**Body (JSON):** `{"descripcion", "name", "mensajes", "model", "provider", "iterate", "agentes", "tools", "tool_args", "skills", "rag"}`. Los cinco últimos vienen de las tarjetas de permisos: lo que el usuario elige es obligatorio, y el creador ve todo lo que existe y puede sumar otros.
 
 **Eventos propios:** `agent_action`, `agent_result_final`.
 
@@ -617,7 +580,11 @@ Crea un agente.
 
 Crea un workflow determinista (entrevista, validación y aprobación).
 
-**Body (JSON):** `{"descripcion", "name", "mensajes", "model", "provider", "iterate"}`.
+**Body (JSON):** `{"descripcion", "name", "mensajes", "model", "provider", "iterate", "agentes", "tools", "tool_args", "rag", "schedule"}`.
+
+`agentes`, `tools`, `tool_args` (argumentos que el usuario cargó para cada tool elegida) y `rag` vienen de las tarjetas de permisos: lo que el usuario elige es obligatorio, y el creador ve todos los agentes y tools existentes con sus parámetros y puede sumar otros.
+
+Con `schedule` (`{"enabled": true, "slots": [{"time": "09:00", "days": [1, 2]}]}`) crea una tarea programada: es el mismo prompt con la parte de la tarea programada, sin entrevista ni aprobación. `name` es obligatorio, no puede existir ya un workflow con ese nombre y el bloque `schedule` del YAML queda exactamente como se pidió.
 
 **Eventos propios:** `workflow_action`, `workflow_result_final`.
 
@@ -639,7 +606,7 @@ Exporta una conversación a Markdown.
 
 #### `GET /api/events`
 
-Stream SSE del bus de eventos. El frontend se suscribe para reaccionar a lo que ocurre fuera de su propio chat. Tipos de evento: `telegram_message`, `telegram_command`, `telegram_create`, `model_changed`, `notification` (una notificación nueva, con su contenido completo) y `workflow_run` (una ejecución cambió de estado: `{run_id, workflow, status, attempt, session_id}`).
+Stream SSE del bus de eventos. El frontend se suscribe para reaccionar a lo que ocurre fuera de su propio chat. Tipos de evento: `telegram_message`, `telegram_command`, `telegram_create`, `model_changed`, `notification` (una notificación nueva, con su contenido completo) y `workflow_run` (una ejecución cambió de estado: `{run_id, workflow, status, attempt}`).
 
 **Respuesta:** `text/event-stream` con los eventos del bus.
 
@@ -801,7 +768,7 @@ Lista los workflows con su estado.
 
 Inicia una ejecución en segundo plano. Verifica antes que existan los agentes, tools y colecciones que el workflow referencia.
 
-**Respuesta:** `{status, message, data: {run_id, session_id}}`. `404` si el workflow no existe, `400` si es inválido o faltan recursos (el mensaje dice qué falta) y `409` si ese workflow ya se está ejecutando.
+**Respuesta:** `{status, message, data: {run_id}}`. La ejecución no abre ninguna sesión. `404` si el workflow no existe, `400` si es inválido o faltan recursos (el mensaje dice qué falta) y `409` si ese workflow ya se está ejecutando.
 
 #### `DELETE /api/workflows/{name}`
 
@@ -817,7 +784,7 @@ Historial de ejecuciones, de la más reciente a la más antigua.
 
 **Parámetros (Query):** `name` (str, opcional) — filtra por workflow; `limit` (int, por defecto 50, máximo 200).
 
-**Respuesta:** `{status, runs: Run[]}`. `Run` incluye `id`, `workflow_name`, `session_id`, `source` (`play` o `tool`), `status` (`running`, `success`, `error` o `cancelled`), `attempt`, `started_at`, `finished_at`, `result` y `error_text`.
+**Respuesta:** `{status, runs: Run[]}`. `Run` incluye `id`, `workflow_name`, `parent_session_id` (la sesión del agente que la llamó, en `tool`), `source` (`play`, `tool` o `schedule`), `status` (`running`, `success`, `error` o `cancelled`), `attempt`, `started_at`, `finished_at`, `result` y `error_text`.
 
 ---
 
@@ -827,7 +794,7 @@ Notificaciones de workflows y tareas programadas. Se guardan hasta que el usuari
 
 #### `GET /api/notifications`
 
-**Respuesta:** `{status, notifications: Notification[]}`, de la más reciente a la más antigua. `Notification` incluye `id`, `kind` (`workflow` o `task`), `workflow_name` o `task_id`, `run_id`, `title`, `status`, `message`, `session_id`, `read` y `created_at`.
+**Respuesta:** `{status, notifications: Notification[]}`, de la más reciente a la más antigua. `Notification` incluye `id`, `kind` (`workflow` si se ejecutó con play, `schedule` si la lanzó el scheduler), `workflow_name`, `run_id`, `title`, `status`, `message`, `read` y `created_at`.
 
 #### `POST /api/notifications/read`
 

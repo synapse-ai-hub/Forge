@@ -148,7 +148,7 @@ Contiene módulos de soporte genéricos para el funcionamiento del agente:
 - `rag_helpers.py` — Helpers de RAG (indexación y consulta).
 - `chunking.py` — División de documentos en chunks.
 - `loop_helpers.py` — Helpers del loop (armado del system prompt, historial y ejecución de tools con verificación de permisos).
-- `scheduler_helpers.py` — Helpers de tareas programadas.
+- `scheduler_helpers.py` — Agenda: las tareas programadas son workflows cuyo YAML tiene un bloque `schedule` (`enabled` y una lista de `slots` con `time` y `days`). El loop revisa cada 20 segundos qué horarios coinciden con el minuto actual y arranca el workflow con `source = "schedule"` en el mismo motor; también arma la vista de tareas que usan las rutas y Telegram.
 - `spend_handler.py` — Registro de gasto y límites de presupuesto por proveedor y modelo.
 - `rate_limit_handler.py` — Clasificación de errores de rate limit y mensajes por proveedor.
 - `eda_figure.py` — Figuras de distribución de métricas en memoria (base64).
@@ -169,7 +169,7 @@ Todos los prompts son templates Jinja (`.jinja`) y se cargan con `agent.prompt(n
 - `title.jinja` — Generación de títulos de sesión.
 - `create_*.jinja`, `iterate_*.jinja`, `interview_*.jinja` — Prompts de creación, iteración y entrevista vía LLM (agent, skill, tool, workflow).
 - `generate_workflow.jinja` — Generación de workflows.
-- `evaluate_skills.jinja`, `explain_skill.jinja`, `craft_prompt.jinja` — Prompts auxiliares.
+- `evaluate_skills.jinja`, `explain_skill.jinja` — Prompts auxiliares. `recursos_creador.jinja` es lo que ven los creadores (todos los agentes, las tools con sus parámetros, las skills y el RAG, y lo que el usuario eligió como obligatorio); `agentes_subagente.jinja` lista los agentes a los que puede delegar un sub-agente. `system_agent_node.jinja` y `user_agent_node.jinja` arman los mensajes de un nodo `agent` de un workflow (el prompt del agente con sus skills, y el prompt del nodo con los resultados de los nodos anteriores).
 - `decision_close.jinja`, `decision_continue.jinja` — Instrucciones de las preguntas del modelo de decisión (cierre de paso y continuidad).
 
 Cada template empieza con un comentario Jinja con su nombre, descripción, versión y fecha de actualización; no forma parte del prompt renderizado.
@@ -189,12 +189,11 @@ Directorio que contiene el archivo `agent.db` con las tablas:
 - `error_log` — Registro de excepciones del backend (session_id, turn_number, exception, source, created_at).
 - `step_frontier` — Tool calls despachadas del paso en curso (`open` / `done`).
 - `workflows` — Registro de workflows; el nombre es el id y el YAML es la definición.
-- `workflow_runs` — Como `messages`: la fila de la corrida (`kind` `run`: estado, intento, sesión, resultado y explicación del error), una fila por ejecución de nodo (`node`, con `step` y `substep`) y una por llamada del motor (`decision`, `judge` con `approved`/`rejected`, `output`, `explain`), cada una con su resultado, modelo, tokens, tiempo y costo.
+- `workflow_runs` — Como `messages`: la fila de la corrida (`kind` `run`: estado, intento, resultado, explicación del error y la sesión del agente que la llamó, si la llamó uno), una fila por ejecución de nodo (`node`, con `step` y `substep`; un nodo `agent` suma sus llamadas al LLM), una por cada tool que llama un nodo `agent` (`tool`) y una por llamada del motor (`decision`, `judge` con `approved`/`rejected`, `output`, `explain`), cada una con su resultado, modelo, tokens, tiempo y costo. Un workflow o una tarea programada nunca abre una sesión ni escribe en `messages`.
 - `workflow_run_steps` — Commits por nodo (`open`, `done`, `failed`, `stale`) con el resultado completo, para retomar desde el último nodo confirmado. Se borran cuando la corrida termina bien; solo una corrida fallida o cortada los deja.
-- `notifications` — Notificaciones de workflows y tareas programadas, con FK al workflow o a la tarea y estado de lectura.
+- `notifications` — Notificaciones de workflows y tareas programadas, con FK al workflow y estado de lectura. «Revisar con el agente» es lo único que abre una sesión: una nueva, con el resultado.
 - `message_feedback` — Pulgar arriba o abajo del usuario sobre una respuesta, una fila por `(session_id, turn_number)`. Guarda también el modelo y el proveedor que respondió, y se borra con la sesión.
 - `turn_latency` — Latencia de cada turno.
-- `scheduled_tasks` y `task_runs` — Tareas programadas y sus ejecuciones.
 - `spend`, `spend_limits`, `billing` y `external_usage` — Gasto y uso por proveedor y modelo y límites de presupuesto.
 - `creators` — Todo lo que hacen los creadores (agente, skill, tool y workflow), con la forma de `messages`: una conversación (`creator_id`) es una cadena de filas `user`, `assistant`, `tool` y `result` (qué hizo, el elemento que creó o modificó y el resultado), más una fila `call` por cada llamada al LLM con sus tokens y gasto. El historial de cada creador reabre las conversaciones para seguir modificando lo creado.
 
@@ -241,10 +240,10 @@ Flujos deterministas definidos en archivos planos `~/.config/synapseForge/workfl
 
 - `workflow_validator.py` — Valida el esquema: `name`, `retries` (0–10), `on_failure` (`continue` | `abort`) y nodos de tipo `agent`, `tool`, `rag` o `run`. Cada nodo tiene `id` y `step`; el workflow tiene exactamente un nodo `final: true`. Un nodo `run` ejecuta `run` (comando de shell), con `timeout` (1000–300000 ms, 30000 por defecto) y `workdir` opcional confinado al directorio del proyecto.
 - `workflow_loader.py` — `list_workflows` y `load_workflow` con rechazo de nombres con `..` o separadores de ruta.
-- `workflow_runner.py` — `WorkflowRunner.execute_attempt` ejecuta un intento: los pasos en orden, con los nodos del mismo `step` en paralelo con barrera. Cada nodo tiene reintentos con espera exponencial; los de tipo `agent` corren en una sesión hija de la sesión del run, con los permisos de su agente. Un nodo `run` cuyo comando termina con código distinto de cero falla. Las tools se habilitan con permisos mínimos: solo las que el YAML referencia (`task` nunca se habilita; la delegación se hace con nodos `agent`). Cada nodo se confirma en `workflow_run_steps` con su resultado completo.
+- `workflow_runner.py` — `WorkflowRunner.execute_attempt` ejecuta un intento: los pasos en orden, con los nodos del mismo `step` en paralelo con barrera. Cada nodo tiene reintentos con espera exponencial; los de tipo `agent` corren en memoria, sin sesión, con el prompt, los permisos (sin `task`) y los parámetros de su agente; sus llamadas al LLM se suman en la fila del nodo y cada tool que llaman queda como una fila `tool`. Un nodo `run` cuyo comando termina con código distinto de cero falla. Las tools se habilitan con permisos mínimos: solo las que el YAML referencia (`task` nunca se habilita; la delegación se hace con nodos `agent`). Cada nodo se confirma en `workflow_run_steps` con su resultado completo.
 - `workflow_service.py` — `WorkflowService` inicia, cancela y reanuda ejecuciones:
   - Una ejecución es una tarea en segundo plano, en paralelo con el chat, el scheduler y otros workflows. Un mismo workflow no puede correr dos veces a la vez.
-  - Abre una sesión por ejecución, titulada `nombre — dd/mm/aaaa HH:MM`; las ejecuciones iniciadas desde una tool cuelgan de la sesión del agente que las llamó.
+  - No abre ninguna sesión ni escribe en `messages`: todo queda en `workflow_runs` y los commits en `workflow_run_steps`. Las ejecuciones iniciadas desde una tool guardan la sesión del agente que las llamó (`parent_session_id`).
   - Reintenta hasta 3 intentos en total, con espera exponencial (2 s y 4 s). Cada intento retoma desde el primer nodo sin resultado confirmado; un nodo que estaba en vuelo cuenta como fallido y se vuelve a ejecutar.
   - Al arrancar el backend retoma las ejecuciones que quedaron en `running`; las que llamó un agente se cierran como interrumpidas.
   - Al cancelar, la ejecución queda como `cancelled` y no genera notificación.
