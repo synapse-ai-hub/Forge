@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
-
-import yaml
 
 from backend.agent.utils.error_logger import log_error
 from backend.agent.utils import provider_keys
@@ -16,7 +15,7 @@ from backend.instances import session_manager
 logger = logging.getLogger(__name__)
 
 # Internal RAG collections the router can always query (help and conversation
-# memory), independent of ``config.yaml``.
+# memory), whatever the stored selection says.
 _ROUTER_RAG_FLOOR = {HELP_COLLECTION: "allow", MEMORY_COLLECTION: "allow"}
 
 def _resolve_tool_api_type(effective_provider: str | None) -> str:
@@ -47,40 +46,150 @@ def _resolve_tool_api_type(effective_provider: str | None) -> str:
             api_type = "unknown"
     return api_type
 
-def _load_router_permissions() -> dict | None:
-    """Load the router's permissions from ``~/.config/synapseForge/config.yaml``.
+# Columns of the ``router_config`` single-row table, in panel order.
+_ROUTER_SELECTION_KEYS = ("agentes", "tools", "skills", "rag")
 
-    Reads the ``permissions`` section (same structure as agent frontmatter:
-    ``tools``, ``skills`` and ``tasks`` sub-blocks, always plural).
+
+def _parse_name_list(raw: Any) -> list[str]:
+    """Parse a ``router_config`` column into a sorted list of names.
+
+    Args:
+        raw: Column value (a JSON array stored as text).
 
     Returns:
-        The ``permissions`` dict, or ``None`` if the file does not exist,
-        has no ``permissions`` section, or cannot be read.
+        Sorted, de-duplicated list of non-empty names (empty when the
+        value is missing or unparseable).
     """
-    from backend.agent.utils.config_dir import get_config_dir
-
-    cfg_path = get_config_dir() / "config.yaml"
-    if not cfg_path.is_file():
-        return None
+    if not isinstance(raw, str) or not raw:
+        return []
     try:
-        with open(cfg_path, encoding="utf-8") as f:
-            data = yaml.safe_load(f) or {}
-    except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
-        log_error(str(exc), source="loop.py:_load_router_permissions")
+        value = json.loads(raw)
+    except (ValueError, TypeError):
+        return []
+    if not isinstance(value, list):
+        return []
+    return sorted({str(n) for n in value if isinstance(n, str) and n})
+
+
+def load_router_selection_with_source() -> tuple[dict[str, list[str]] | None, str]:
+    """Load the router's selection and report where it came from.
+
+    Reads the single row of the ``router_config`` table (written by the
+    sidebar panel). There is no file fallback: without a row the floor
+    defaults apply.
+
+    Returns:
+        A ``(selection, source)`` tuple: the ``{"agentes", "tools",
+        "skills", "rag"}`` lists (or ``None`` when no row exists) and
+        ``source`` (``"db"`` or ``"floor"``).
+    """
+    try:
+        row = session_manager.get_router_config()
+    except Exception as exc:
+        log_error(str(exc), source="loop/helpers.py:load_router_selection(db)")
+        row = None
+    if row is None:
+        return None, "floor"
+    selection: dict[str, list[str]] = {}
+    corrupt: list[str] = []
+    for key in _ROUTER_SELECTION_KEYS:
+        raw = row.get(key)
+        parsed = _parse_name_list(raw)
+        selection[key] = parsed
+        if not parsed and isinstance(raw, str) and raw.strip() not in ("", "[]"):
+            corrupt.append(key)
+    if corrupt:
+        log_error(
+            "router_config has unparseable JSON in column(s): " + ", ".join(corrupt),
+            source="loop/helpers.py:load_router_selection",
+        )
+    if len(corrupt) == len(_ROUTER_SELECTION_KEYS):
+        return None, "floor"
+    return selection, "db"
+
+
+def _load_router_permissions() -> dict[str, Any] | None:
+    """Load the router's permissions from the ``router_config`` table.
+
+    Returns:
+        The permissions dict (``tools``, ``tasks``, ``skills`` and
+        ``rag`` sub-blocks mapping names to ``"allow"``), or ``None``
+        when no row exists (floor defaults apply). See
+        :func:`load_router_selection_with_source` for the source-aware
+        variant.
+    """
+    selection, _ = load_router_selection_with_source()
+    if selection is None:
         return None
-    perms = data.get("permissions")
-    return perms if isinstance(perms, dict) else None
+    return selection_to_router_perms(selection)
 
 
-def _router_tool_permissions(router_perms: dict | None) -> dict:
+def save_router_selection(selection: dict[str, Any]) -> bool:
+    """Persist the router's selection in the ``router_config`` table.
+
+    Args:
+        selection: ``{"agentes", "tools", "skills", "rag"}`` lists of
+            names (non-string or empty items are dropped).
+
+    Returns:
+        ``True`` when the row was stored.
+    """
+    try:
+        payload = {
+            key: json.dumps(
+                sorted(
+                    {
+                        str(n)
+                        for n in (selection.get(key) or [])
+                        if isinstance(n, str) and n
+                    }
+                )
+            )
+            for key in _ROUTER_SELECTION_KEYS
+        }
+        result = session_manager.save_router_config(
+            payload["agentes"], payload["tools"], payload["skills"], payload["rag"]
+        )
+        return isinstance(result, dict) and result.get("status") == "success"
+    except Exception as exc:
+        log_error(str(exc), source="loop/helpers.py:save_router_selection")
+        return False
+
+
+def selection_to_router_perms(selection: dict[str, Any]) -> dict[str, dict[str, str]]:
+    """Convert the pick lists of the sidebar panel to a permissions dict.
+
+    Args:
+        selection: ``{"agentes", "tools", "skills", "rag"}`` lists of names.
+
+    Returns:
+        Permissions dict (names mapped to ``"allow"``).
+    """
+    def _allow(names: Any) -> dict[str, str]:
+        if not isinstance(names, list):
+            return {}
+        return {str(n): "allow" for n in names if isinstance(n, str) and n}
+
+    return {
+        "tools": _allow(selection.get("tools")),
+        "tasks": _allow(selection.get("agentes")),
+        "skills": _allow(selection.get("skills")),
+        "rag": _allow(selection.get("rag")),
+    }
+
+
+def _router_tool_permissions(router_perms: dict[str, Any] | None) -> dict[str, Any]:
     """Resolve the router's tool permissions.
 
-    If ``config.yaml`` defines permissions they are used exclusively: ``tools``
-    become flat permissions, ``tasks`` the nested ``task`` permission and
-    ``workflows`` the nested ``workflow`` permission. Without ``config.yaml``
-    the guaranteed floor tools are used. In both cases the internal RAG
-    collections (``_ROUTER_RAG_FLOOR``) are always readable, whatever the
-    yaml says.
+    If permissions are defined (single row of the ``router_config``
+    table) they are used exclusively: ``tools`` become flat permissions,
+    ``tasks`` the nested ``task`` permission and ``rag`` the nested
+    ``rag`` permission. Without permissions the guaranteed floor tools
+    are used. In both cases the internal RAG collections
+    (``_ROUTER_RAG_FLOOR``) are always readable, whatever the stored
+    selection says. Non-dict values and a legacy ``workflows`` key are
+    tolerated (the table never produces them): only dict values are
+    applied.
 
     Args:
         router_perms: Result of :func:`_load_router_permissions`.
@@ -88,8 +197,8 @@ def _router_tool_permissions(router_perms: dict | None) -> dict:
     Returns:
         The tool permission dict for ``tools_registry``.
     """
-    if router_perms is None:
-        tool_permissions: dict = {
+    if not router_perms:
+        tool_permissions: dict[str, Any] = {
             "task": "allow",
             "search_memory": "allow",
             "read": "allow",
@@ -98,21 +207,25 @@ def _router_tool_permissions(router_perms: dict | None) -> dict:
         }
     else:
         tool_permissions = {}
-        for name, action in (router_perms.get("tools") or {}).items():
-            tool_permissions[name] = action
+        tools_perms = router_perms.get("tools")
+        if isinstance(tools_perms, dict):
+            for name, action in tools_perms.items():
+                tool_permissions[name] = action
         tasks_perms = router_perms.get("tasks")
         if isinstance(tasks_perms, dict) and tasks_perms:
             tool_permissions["task"] = tasks_perms
         workflows_perms = router_perms.get("workflows")
         if isinstance(workflows_perms, dict) and workflows_perms:
             tool_permissions["workflow"] = workflows_perms
+        rag_perms = router_perms.get("rag")
+        if isinstance(rag_perms, dict):
+            tool_permissions["rag"] = rag_perms
 
-    # Floor that is never removed nor overridden by the yaml. A flat
-    # ``rag: allow`` already covers every collection, so it is kept as is.
+    # Floor that is never removed nor overridden by the stored selection.
     rag_perms = tool_permissions.get("rag")
     if isinstance(rag_perms, dict):
         tool_permissions["rag"] = {**rag_perms, **_ROUTER_RAG_FLOOR}
-    elif rag_perms != "allow":
+    else:
         tool_permissions["rag"] = dict(_ROUTER_RAG_FLOOR)
     return tool_permissions
 

@@ -444,6 +444,17 @@ Table notifications {
   Note: 'Notifications of finished workflow runs, whether the user played them or the scheduler started them. kind: workflow (played by the user) | schedule (started by the scheduler). run_id: workflow_runs.run_id of the run, to open its detail; it has no foreign key because workflow_runs has many rows per run and no column is unique to reference. status: success | error. read: 0 unread, 1 read. A run never opens a session: "Revisar con el agente" opens a new one with the output, and the notification does not keep it.'
 }
 
+Table router_config {
+  id integer [pk, increment, note: 'always 1: single-row table']
+  agentes text [not null, default: `'[]'`, note: 'JSON array of allowed sub-agent names']
+  tools text [not null, default: `'[]'`, note: 'JSON array of allowed tool names']
+  skills text [not null, default: `'[]'`, note: 'JSON array of allowed skill names']
+  rag text [not null, default: `'[]'`, note: 'JSON array of allowed RAG collection names']
+  updated_at text [not null, note: 'local time of the last change']
+
+  Note: 'Router permissions edited in the sidebar panel. Single row (id = 1); each column holds a JSON array of allowed names. No row (or all columns empty) means the floor defaults.'
+}
+
 Ref: sessions.parent_id > sessions.session_id [delete: cascade]
 Ref: messages.session_id > sessions.session_id [delete: cascade]
 Ref: turn_latency.session_id > sessions.session_id [delete: cascade]

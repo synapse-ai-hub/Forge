@@ -58,12 +58,16 @@ def get_skills_list() -> list[dict[str, str]]:
     return result
 
 
-def get_tools_list() -> list[dict[str, Any]]:
+def get_tools_list(include_mcp: bool = False) -> list[dict[str, Any]]:
     """Return all available tools from the agent's registry.
 
     Reads the already-built ``_tools_registry`` (native + external tools)
     **without** applying any permission filtering. MCP tools are excluded
-    here because they are managed separately via the MCP endpoint.
+    by default because they are managed separately via the MCP endpoint.
+
+    Args:
+        include_mcp: When ``True``, MCP tools are listed too (the router
+            panel needs them to pick which ones the router may use).
 
     Returns:
         List of tool dicts with ``name``, ``description`` and ``parameters`` (the JSON
@@ -78,7 +82,7 @@ def get_tools_list() -> list[dict[str, Any]]:
         func = entry.get("function", {})
         name = func.get("name", "")
         description = func.get("description", "")
-        if name and not is_mcp_tool(name):
+        if name and (include_mcp or not is_mcp_tool(name)):
             result.append({
                 "name": name,
                 "description": description,

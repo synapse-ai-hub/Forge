@@ -398,13 +398,13 @@ class AgentLoop:
             temp_path = str(temp_dir)
             
 
-            # Router permissions (config.yaml) are read once: tools and tasks are
-            # resolved below, skills are injected into the system prompt.
+            # Router permissions (router_config table) are read once: tools and
+            # tasks are resolved below, skills are injected into the system prompt.
             router_perms = _load_router_permissions() if agent_name is None else None
 
             # --- 2. Resolve tools (before the prompt: the router prompt depends on them) ---
             if agent_name is None:
-                # Router: config.yaml permissions replace the floor tools.
+                # Router: stored selection replaces the floor tools.
                 tool_permissions = _router_tool_permissions(router_perms)
                 try:
                     tools = list(agent.tools.tools_registry(tool_permissions))
@@ -440,7 +440,7 @@ class AgentLoop:
                 )
 
             # Sub-agents get their skills/agents appended (the router lists its
-            # agents in build_system_prompt; its skills come from config.yaml).
+            # agents in build_system_prompt; its skills come from the stored selection).
             if agent_name is not None:
                 skills_section = format_skills_section(skill_permissions=skill_permissions)
                 # Only the agents its ``task`` permission allows (none without it).
@@ -455,8 +455,8 @@ class AgentLoop:
                     f"{agents_section}"
                 )
             elif router_perms is not None:
-                # Router: no skills by default. If config.yaml lists skills,
-                # they are injected like a sub-agent's.
+                # Router: no skills by default. If the stored selection lists
+                # skills, they are injected like a sub-agent's.
                 router_skills = router_perms.get("skills")
                 if isinstance(router_skills, dict) and router_skills:
                     skills_section = format_skills_section(skill_permissions=router_skills)

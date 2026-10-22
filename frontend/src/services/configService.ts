@@ -346,9 +346,12 @@ export const configService = {
     return data.skills || [];
   },
 
-  /** List all available tools (native + external, no MCP). */
-  async getTools(): Promise<ToolInfo[]> {
-    const response = await fetch(`${API_BASE_URL}/api/config/tools`, {
+  /** List all available tools (native + external, no MCP unless asked). */
+  async getTools(includeMcp = false): Promise<ToolInfo[]> {
+    const url = includeMcp
+      ? `${API_BASE_URL}/api/config/tools?include_mcp=true`
+      : `${API_BASE_URL}/api/config/tools`;
+    const response = await fetch(url, {
       method: "GET",
     });
     if (!response.ok) {
@@ -356,6 +359,42 @@ export const configService = {
     }
     const data = await response.json();
     return data.tools || [];
+  },
+
+  /** Router selection picked in the sidebar panel + where it comes from. */
+  async getRouter(): Promise<{
+    status: string;
+    selection: { agentes: string[]; tools: string[]; skills: string[]; rag: string[] };
+    source: "db" | "floor";
+  }> {
+    const response = await fetch(`${API_BASE_URL}/api/config/router`, {
+      method: "GET",
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    return response.json();
+  },
+
+  /** Save the router selection picked in the sidebar panel. */
+  async saveRouter(selection: {
+    agentes: string[];
+    tools: string[];
+    skills: string[];
+    rag: string[];
+  }): Promise<void> {
+    const response = await fetch(`${API_BASE_URL}/api/config/router`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(selection),
+    });
+    const result = await response.json().catch(() => null);
+    if (!response.ok || (result && result.status === "error")) {
+      const detail = result && Array.isArray(result.detail)
+        ? result.detail.map((d: { loc?: string[]; msg?: string }) => `${(d.loc || []).join(".")}: ${d.msg || ""}`).join("; ")
+        : null;
+      throw new Error((result && result.message) || detail || `HTTP ${response.status}`);
+    }
   },
 
   /** Force rebuild of the tools registry and return updated list. */

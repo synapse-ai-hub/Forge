@@ -6,9 +6,9 @@ from __future__ import annotations
 
 # Tool schema for the router agent (agent_name=None). Fallback only: the
 # router's tools are normally resolved from the tools registry via its
-# permissions (the base tools task, search_memory, read, websearch and
-# webfetch without config.yaml; exactly the ones the yaml lists with it; rag
-# on the internal collections is always added).
+# permissions (the floor tools task, search_memory, read, websearch and
+# webfetch without a stored selection; exactly the ones the selection lists
+# with it; rag on the internal collections is always added).
 _ROUTER_TOOLS = [
     {
         "type": "function",
