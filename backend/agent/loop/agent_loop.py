@@ -57,11 +57,9 @@ from backend.agent.utils.error_logger import (
 from backend.agent.utils.skill_loader import format_skills_section
 from backend.agent.utils.contract import zero_usage
 from backend.agent.permissions import (
-    list_agents,
     get_tool_permissions,
     get_skill_permissions,
     get_agent_parameters,
-    wildcard_match,
 )
 from backend.agent.utils.clean_memory import liberar_modelo
 from backend.instances import agent, session_manager
@@ -72,6 +70,7 @@ from backend.agent.utils.loop_helpers import (
     execute_tool,
     fetch_context_window_turns,
     format_workflows_section,
+    router_agents,
 )
 from backend.agent.utils.model_resolver import (
     ensure_context_window,
@@ -444,25 +443,16 @@ class AgentLoop:
             # agents in build_system_prompt; its skills come from config.yaml).
             if agent_name is not None:
                 skills_section = format_skills_section(skill_permissions=skill_permissions)
-                agents_result = list_agents()
-                all_agents = (
-                    json.loads(agents_result["data"])
-                    if agents_result.get("status") == "success"
-                    else []
-                )
-                # Filtrar agentes según task permissions (solo mostrar los que puede llamar)
+                # Only the agents its ``task`` permission allows (none without it).
                 task_perms = (tool_permissions or {}).get("task", {})
-                agents = [
-                    a for a in all_agents
-                    if isinstance(task_perms, dict) and any(
-                        action == "allow" and wildcard_match(key, a["name"])
-                        for key, action in task_perms.items()
-                    )
-                ]
+                agents_section = agent.prompt(
+                    "agentes_subagente",
+                    agentes=router_agents(("task",) if task_perms else (), task_perms),
+                )
                 system_prompt = (
                     f"{system_prompt}\n\n"
                     f"## Skills Disponibles\n{skills_section}\n\n"
-                    f"## Agentes Disponibles\n{agents}"
+                    f"{agents_section}"
                 )
             elif router_perms is not None:
                 # Router: no skills by default. If config.yaml lists skills,

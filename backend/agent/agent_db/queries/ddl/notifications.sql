@@ -1,27 +1,20 @@
--- Notifications of finished workflow runs and scheduled-task executions.
--- Exactly one of workflow_name / task_id is set (FK to the PK of each table).
--- run_id: workflow_runs.run_id or task_runs.id (as text) to open the detail; it has no foreign
--- key because it points to one table or the other depending on kind.
--- status: success | error. read: 0 unread, 1 read.
+-- Notifications of finished workflow runs, whether the user played them or the scheduler started them.
+-- kind: workflow (played by the user) | schedule (started by the scheduler).
+-- run_id: workflow_runs.run_id of the run, to open its detail; it has no foreign key because
+-- workflow_runs has many rows per run and no column is unique to reference.
+-- status: success | error. read: 0 unread, 1 read. A run never opens a session: "Revisar con el agente"
+-- opens a new one with the output, and the notification does not keep it.
 CREATE TABLE IF NOT EXISTS notifications (
     id INTEGER PRIMARY KEY AUTOINCREMENT,  -- internal row id
-    kind TEXT NOT NULL,  -- workflow | task
-    workflow_name TEXT,  -- workflow that finished (kind workflow)
-    task_id TEXT,  -- scheduled task that finished (kind task)
-    run_id TEXT,  -- id of the run in workflow_runs (run_id) or task_runs (id)
-    title TEXT NOT NULL,  -- workflow or task name shown in the bell
+    kind TEXT NOT NULL,  -- workflow | schedule
+    workflow_name TEXT NOT NULL,  -- workflow that finished
+    run_id TEXT,  -- id of the run in workflow_runs (run_id)
+    title TEXT NOT NULL,  -- workflow name shown in the bell
     status TEXT NOT NULL,  -- success | error
     message TEXT,  -- short text of the result or the failure explanation
-    session_id TEXT,  -- session of the execution, while it exists
     read INTEGER NOT NULL DEFAULT 0,  -- 0 unread, 1 read
     created_at TEXT NOT NULL,  -- local time, ISO format
-    CHECK (
-        (workflow_name IS NOT NULL AND task_id IS NULL)
-        OR (workflow_name IS NULL AND task_id IS NOT NULL)
-    ),
-    FOREIGN KEY (workflow_name) REFERENCES workflows(name),
-    FOREIGN KEY (task_id) REFERENCES scheduled_tasks(id),
-    FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE SET NULL
+    FOREIGN KEY (workflow_name) REFERENCES workflows(name)
 );
 
 CREATE INDEX IF NOT EXISTS idx_notifications_read ON notifications(read);

@@ -13,7 +13,7 @@ Scenario YAML schema (extends the e2e ``request`` action)::
 
     scenario: unique-name
     description: What this scenario verifies.
-    cleanup: true                      # delete the notifications and run sessions it created
+    cleanup: true                      # delete the notifications it created (a run opens no session)
     verify:
       workflow: e2e-test-workflow      # must appear in GET /api/workflows
     steps:
@@ -94,8 +94,7 @@ def run_play_step(
     Args:
         base_url: Backend base URL.
         step: ``run`` step definition (see the module docstring).
-        tracked: Names of the workflows and ids of the sessions the scenario
-            created (mutated, used by the cleanup).
+        tracked: Names of the workflows the scenario ran (mutated, used by the cleanup).
 
     Returns:
         List of human-readable failure descriptions (empty = pass).
@@ -125,8 +124,6 @@ def run_play_step(
     data = payload.get("data") or {}
     run_id = str(data.get("run_id", ""))
     tracked["names"].add(name)
-    if data.get("session_id"):
-        tracked["sessions"].add(str(data["session_id"]))
 
     cancel_after = step.get("cancel_after")
     started = time.time()
@@ -214,7 +211,7 @@ def cleanup_scenario(base_url: str, tracked: dict[str, set[str]]) -> None:
 
     Args:
         base_url: Base URL of the backend.
-        tracked: Workflow names and session ids the scenario created, under ``names`` and ``sessions``.
+        tracked: Workflow names the scenario ran, under ``names``.
     """
     try:
         notifications = requests.get(f"{base_url}/api/notifications", timeout=30).json().get(
@@ -225,11 +222,6 @@ def cleanup_scenario(base_url: str, tracked: dict[str, set[str]]) -> None:
                 requests.delete(f"{base_url}/api/notifications/{notification['id']}", timeout=30)
     except (requests.RequestException, ValueError):
         pass
-    for session_id in tracked["sessions"]:
-        try:
-            requests.delete(f"{base_url}/api/sessions/{session_id}", timeout=30)
-        except requests.RequestException:
-            pass
 
 
 def run_scenario(base_url: str, scenario: dict[str, Any]) -> dict[str, Any]:
@@ -243,7 +235,7 @@ def run_scenario(base_url: str, scenario: dict[str, Any]) -> dict[str, Any]:
         Result dict: ``{"scenario", "file", "passed", "failures", "steps"}``.
     """
     variables: dict[str, str] = {}
-    tracked: dict[str, set[str]] = {"names": set(), "sessions": set()}
+    tracked: dict[str, set[str]] = {"names": set()}
     step_results: list[dict[str, Any]] = []
     all_failures: list[str] = []
 

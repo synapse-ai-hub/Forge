@@ -1,9 +1,9 @@
-"""Persisted notifications of workflow runs and scheduled-task executions.
+"""Persisted notifications of workflow runs (played by the user or started by the scheduler).
 
-One table (``notifications``) holds both kinds. Exactly one of
-``workflow_name`` / ``task_id`` is set (FK to the PK of each table). A new
-notification is also pushed to the web UI through the event bus
-(``notification`` event) so the header bell updates live.
+One table (``notifications``) holds them; ``kind`` tells whether the run was played
+(``workflow``) or started by the scheduler (``schedule``). A new notification is also
+pushed to the web UI through the event bus (``notification`` event) so the header bell
+updates live.
 
 All functions never raise and log failures. Timestamps are local time.
 """
@@ -39,12 +39,10 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         "id": row["id"],
         "kind": row["kind"],
         "workflow_name": row["workflow_name"],
-        "task_id": row["task_id"],
         "run_id": row["run_id"],
         "title": row["title"],
         "status": row["status"],
         "message": row["message"] or "",
-        "session_id": row["session_id"],
         "read": bool(row["read"]),
         "created_at": row["created_at"],
     }
@@ -89,21 +87,17 @@ def add_notification(
     status: str,
     message: str,
     run_id: str | None = None,
-    session_id: str | None = None,
     workflow_name: str | None = None,
-    task_id: str | None = None,
 ) -> dict[str, Any] | None:
     """Persist a notification.
 
     Args:
-        kind: ``"workflow"`` or ``"task"``.
-        title: Workflow name or task name shown in the bell.
+        kind: ``"workflow"`` (played by the user) or ``"schedule"`` (started by the scheduler).
+        title: Workflow name shown in the bell.
         status: ``"success"`` or ``"error"``.
         message: Plain-language result or explanation for the user.
-        run_id: ``workflow_runs.run_id`` or ``task_runs.id`` (as text).
-        session_id: Session holding the execution, to open it.
-        workflow_name: FK to ``workflows.name`` (workflow kind only).
-        task_id: FK to ``scheduled_tasks.id`` (task kind only).
+        run_id: ``workflow_runs.run_id`` of the run.
+        workflow_name: FK to ``workflows.name``; the notification is not stored without it.
 
     Returns:
         The stored notification, or ``None`` when it could not be stored.
@@ -113,7 +107,7 @@ def add_notification(
         with db_transaction() as conn:
             cur = conn.execute(
                 load_query("notifications/insert.sql"),
-                (kind, workflow_name, task_id, run_id, title, status, message, session_id, now),
+                (kind, workflow_name, run_id, title, status, message, now),
             )
             new_id = cur.lastrowid
         return get_notification(new_id)
@@ -192,14 +186,37 @@ def clear_notifications() -> bool:
         return False
 
 
-def delete_task_notifications(task_id: str) -> None:
-    """Remove the notifications of a deleted scheduled task.
+async def notify_telegram(status: str, prompt: str, detail: str, finished_local: str) -> None:
+    """Send the result of a scheduled run to every allowed Telegram chat.
+
+    Sent unconditionally (even when the bot toggle is off): the toggle only
+    controls whether Telegram works as a chat channel, but scheduled-task
+    notifications must always arrive.
 
     Args:
-        task_id: Id of the deleted task.
+        status: ``"success"`` or ``"error"``.
+        prompt: What the task does (the description of the workflow).
+        detail: Result summary (final answer or error message).
+        finished_local: Human-readable local finish timestamp.
     """
     try:
-        with db_transaction() as conn:
-            conn.execute(load_query("notifications/delete_by_task.sql"), (task_id,))
+        from backend.telegram.instance import telegram_bot
+
+        if not telegram_bot.token:
+            return
+        icon = "✅" if status == "success" else "❌"
+        header = "Tarea programada ejecutada" if status == "success" else "Tarea programada fallida"
+        lines = [
+            f"{icon} {header}",
+            f"Tarea: {prompt}",
+            f"Fecha y hora: {finished_local}",
+        ]
+        if detail:
+            summary = detail if len(detail) <= 500 else f"{detail[:500]}…"
+            lines.append(f"Resultado: {summary}")
+        text = "\n".join(lines)
+        for chat_id in telegram_bot.allowed_chat_ids:
+            await telegram_bot.send_message(chat_id, text)
     except Exception as exc:
-        log_error(str(exc), source="notifications_helpers.py:delete_task_notifications")
+        log_error(str(exc), source="notifications_helpers.py:notify_telegram")
+        logger.warning("Failed to notify Telegram about a scheduled run: %s", exc)

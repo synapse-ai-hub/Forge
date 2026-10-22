@@ -1,4 +1,4 @@
--- Persist a notification (workflow run or scheduled task).
+-- Persist a notification of a workflow run.
 INSERT INTO notifications
-(kind, workflow_name, task_id, run_id, title, status, message, session_id, read, created_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?);
+(kind, workflow_name, run_id, title, status, message, read, created_at)
+VALUES (?, ?, ?, ?, ?, ?, 0, ?);

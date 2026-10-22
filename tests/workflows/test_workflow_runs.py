@@ -129,8 +129,8 @@ nodes:
 """)
 
 
-def test_success_persists_run_steps_session_and_notification(env: WorkflowEnv) -> None:
-    """Success persists run steps session and notification.
+def test_success_persists_run_and_notification_without_a_session(env: WorkflowEnv) -> None:
+    """Success persists the run and its notification, and never opens a session nor writes in messages.
 
     Args:
         env: Workflow service, workflow writer, database query function and temporary directory.
@@ -166,8 +166,8 @@ def test_success_persists_run_steps_session_and_notification(env: WorkflowEnv) -
     ]
     assert query("select name from workflows") == [{"name": "ok-flow"}]
 
-    session = query("select title,parent_id from sessions where session_id=?", (started["run_id"],))[0]
-    assert session["parent_id"] is None and session["title"].startswith("ok-flow — ")
+    assert query("select session_id from sessions") == [], "a run never opens a session"
+    assert query("select id from messages") == [], "a run never writes in messages"
 
     notifications = notifications_helpers.list_notifications()
     assert len(notifications) == 1
@@ -325,9 +325,7 @@ def test_interrupted_run_resumes_from_the_last_committed_node(env: WorkflowEnv) 
     """
     svc, write, query, _ = env
     _simple_flow(write)
-    run_id = workflow_db.create_run("ok-flow", None, None, "play")
-    session_manager.create_session(run_id, metadata={"source": "workflow"})
-    workflow_db.set_run_session(run_id, run_id)
+    run_id = workflow_db.create_run("ok-flow", None, "play")
     first = workflow_db.open_step(run_id, 1, 1, 0, "a", "run", {})
     workflow_db.commit_step(first, '"A"')
     workflow_db.open_step(run_id, 1, 1, 1, "b", "run", {})  # in flight when the backend died
@@ -354,8 +352,8 @@ def test_interrupted_run_resumes_from_the_last_committed_node(env: WorkflowEnv) 
     ]
 
 
-def test_workflow_tool_respects_permissions_and_hangs_from_the_caller(env: WorkflowEnv) -> None:
-    """Workflow tool respects permissions and hangs from the caller.
+def test_workflow_tool_respects_permissions_and_keeps_the_caller(env: WorkflowEnv) -> None:
+    """Workflow tool respects permissions and keeps the caller session in the run, without opening one.
 
     Args:
         env: Workflow service, workflow writer, database query function and temporary directory.
@@ -385,8 +383,9 @@ def test_workflow_tool_respects_permissions_and_hangs_from_the_caller(env: Workf
     allowed, denied = _run(go())
     assert allowed["status"] == "success" and "<workflow id=" in allowed["data"]
     assert denied["status"] == "error" and "Permission denied" in denied["message"]
-    child = query("select parent_id from sessions where parent_id='caller-1'")
-    assert len(child) == 1, "the run session hangs from the caller session"
+    assert query("select session_id from sessions") == [{"session_id": "caller-1"}], "a run never opens a session"
+    run = query("select parent_session_id from workflow_runs where kind='run' and workflow_name='ok-flow'")
+    assert run == [{"parent_session_id": "caller-1"}], "the run keeps the session of the caller"
     assert notifications_helpers.list_notifications() == [], "runs called by an agent do not notify"
 
 
@@ -435,7 +434,7 @@ def test_notification_requires_exactly_one_origin(env: WorkflowEnv) -> None:
     _, _, _, _ = env
     assert notifications_helpers.add_notification("workflow", "x", "success", "m") is None
     assert notifications_helpers.add_notification(
-        "workflow", "x", "success", "m", workflow_name="wf", task_id="t") is None
+        "workflow", "x", "success", "m", workflow_name="not-registered") is None
 
 
 def test_agent_frontmatter_workflows_block_becomes_the_workflow_permission(

@@ -8,7 +8,7 @@ from typing import Any
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
-from backend.instances import agent, session_manager
+from backend.instances import agent
 from backend.agent.utils.error_logger import log_error
 
 router = APIRouter()
@@ -141,9 +141,7 @@ async def generate_workflow_endpoint(payload: dict[str, Any]) -> JSONResponse:
         A JSONResponse with the generated YAML or the error.
     """
     try:
-        import json as _json
         import re as _re
-        import uuid as _uuid
 
         description = str((payload or {}).get("description", "")).strip()
         if not description:
@@ -151,52 +149,40 @@ async def generate_workflow_endpoint(payload: dict[str, Any]) -> JSONResponse:
                 status_code=400,
                 content={"status": "error", "message": "Campo 'description' requerido."},
             )
-        from backend.agent.loop import AgentLoop
+        from backend.agent.utils.create_helpers import build_resource_context, stream_tool_calling_loop
 
         try:
-            system_prompt = agent.prompt("generate_workflow")
+            system_prompt = agent.prompt("generate_workflow", **await build_resource_context())
         except FileNotFoundError:
             logger.exception("Prompt generate_workflow.md no encontrado.")
             return JSONResponse(
                 status_code=500,
                 content={"status": "error", "message": "No se pudo iniciar la generación."},
             )
-        transient_id = f"workflow-generate:{_uuid.uuid4().hex[:8]}"
-        try:
-            create_res = session_manager.create_session(transient_id)
-            if create_res.get("status") != "success":
-                raise RuntimeError("transient session")
-        except Exception as exc:
-            log_error(str(exc), source="backend/routes/config.py:generate_workflow")
-            return JSONResponse(
-                status_code=500,
-                content={"status": "error", "message": "No se pudo iniciar la generación."},
-            )
-        loop = AgentLoop(agent=agent, session_manager=session_manager)
+        # A creator never opens a session nor writes in messages: the call runs
+        # in memory and its spend is recorded in creators.
+        msgs = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Descripción del workflow: {description}"},
+        ]
         collected = ""
+        failure = ""
         try:
-            async for sse in loop.run(
-                session_id=transient_id,
-                user_message=f"Descripción del workflow: {description}",
-                system_prompt=system_prompt,
+            async for event in stream_tool_calling_loop(
+                msgs, [], "El agente no pudo generar el workflow.",
             ):
-                # Keep consuming after [DONE]: the loop still runs its
-                # closing steps.
-                if sse.strip() == "data: [DONE]":
-                    continue
-                if sse.startswith("data: "):
-                    try:
-                        event = _json.loads(sse[len("data: "):].strip())
-                    except (ValueError, TypeError):
-                        continue
-                    if event.get("type") == "chunk":
-                        collected += event.get("content", "")
+                if event["type"] == "chunk":
+                    collected += event.get("content", "")
+                elif event["type"] in ("error", "aborted"):
+                    failure = str(event.get("content") or "")
         except Exception as exc:
             log_error(str(exc), source="backend/routes/config.py:generate_workflow")
             return JSONResponse(
                 status_code=500,
                 content={"status": "error", "message": "El agente no pudo generar el workflow."},
             )
+        if failure:
+            return JSONResponse(status_code=500, content={"status": "error", "message": failure})
         match = _re.search(r"```yaml\s*(.*?)```", collected, _re.DOTALL)
         raw = match.group(1).strip() if match else collected.strip()
         if not raw:

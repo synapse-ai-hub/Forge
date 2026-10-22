@@ -5,21 +5,25 @@ import { API_BASE_URL } from "../config/api";
 /** A finished workflow run or scheduled-task execution. */
 export interface AppNotification {
   id: number;
-  kind: "workflow" | "task";
+  kind: "workflow" | "schedule";
   /** Workflow name or task name. */
   title: string;
   status: "success" | "error";
   /** Plain-language result or explanation for the user. */
   message: string;
   run_id: string | null;
-  session_id: string | null;
   workflow_name: string | null;
-  task_id: string | null;
   read: boolean;
   /** Local time, ISO format. */
   created_at: string;
 }
 
+/**
+ * List the notifications, newest first.
+ *
+ * @returns The notifications, or an empty list when there are none.
+ * @throws Error when the request fails.
+ */
 async function list(): Promise<AppNotification[]> {
   const res = await fetch(`${API_BASE_URL}/api/notifications`);
   if (!res.ok) throw new Error("Error obteniendo las notificaciones");
@@ -33,6 +37,12 @@ async function markAllRead(): Promise<void> {
   if (!res.ok) throw new Error("Error marcando las notificaciones como leídas");
 }
 
+/**
+ * Delete one notification.
+ *
+ * @param id - Id of the notification.
+ * @throws Error when it cannot be deleted.
+ */
 async function remove(id: number): Promise<void> {
   const res = await fetch(`${API_BASE_URL}/api/notifications/${id}`, { method: "DELETE" });
   if (!res.ok) {

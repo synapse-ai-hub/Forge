@@ -64,16 +64,17 @@ def test_notifications_origin_is_enforced_by_the_table(env: WorkflowEnv) -> None
     _, _, query, tmp = env
     workflow_db.ensure_workflow("wf")
     conn = sqlite3.connect(str(tmp / "agent.db"))
+    conn.execute("PRAGMA foreign_keys=ON")
     insert = (
-        "insert into notifications (kind,workflow_name,task_id,title,status,created_at) "
-        "values ('workflow',?,?,'t','success','2026-01-01T00:00:00')"
+        "insert into notifications (kind,workflow_name,title,status,created_at) "
+        "values ('workflow',?,'t','success','2026-01-01T00:00:00')"
     )
     try:
         with pytest.raises(sqlite3.IntegrityError):
-            conn.execute(insert, ("wf", "task-1"))  # both origins
+            conn.execute(insert, (None,))  # no workflow
         with pytest.raises(sqlite3.IntegrityError):
-            conn.execute(insert, (None, None))  # no origin
-        conn.execute(insert, ("wf", None))
+            conn.execute(insert, ("unknown",))  # a workflow that is not registered
+        conn.execute(insert, ("wf",))
         conn.commit()
     finally:
         conn.close()
@@ -801,31 +802,202 @@ def test_notifications_api_unread_count_read_and_delete(env: WorkflowEnv) -> Non
     assert client.get("/api/notifications").json()["notifications"] == []
 
 
-def test_deleting_a_scheduled_task_removes_only_its_notifications(
-    env: WorkflowEnv,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+SCHEDULED_FLOW = """
+name: {name}
+description: dos nodos y un horario
+schedule:
+  enabled: {enabled}
+  slots:
+{slots}
+nodes:
+- {{id: a, type: run, step: 1, run: 'echo A', final: true}}
+"""
+"""Workflow with a ``schedule`` block; ``slots`` is already indented YAML."""
+
+
+def _write_scheduled(
+    write: Callable[[str, str], None],
+    name: str,
+    slots: str,
+    enabled: str = "true",
 ) -> None:
-    """Deleting a scheduled task removes only its notifications.
+    """Write a scheduled workflow.
+
+    Args:
+        write: Function that writes a workflow YAML.
+        name: Workflow name.
+        slots: YAML of the slots, indented under ``slots:``.
+        enabled: ``true`` or ``false``.
+    """
+    write(name, SCHEDULED_FLOW.format(name=name, enabled=enabled, slots=slots))
+
+
+def test_schedule_block_is_validated() -> None:
+    """The schedule block accepts a list of slots and rejects the invalid ones."""
+    from backend.agent.utils.workflow_validator import normalize_schedule
+
+    ok, error = normalize_schedule({"enabled": True, "slots": [{"time": "09:00", "days": [3, 1, 1]}]})
+    assert error is None and ok == {"enabled": True, "slots": [{"time": "09:00", "days": [1, 3]}]}
+    assert normalize_schedule(None) == (None, None)
+    for bad in (
+        "9",
+        {"enabled": "yes", "slots": [{"time": "09:00", "days": [1]}]},
+        {"enabled": True, "slots": []},
+        {"enabled": True, "slots": [{"time": "25:00", "days": [1]}]},
+        {"enabled": True, "slots": [{"time": "09:00", "days": []}]},
+        {"enabled": True, "slots": [{"time": "09:00", "days": [7]}]},
+    ):
+        assert normalize_schedule(bad)[1], bad
+
+
+def test_only_the_workflows_with_a_schedule_are_scheduled_tasks(env: WorkflowEnv) -> None:
+    """Only the workflows with a schedule block are listed as scheduled tasks.
 
     Args:
         env: Workflow service, workflow writer, database query function and temporary directory.
-        tmp_path: Temporary directory of the test.
-        monkeypatch: Pytest monkeypatch fixture.
     """
-    agents_dir = tmp_path / "sched-agents"
-    agents_dir.mkdir()
-    monkeypatch.setattr(scheduler_helpers, "_agent_md_path", lambda name: str(agents_dir / f"{name}.md"))
-    monkeypatch.setattr(scheduler_helpers, "_agent_name_conflict", lambda name: False)
+    _, write, _, _ = env
+    _simple_flow(write, "manual")
+    _write_scheduled(write, "diaria", "  - {time: '08:00', days: [1, 2]}\n  - {time: '18:30', days: [5]}")
 
-    task = scheduler_helpers.add_task("diaria", "resumen", "08:00", [1])["task"]
+    tasks = scheduler_helpers.list_tasks()
+    assert [t["name"] for t in tasks] == ["diaria"]
+    assert tasks[0]["time"] == "08:00" and tasks[0]["days"] == [1, 2]
+    assert tasks[0]["repetitions"] == [{"time": "18:30", "days": [5]}]
+    assert tasks[0]["enabled"] is True
+
+
+def test_updating_a_task_rewrites_its_schedule_and_keeps_the_nodes(env: WorkflowEnv) -> None:
+    """Updating a task rewrites its schedule block and keeps the nodes of the workflow.
+
+    Args:
+        env: Workflow service, workflow writer, database query function and temporary directory.
+    """
+    _, write, _, _ = env
+    _write_scheduled(write, "diaria", "  - {time: '08:00', days: [1]}")
+
+    result = scheduler_helpers.update_task("diaria", time_str="21:15", days=[0, 6], enabled=False)
+    assert result["status"] == "success"
+    task = scheduler_helpers.get_task("diaria")
+    assert task and task["time"] == "21:15" and task["days"] == [0, 6] and task["enabled"] is False
+    assert loader.load_workflow("diaria")["data"]["nodes"][0]["id"] == "a"
+
+    assert scheduler_helpers.update_task("diaria", time_str="99:99")["status"] == "error"
+    assert scheduler_helpers.update_task("diaria", prompt="otro")["status"] == "error"
+    assert scheduler_helpers.update_task("no-existe", enabled=True)["status"] == "error"
+
+
+def test_deleting_a_scheduled_task_removes_its_file_runs_and_notifications(env: WorkflowEnv) -> None:
+    """Deleting a scheduled task removes its YAML, its rows and only its notifications.
+
+    Args:
+        env: Workflow service, workflow writer, database query function and temporary directory.
+    """
+    _, write, query, tmp = env
+    _write_scheduled(write, "diaria", "  - {time: '08:00', days: [1]}")
     _open_run_1()
-    notifications_helpers.add_notification("task", "diaria", "success", "ok", task_id=task["id"])
+    workflow_db.ensure_workflow("diaria")
+    notifications_helpers.add_notification("schedule", "diaria", "success", "ok", workflow_name="diaria")
     notifications_helpers.add_notification("workflow", "wf", "success", "ok", workflow_name="wf")
 
-    assert scheduler_helpers.delete_task(task["id"])["status"] == "success"
-    left = notifications_helpers.list_notifications()
-    assert [n["workflow_name"] for n in left] == ["wf"]
+    assert scheduler_helpers.delete_task("diaria")["status"] == "success"
+    assert not (tmp / "workflows" / "diaria.yaml").exists()
+    assert [n["workflow_name"] for n in notifications_helpers.list_notifications()] == ["wf"]
+    assert query("select 1 from workflows where name='diaria'") == []
+
+
+def test_the_scheduler_starts_a_due_slot_once_and_notifies_as_schedule(
+    env: WorkflowEnv,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The scheduler starts a due slot once; the run is notified as schedule and sent to Telegram.
+
+    Args:
+        env: Workflow service, workflow writer, database query function and temporary directory.
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+    from datetime import datetime as real_datetime
+
+    svc, write, query, _ = env
+    fixed = real_datetime(2026, 10, 21, 14, 18, 5)  # a Wednesday: 3 in the 0 = Sunday convention
+
+    class _Clock(real_datetime):
+        """Datetime whose ``now`` is a fixed instant."""
+
+        @classmethod
+        def now(cls, tz: Any = None) -> real_datetime:
+            """Return the fixed instant.
+
+            Args:
+                tz: Ignored.
+
+            Returns:
+                The fixed instant.
+            """
+            return fixed
+
+    sent: list[tuple[str, str, str]] = []
+
+    async def fake_telegram(status: str, prompt: str, detail: str, finished_local: str) -> None:
+        """Record what would be sent to Telegram.
+
+        Args:
+            status: ``success`` or ``error``.
+            prompt: What the task does.
+            detail: Result summary.
+            finished_local: Finish timestamp (ignored).
+        """
+        sent.append((status, prompt, detail))
+
+    monkeypatch.setattr(scheduler_helpers, "datetime", _Clock)
+    monkeypatch.setattr(workflow_db, "datetime", _Clock)
+    monkeypatch.setattr(service_module, "notify_telegram", fake_telegram)
+    _write_scheduled(write, "diaria", "  - {time: '14:18', days: [3]}")
+    _write_scheduled(write, "otro-dia", "  - {time: '14:18', days: [1]}")
+    _write_scheduled(write, "pausada", "  - {time: '14:18', days: [3]}", enabled="false")
+
+    async def go() -> None:
+        """Check the schedules twice in the same minute and wait for the run."""
+        scheduler = scheduler_helpers.SchedulerService()
+        await scheduler._check_due_tasks()
+        await scheduler._check_due_tasks()
+        await asyncio.gather(*[a.task for a in list(svc._active.values()) if a.task])
+        await scheduler_helpers.SchedulerService()._check_due_tasks()  # another service, same minute
+
+    _run(go())
+    runs = query("select workflow_name,source,status from workflow_runs where kind='run'")
+    assert runs == [{"workflow_name": "diaria", "source": "schedule", "status": "success"}]
+    notified = notifications_helpers.list_notifications()
+    assert [(n["kind"], n["workflow_name"]) for n in notified] == [("schedule", "diaria")]
+    assert len(sent) == 1 and sent[0][0] == "success"
+    assert scheduler_helpers.list_runs()[0]["name"] == "diaria"
+
+
+def test_the_creator_prompt_has_the_scheduled_task_section_only_for_a_task() -> None:
+    """The workflow creator prompt adds the schedule section and drops the approval step for a task."""
+    from backend.instances import agent as prompt_agent
+    from backend.routes.create.workflow import _yaml_schedule
+
+    schedule = {"enabled": True, "slots": [{"time": "09:00", "days": [1, 2]}]}
+    block = _yaml_schedule(schedule)
+    assert block.startswith("schedule:") and "09:00" in block and _yaml_schedule(None) == ""
+
+    from backend.agent.utils.create_helpers import build_resource_context
+
+    context = {
+        "nombre": "n", "descripcion": "d", "conversacion": "c", "archivo": "C:/wf/n.yaml",
+        "carpeta_workflows": "C:/wf", "carpeta_prompts": "C:/wf/prompts", "carpeta_workspace": "C:/ws",
+        **_run(build_resource_context()),
+    }
+    task = prompt_agent.prompt("create_workflow", programada=True, horarios=block, **context)
+    plain = prompt_agent.prompt("create_workflow", programada=False, horarios="", **context)
+    assert "TAREA PROGRAMADA" in task and "09:00" in task and "aprobación del usuario" not in task
+    assert "TAREA PROGRAMADA" not in plain and "aprobación del usuario" in plain
+    # The folders are absolute paths and prompt_file goes without the extension.
+    for rendered in (task, plain):
+        assert "{%" not in rendered and "~/.config" not in rendered
+        assert "C:/wf/n.yaml" in rendered and "C:/wf/prompts/analizar.toml" in rendered
+        assert 'prompt_file: "analizar"' in rendered
 
 
 def test_workflow_runs_notify_only_when_started_with_play(env: WorkflowEnv) -> None:

@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 
 GENERIC_FAILURE_TEXT = (
     "El workflow no pudo completarse. Probá ejecutarlo de nuevo más tarde; "
-    "si el problema sigue, revisá el detalle en la sesión de la ejecución."
+    "si el problema sigue, abrí la notificación y usá «Revisar con el agente»."
 )
 """Fallback shown when no LLM is available to explain a failure."""
 

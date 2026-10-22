@@ -48,9 +48,8 @@ async def read_notifications() -> JSONResponse:
 def _full_output(notification: dict) -> str:
     """Get the complete result (or the failure explanation) behind a notification.
 
-    The notification keeps a short text. A workflow run keeps its whole result
-    in ``workflow_runs``; a scheduled task keeps it as the last answer of its
-    session.
+    The notification keeps a short text. The run keeps its whole result in
+    ``workflow_runs`` (the answer of the run, or the explanation of its failure).
 
     Args:
         notification: Notification dict.
@@ -59,16 +58,9 @@ def _full_output(notification: dict) -> str:
         The complete output, or the short text of the notification when it cannot be found.
     """
     try:
-        if notification["kind"] == "workflow" and notification.get("run_id"):
+        if notification.get("run_id"):
             run = workflow_db.get_run(notification["run_id"]) or {}
             text = run.get("result") if run.get("status") == "success" else run.get("error_text")
-            if text:
-                return str(text)
-        elif notification.get("session_id"):
-            from backend.instances import session_manager
-
-            msg = session_manager.get_last_assistant_message(notification["session_id"], turn_number=1)
-            text = (msg or {}).get("content")
             if text:
                 return str(text)
     except Exception as exc:
@@ -101,6 +93,9 @@ async def notification_detail(notification_id: int) -> JSONResponse:
 @router.post("/notifications/{notification_id}/review")
 async def review_notification(notification_id: int) -> JSONResponse:
     """Open a new conversation that already holds the output ("review with the agent").
+
+    It is the only place where a workflow or a scheduled task leads to a session:
+    the runs themselves never open one.
 
     Args:
         notification_id: Notification id.
