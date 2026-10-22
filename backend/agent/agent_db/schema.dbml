@@ -129,42 +129,6 @@ Table attachments {
   Note: 'Files the user attaches to a message. Deleted with the session.'
 }
 
-Table scheduled_tasks {
-  id text [pk, note: 'task id']
-  name text [not null, note: 'name shown to the user']
-  prompt text [not null, note: 'what the agent has to do']
-  time text [not null, default: `'09:00'`, note: 'main time of the day, HH:MM']
-  days text [not null, default: `'[0,1,2,3,4,5,6]'`, note: 'JSON list of the weekdays it runs (0 = Sunday, 1 = Monday, ...)']
-  enabled integer [not null, default: 1, note: '1 active, 0 paused']
-  repetitions text [note: 'JSON list of extra slots [{"time": "HH:MM", "days": [0..6]}]']
-  tool_permissions text [note: 'JSON with the tools the run may use']
-  skill_permissions text [note: 'JSON with the skills the run may use']
-  parameters text [note: 'JSON with the model parameters of the run']
-  last_run_date text [note: 'date of the last execution of the main slot']
-  slot_runs text [note: 'JSON map slot -> date of its last execution']
-  created_at text [not null, note: 'local time, ISO format']
-  updated_at text [not null, note: 'local time of the last edit']
-
-  Note: 'Tasks the scheduler runs on its own: a prompt an agent executes at a time of the day.'
-}
-
-Table task_runs {
-  id integer [pk, increment, note: 'internal row id; also the run_id of its notification']
-  task_id text [not null, note: 'task that ran']
-  session_id text [note: 'session where the agent worked']
-  status text [not null, note: 'success | error']
-  detail text [note: 'first characters of the answer, or the failure reason']
-  started_at text [not null, note: 'local time the run started']
-  finished_at text [note: 'local time the run ended']
-
-  indexes {
-    started_at [name: 'idx_task_runs_started_at']
-    task_id [name: 'idx_task_runs_task_id']
-  }
-
-  Note: 'One row per execution of a scheduled task. The session of the run is kept as long as it exists; if it is deleted the run stays without session.'
-}
-
 Table model_catalog {
   provider text [note: 'provider that serves the model']
   model_id text [note: 'id of the model for that provider']
@@ -351,7 +315,7 @@ Table creators {
     creator_id [name: 'idx_creators_creator_id']
   }
 
-  Note: 'Everything the creators (agent, skill, tool and workflow) do, in one table laid out like messages. One creator conversation (creator_id) is a chain of rows: user: what the user wrote in a request (the first one carries setup, the JSON of the form). assistant: text and reasoning the creator streamed. tool: a tool call of the creator with its arguments (tool_calls) and result (tool_results). result: how the request ended (action, item_name, status, message, seconds in total_time). call: one LLM call with its tokens and cost. Calls of the evaluators and the agenda prompt crafter have no conversation (creator_id NULL). spend is not touched here: llm_process already records it. The usage of a request lives in its call rows. The conversations of a creator are listed in its history sidebar and can be reopened to keep modifying what was created. creator_id has no foreign key: no table holds the conversations, they are the group of rows that share it. The provider is free text (it can be unknown).'
+  Note: 'Everything the creators (agent, skill, tool and workflow) do, in one table laid out like messages. One creator conversation (creator_id) is a chain of rows: user: what the user wrote in a request (the first one carries setup, the JSON of the form). assistant: text and reasoning the creator streamed. tool: a tool call of the creator with its arguments (tool_calls) and result (tool_results). result: how the request ended (action, item_name, status, message, seconds in total_time). call: one LLM call with its tokens and cost. Calls of the evaluators have no conversation (creator_id NULL). spend is not touched here: llm_process already records it. The usage of a request lives in its call rows. The conversations of a creator are listed in its history sidebar and can be reopened to keep modifying what was created. creator_id has no foreign key: no table holds the conversations, they are the group of rows that share it. The provider is free text (it can be unknown).'
 }
 
 Table step_frontier {
@@ -402,20 +366,18 @@ Table workflows {
 
 Table workflow_runs {
   id integer [pk, increment, note: 'internal row id; orders the rows']
-  run_id text [not null, note: 'run the row belongs to; also the id of its session']
+  run_id text [not null, note: 'run the row belongs to']
   workflow_name text [not null, note: 'workflow that ran']
-  kind text [not null, note: 'run | node | decision | judge | output | explain']
+  kind text [not null, note: 'run | node | tool | decision | judge | output | explain']
   attempt integer [not null, default: 1, note: 'attempt that made the row, 1..3']
   step integer [not null, default: 0, note: 'step of the workflow (0 in the run row)']
   substep integer [not null, default: 0, note: 'position of the row inside its step']
   node_id text [note: 'id of the node in the YAML (node rows)']
   node_type text [note: 'agent | tool | rag | run (node rows)']
-  tool_name text [note: 'tool a node ran: shell in run nodes, rag in rag nodes, the tool in tool nodes (NULL in agent nodes)']
-  status text [note: 'run: running | success | error | cancelled; node: success | error | cancelled; decision, judge: approved | rejected | error; output, explain: success | error']
-  source text [note: 'play | tool (run row)']
-  session_id text [note: 'session that holds the execution (run row)']
+  tool_name text [note: 'tool a node ran: shell in run nodes, rag in rag nodes, the tool in tool nodes (NULL in agent nodes); the tool called in tool rows']
+  status text [note: 'run: running | success | error | cancelled; node: success | error | cancelled; tool: success | error; decision, judge: approved | rejected | error; output, explain: success | error']
+  source text [note: 'play | tool | schedule (run row)']
   parent_session_id text [note: 'session of the agent that called the workflow (run row, source tool)']
-  child_session_id text [note: 'session of the sub-agent (agent node rows)']
   result text [note: 'output of the run, of the node or of the call']
   error_text text [note: 'failure message of a node, or plain-language explanation of a failed run']
   provider text [note: 'provider of the model that produced the row']
@@ -423,7 +385,7 @@ Table workflow_runs {
   prompt_tokens integer [not null, default: 0, note: 'input tokens']
   completion_tokens integer [not null, default: 0, note: 'output tokens']
   total_tokens integer [not null, default: 0, note: 'prompt_tokens + completion_tokens']
-  total_time real [not null, default: 0, note: 'seconds the LLM calls took']
+  total_time real [not null, default: 0, note: 'seconds the LLM calls took (agent nodes and engine rows), or the node took (nodes that run a tool)']
   cost_input real [not null, default: 0, note: 'USD cost of the input tokens']
   cost_output real [not null, default: 0, note: 'USD cost of the output tokens']
   cost_total real [not null, default: 0, note: 'cost_input + cost_output']
@@ -438,7 +400,7 @@ Table workflow_runs {
     (run_id, kind) [name: 'idx_workflow_runs_run']
   }
 
-  Note: 'Everything a workflow run does, in one table laid out like messages. A run is the group of rows that share run_id (also the id of its session), and kind says what each row is: run: the execution itself (source, status, attempt, started_at, finished_at, result, error_text and its sessions). It is the only row of the run that has a result and a source. node: one execution of a node (step, substep, node_id, node_type, status, result or error_text, child_session_id). The nodes of a step run in parallel, each with its own substep. An agent node adds up the spend of its child session; the other nodes run a tool (tool_name) and their total_time is the seconds they took. decision: verdict of the decision model on the run. status: approved | rejected; result holds the JSON of its answers. judge: verdict of the chat LLM, used when the decision model is not ready. status: approved | rejected | error; result holds the text it answered. output: the LLM call that writes the output of the run (status: success | error). explain: the LLM call that explains in plain language why a run failed (status: success | error). Rows of a run are never deleted when it ends (workflow_run_steps, in contrast, only keeps what is needed to resume a run and is cleaned when it ends well). The spend of a run is the sum of its rows. spend is NOT touched here: llm_process already records it. status of a run row: running | success | error | cancelled. source: play (UI button) | tool (called by an agent through the workflow tool). attempt: attempt that made the row, 1..3. step / substep: step of the workflow and position inside it (node rows); the rows of the engine take the next step of the run, with substep 0. The sessions are kept while they exist; if one is deleted the row stays without it. run_id has no foreign key: it is the group of rows that share it, so no column is unique to reference.'
+  Note: 'Everything a workflow run does, in one table laid out like messages. A run is the group of rows that share run_id, and kind says what each row is. A run never opens a session nor writes in messages: everything it does is here. run: the execution itself (source, status, attempt, started_at, finished_at, result, error_text and the session of the agent that called it, if any). It is the only row of the run that has a source. node: one execution of a node (step, substep, node_id, node_type, status, result or error_text). The nodes of a step run in parallel, each with its own substep. An agent node runs in memory and keeps its model and the sum of its LLM calls (tokens, cost and time); the other nodes run a tool (tool_name) and their total_time is the seconds they took. tool: one tool call of an agent node (node_id of the node, node_type agent, tool_name, status, result or error_text; total_time is the seconds it took), at the step and substep of its node. decision: verdict of the decision model on the run. status: approved | rejected; result holds the JSON of its answers. judge: verdict of the chat LLM, used when the decision model is not ready. status: approved | rejected | error; result holds the text it answered. output: the LLM call that writes the output of the run (status: success | error). explain: the LLM call that explains in plain language why a run failed (status: success | error). Rows of a run are never deleted when it ends (workflow_run_steps, in contrast, only keeps what is needed to resume a run and is cleaned when it ends well). The spend of a run is the sum of its rows. spend is NOT touched here: llm_process already records it. status of a run row: running | success | error | cancelled. source: play (UI button) | tool (called by an agent through the workflow tool) | schedule (started by the scheduler because the YAML of the workflow has a schedule block). attempt: attempt that made the row, 1..3. step / substep: step of the workflow and position inside it (node rows); the rows of the engine take the next step of the run, with substep 0. parent_session_id is kept while that session exists; if it is deleted the row stays without it. run_id has no foreign key: it is the group of rows that share it, so no column is unique to reference.'
 }
 
 Table workflow_run_steps {
@@ -453,7 +415,6 @@ Table workflow_run_steps {
   state text [not null, default: `'open'`, note: 'open | done | failed | stale']
   result text [note: 'complete output of the node']
   error text [note: 'failure message when state is failed']
-  child_session_id text [note: 'session of the sub-agent, in agent nodes']
   created_at text [not null, note: 'local time the node was dispatched']
   updated_at text [not null, note: 'local time of the last change']
 
@@ -466,14 +427,12 @@ Table workflow_run_steps {
 
 Table notifications {
   id integer [pk, increment, note: 'internal row id']
-  kind text [not null, note: 'workflow | task']
-  workflow_name text [note: 'workflow that finished (kind workflow)']
-  task_id text [note: 'scheduled task that finished (kind task)']
-  run_id text [note: 'id of the run in workflow_runs (run_id) or task_runs (id)']
-  title text [not null, note: 'workflow or task name shown in the bell']
+  kind text [not null, note: 'workflow | schedule']
+  workflow_name text [not null, note: 'workflow that finished']
+  run_id text [note: 'id of the run in workflow_runs (run_id)']
+  title text [not null, note: 'workflow name shown in the bell']
   status text [not null, note: 'success | error']
   message text [note: 'short text of the result or the failure explanation']
-  session_id text [note: 'session of the execution, while it exists']
   read integer [not null, default: 0, note: '0 unread, 1 read']
   created_at text [not null, note: 'local time, ISO format']
 
@@ -482,7 +441,7 @@ Table notifications {
     read [name: 'idx_notifications_read']
   }
 
-  Note: 'Notifications of finished workflow runs and scheduled-task executions. Exactly one of workflow_name / task_id is set (FK to the PK of each table). run_id: workflow_runs.run_id or task_runs.id (as text) to open the detail; it has no foreign key because it points to one table or the other depending on kind. status: success | error. read: 0 unread, 1 read.'
+  Note: 'Notifications of finished workflow runs, whether the user played them or the scheduler started them. kind: workflow (played by the user) | schedule (started by the scheduler). run_id: workflow_runs.run_id of the run, to open its detail; it has no foreign key because workflow_runs has many rows per run and no column is unique to reference. status: success | error. read: 0 unread, 1 read. A run never opens a session: "Revisar con el agente" opens a new one with the output, and the notification does not keep it.'
 }
 
 Ref: sessions.parent_id > sessions.session_id [delete: cascade]
@@ -490,8 +449,6 @@ Ref: messages.session_id > sessions.session_id [delete: cascade]
 Ref: turn_latency.session_id > sessions.session_id [delete: cascade]
 Ref: provider_api_keys.provider > providers.provider
 Ref: attachments.session_id > sessions.session_id [delete: cascade]
-Ref: task_runs.task_id > scheduled_tasks.id [delete: cascade]
-Ref: task_runs.session_id > sessions.session_id [delete: set null]
 Ref: model_catalog.provider > providers.provider
 Ref: billing.provider > providers.provider
 Ref: spend.provider > providers.provider
@@ -499,8 +456,5 @@ Ref: spend_limits.provider > providers.provider
 Ref: step_frontier.session_id > sessions.session_id [delete: cascade]
 Ref: message_feedback.session_id > sessions.session_id [delete: cascade]
 Ref: workflow_runs.workflow_name > workflows.name
-Ref: workflow_runs.session_id > sessions.session_id [delete: set null]
 Ref: workflow_runs.parent_session_id > sessions.session_id [delete: set null]
 Ref: notifications.workflow_name > workflows.name
-Ref: notifications.task_id > scheduled_tasks.id
-Ref: notifications.session_id > sessions.session_id [delete: set null]
