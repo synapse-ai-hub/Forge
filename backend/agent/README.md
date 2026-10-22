@@ -112,7 +112,7 @@ Resuelve en tiempo de ejecución:
 - Skills habilitadas (`get_skill_permissions`).
 - Contenido del system prompt (`get_agent_prompt`).
 - Filtrado de herramientas/skills según el agente activo.
-- Permisos del agente principal (router) desde `config.yaml` (ver `config.yaml` más abajo).
+- Permisos del agente principal (router) desde la tabla `router_config` (ver `router_config` más abajo).
 
 ### 7. `utils/contract.py` — Contratos de respuesta
 
@@ -350,33 +350,26 @@ Este archivo almacena **exclusivamente** la configuración de servidores MCP (Mo
 
 `AGENT.md` (si existe en `~/.config/synapseForge/agents/`) se inyecta como sección `## Behavior` en el system prompt de **todos** los agentes (router y sub-agentes), **antes** de `## MANDATORY:`. No reemplaza el system prompt: `system_prompt.jinja` es siempre la base del router, y cada sub-agente usa su propio `.md`. Sirve para comportamiento general del proyecto (compatibilidad con opencode/claude code).
 
-### 1c. `config.yaml` — Permisos del router
+### 1c. `router_config` — Permisos del router
 
-El agente principal (router) usa `~/.config/synapseForge/config.yaml` para sus permisos (misma lógica que el frontmatter de los agentes):
+El agente principal (router) toma sus permisos de la tabla interna `router_config` de la base de datos del sistema (una sola fila con las selecciones de subagentes, tools, skills y colecciones RAG). Se edita únicamente desde la interfaz: panel lateral, pestaña **Router**, con listas desplegables por dimensión (los servidores MCP aparecen en un contenedor con scroll). Misma lógica que el frontmatter de los agentes:
 
-```yaml
-permissions:
-  tools:
-    read: allow
-    rag:
-      mi_coleccion: allow
-  skills:
-    mi_skill: allow
-  tasks:
-    explorador: allow
-  workflows:
-    reporte-diario: allow
-```
+| Dimensión | Qué guarda | Cómo se aplica |
+|-----------|-------------|----------------|
+| `agentes` | Subagentes a los que puede delegar | `tasks: { agente: allow }` (vía `task`) |
+| `tools` | Tools habilitadas | `tools: { tool: allow }` |
+| `skills` | Skills inyectadas al system prompt | `skills: { skill: allow }` |
+| `rag` | Colecciones RAG consultables | `tools: { rag: { coleccion: allow } }` |
 
-Las claves son siempre `tools`, `skills`, `tasks` y `workflows` (plural); cualquier otra clave bajo `permissions` se ignora. Las colecciones RAG se permiten dentro de `tools`, como `rag: { nombre: allow }`. Las skills listadas se inyectan en el system prompt del router como `## Skills Disponibles`, igual que en un sub-agente.
+Las skills listadas se inyectan en el system prompt del router como `## Skills Disponibles`, igual que en un sub-agente.
 
-- Si el archivo **no existe** → el router usa las tools base (`task`, `search_memory`, `read`, `websearch`, `webfetch`) y no tiene skills.
-- Si existe → usa **solo** los permisos explícitos del yaml: no se suma ninguna tool base.
-- **Piso fijo**: con o sin yaml, el router siempre puede usar `rag` sobre las colecciones internas `help` (documentación del sistema, un documento por sección) y `agent_conversations`. Lo que el yaml liste en `rag` se suma a esas dos.
-- `task` solo está disponible si el yaml la lista en `tools` o en `tasks`; `tasks` limita a qué sub-agentes puede delegar.
-- `workflow` solo está disponible si el yaml la lista en `tools` o define `workflows`; `workflows` limita cuáles puede ejecutar. El system prompt agrega la sección `## Workflows Disponibles` con los permitidos.
+- Si no hay nada guardado → el router usa las tools base (`task`, `search_memory`, `read`, `websearch`, `webfetch`) y no tiene skills.
+- Si hay una selección guardada → usa **solo** esos permisos: no se suma ninguna tool base.
+- **Piso fijo**: con o sin selección, el router siempre puede usar `rag` sobre las colecciones internas `help` (documentación del sistema, un documento por sección) y `agent_conversations`. Lo que la selección liste en `rag` se suma a esas dos. Las colecciones internas no son para el usuario: no aparecen en las listas de la interfaz.
+- `task` solo está disponible si la selección incluye la tool `task` o nombra subagentes; `agentes` limita a qué sub-agentes puede delegar.
+- `workflow` solo está disponible si la selección incluye la tool `workflow`. El system prompt agrega la sección `## Workflows Disponibles` con los permitidos.
 
-El system prompt del router incluye solo las secciones de las tools que tiene habilitadas.
+El system prompt del router incluye solo las secciones de las tools que tiene habilitadas. Los cambios se aplican en el siguiente mensaje, sin reiniciar el backend.
 
 ---
 
@@ -579,7 +572,7 @@ Los servidores MCP configurados en `mcp.json` exponen sus herramientas automáti
 
 **Notas:**
 - La base de datos SQLite se crea automáticamente en `backend/agent/agent_db/agent.db` al iniciar el agente.
-- El directorio de configuración `~/.config/synapseForge/` (skills, tools, agents, mcp.json, config.yaml) se crea automáticamente al arrancar.
+- El directorio de configuración `~/.config/synapseForge/` (skills, tools, agents, mcp.json) se crea automáticamente al arrancar.
 - Las variables de entorno se cargan desde `.env` en la raíz del proyecto (ver la tabla siguiente).
 - No requiere servicios externos — SQLite es parte de la stdlib de Python.
 

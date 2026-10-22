@@ -33,7 +33,7 @@ pytest tests/prompts -v
 
 | Archivo | Qué verifica |
 |---------|--------------|
-| `test_router_prompt.py` | El template del router con todas las tools coincide byte a byte con el texto de referencia (`golden/`); `MANDATORY` pierde la línea del TODO sin `write`; la seguridad va después de `MANDATORY`; un `config.yaml` chico y un router sin tools quitan las secciones de las tools que faltan; `shell` suma las reglas de comandos y SQL; `AGENT.md` se trata como texto plano, nunca como template; un sub-agente recibe la seguridad de sus propias tools |
+| `test_router_prompt.py` | El template del router con todas las tools coincide byte a byte con el texto de referencia (`golden/`); `MANDATORY` pierde la línea del TODO sin `write`; la seguridad va después de `MANDATORY`; un dict de permisos chico y un router sin tools quitan las secciones de las tools que faltan; `shell` suma las reglas de comandos y SQL; `AGENT.md` se trata como texto plano, nunca como template; un sub-agente recibe la seguridad de sus propias tools |
 | `test_prompt_templates.py` | Solo hay templates `.jinja` en `prompts/`; todos se renderizan sin caer al texto crudo; una variable faltante no corta el chat |
 | `test_agent_permissions_format.py` | Los ejemplos de `create_agent` e `iterate_agent` y el archivo del agente del scheduler se leen con el formato de permisos real (`permissions.tools`, `skills`, `tasks`) |
 | `test_guardrail.py` | Con el modelo de decisión habilitado el router no lleva `## Seguridad` y el decisor recibe las reglas y la pregunta; sin él, el system lleva reglas e instrucciones. Con el decisor deshabilitado no se hace ninguna llamada |
@@ -48,7 +48,7 @@ No son tests: llaman a la API real de Gemini y se corren a mano.
 
 | Script | Qué hace |
 |--------|----------|
-| `compare_tokens.py` | Cuenta los tokens del system prompt del router según los permisos del `config.yaml`, con el endpoint `count_tokens` (sin generar ni escribir en la base). Requiere la API key de Google |
+| `compare_tokens.py` | Cuenta los tokens del system prompt del router según distintos permisos, con el endpoint `count_tokens` (sin generar ni escribir en la base). Requiere la API key de Google |
 | `injection_check.py` | Manda ataques de prompt injection al modelo con el prompt del router con y sin la sección `## Seguridad`, y marca si obedeció o filtró el prompt. Llama al SDK directamente, sin tocar la base |
 
 ```bash

@@ -342,6 +342,26 @@ Lista los servidores MCP configurados con su estado (`connected`, `failed` o `di
 
 **Respuesta:** `{status, servers: McpServer[], error: string | null}`. `McpServer` incluye `label`, `status`, `transport` y, si falló, `error`.
 
+#### `GET /api/config/router`
+
+Permisos del agente principal: la selección guardada en la tabla `router_config` más los permisos efectivos que resultan de ella (con el conjunto base y el piso fijo de RAG ya aplicados).
+
+**Respuesta:** `{status, selection, permissions}`.
+
+#### `PUT /api/config/router`
+
+Guarda la selección de permisos del agente principal (`agentes`, `tools`, `skills`, `rag`). Se aplica en el siguiente mensaje, sin reiniciar el backend.
+
+**Body (JSON):** `{"selection": {"agentes": [...], "tools": [...], "skills": [...], "rag": [...]}}`.
+
+**Respuesta:** `{status, message, selection, permissions}`.
+
+#### `GET /api/config/router/selection`
+
+Devuelve solo la selección guardada (vacía si todavía no se guardó nada).
+
+**Respuesta:** `{status, selection}`.
+
 #### `POST /api/config/workflows/validate`
 
 Valida un YAML de workflow sin escribir nada.
