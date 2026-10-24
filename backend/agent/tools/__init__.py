@@ -522,8 +522,10 @@ class ToolsBase:
                     try:
                         spec = importlib.util.spec_from_file_location(tool_name, module_path)
                         if spec is None or spec.loader is None:
+                            load_message = f"execute_tool: no se pudo cargar '{tool_name}'"
+                            log_error(load_message, source="tools.py:execute_tool")
                             return make_error_response(
-                                message=f"execute_tool: no se pudo cargar '{tool_name}'",
+                                message=load_message,
                                 usage=zero_usage(),
                             )
                         mod = importlib.util.module_from_spec(spec)
@@ -540,12 +542,20 @@ class ToolsBase:
                                 sys.path.remove(tools_dir)
                         handler = getattr(mod, handler_name, None)
                         if handler is None:
+                            handler_message = f"execute_tool: '{tool_name}' no expone handler '{handler_name}'"
+                            log_error(handler_message, source="tools.py:execute_tool")
                             return make_error_response(
-                                message=f"execute_tool: '{tool_name}' no expone handler '{handler_name}'",
+                                message=handler_message,
                                 usage=zero_usage(),
                             )
                         # External tools are self-contained — pass only user params
-                        return await handler(**kwargs)
+                        ext_result = await handler(**kwargs)
+                        if isinstance(ext_result, dict) and ext_result.get("status") == "error":
+                            log_error(
+                                f"execute_tool: '{tool_name}' devolvió error: {ext_result.get('message', ext_result)}",
+                                source="tools.py:execute_tool",
+                            )
+                        return ext_result
                     except Exception as e:
                         logging.getLogger(__name__).exception(
                             "execute_tool: error en '%s': %s", tool_name, e
@@ -559,7 +569,13 @@ class ToolsBase:
             # Fall back to native method
             native = getattr(self, tool_name, None)
             if native and callable(native):
-                return await native(**kwargs)
+                native_result = await native(**kwargs)
+                if isinstance(native_result, dict) and native_result.get("status") == "error":
+                    log_error(
+                        f"execute_tool: '{tool_name}' devolvió error: {native_result.get('message', native_result)}",
+                        source="tools.py:execute_tool",
+                    )
+                return native_result
 
             # --- MCP tool dispatch -----------------------------------------------
             # Attempt MCP dispatch when the tool is known MCP, or when MCP servers
@@ -583,8 +599,10 @@ class ToolsBase:
                         usage=zero_usage(),
                     )
 
+            not_found_message = f"execute_tool: tool '{tool_name}' no encontrada en native, externas ni MCP"
+            log_error(not_found_message, source="tools.py:execute_tool")
             return make_error_response(
-                message=f"execute_tool: tool '{tool_name}' no encontrada en native, externas ni MCP",
+                message=not_found_message,
                 usage=zero_usage(),
             )
     @staticmethod

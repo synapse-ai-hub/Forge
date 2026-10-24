@@ -35,6 +35,7 @@ if _project_root not in sys.path:
 from backend.agent.loop.constants import LLM_BACKOFF_BASE_SECONDS, MAX_LLM_RETRIES
 from backend.agent.permissions import get_tool_permissions, is_tool_allowed
 from backend.agent.utils import provider_keys
+from backend.agent.utils.error_logger import log_error
 from backend.agent.utils.rate_limit_handler import classify_error_category, get_retry_delay
 from backend.instances import agent
 
@@ -386,10 +387,15 @@ async def stream_interview_loop(
             try:
                 if not is_tool_allowed(_INTERVIEW_TOOLS_PERMS, tc_name, tc_args):
                     result = {"status": "error", "message": f"Permission denied for tool '{tc_name}'."}
+                    log_error(
+                        f"Permission denied for tool '{tc_name}'.",
+                        source="create_helpers.py:interview(permission)",
+                    )
                 else:
                     result = await agent.tools._execute_tool(tc_name, **tc_args)
             except Exception as e:
                 logger.exception("Tool '%s' failed during interview", tc_name)
+                log_error(str(e), source="create_helpers.py:interview")
                 result = {"status": "error", "message": str(e)}
 
             if isinstance(result, dict):
@@ -565,12 +571,17 @@ async def stream_tool_calling_loop(
                 try:
                     if tc_name not in offered_tools:
                         result = {"status": "error", "message": f"Permission denied for tool '{tc_name}'."}
+                        log_error(
+                            f"Permission denied for tool '{tc_name}'.",
+                            source="create_helpers.py:create(permission)",
+                        )
                     elif run_tool is not None:
                         result = await run_tool(tc_name, tc_args)
                     else:
                         result = await agent.tools._execute_tool(tc_name, **tc_args)
                 except Exception as e:
                     logger.exception("Tool '%s' failed", tc_name)
+                    log_error(str(e), source="create_helpers.py:create")
                     result = {"status": "error", "message": str(e)}
 
                 # Extract the result content
