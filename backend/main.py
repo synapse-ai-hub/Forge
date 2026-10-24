@@ -154,6 +154,13 @@ except ImportError as e:
     notifications_router = None
     logging.warning("backend.routes.notifications could not be imported.")
 
+try:
+    from backend.routes.approvals import router as approvals_router
+except ImportError as e:
+    log_error(str(e), source="main.py:approvals_import")
+    approvals_router = None
+    logging.warning("backend.routes.approvals could not be imported.")
+
 # ---------------------------------------------------------------------------
 # Logging configuration
 # ---------------------------------------------------------------------------
@@ -457,6 +464,9 @@ if workflows_router is not None:
 
 if notifications_router is not None:
     app.include_router(notifications_router, prefix="/api")
+
+if approvals_router is not None:
+    app.include_router(approvals_router, prefix="/api")
 
 
 # ---------------------------------------------------------------------------

@@ -56,6 +56,7 @@ from backend.agent.utils.error_logger import (
 )
 from backend.agent.utils.skill_loader import format_skills_section
 from backend.agent.utils.contract import zero_usage
+from backend.agent.utils.approvals import create_approval, wait_approval
 from backend.agent.permissions import (
     get_tool_permissions,
     get_skill_permissions,
@@ -1102,6 +1103,22 @@ class AgentLoop:
                                 pass
                             _tool_call_ctx.reset(token)
 
+                    # Global pause-and-ask pre-scan: every shell command in
+                    # the whole block needs explicit user approval BEFORE
+                    # any tool_call is emitted (tasks included), so a deny
+                    # never leaves a tool block without its tool_result.
+                    # On deny or timeout the turn is cut here.
+                    for pre_tc in tool_calls:
+                        if pre_tc.get("name") != "shell":
+                            continue
+                        command = (pre_tc.get("args") or {}).get("command", "")
+                        approval_id = create_approval(session_id, command)
+                        yield f"data: {json.dumps({'type': 'approval_required', 'content': {'approval_id': approval_id, 'command': command}}, ensure_ascii=False)}\n\n"
+                        if not await wait_approval(approval_id, cancel_event=stream_cancel_event):
+                            msg = "Ejecución detenida: el comando no fue aprobado por el usuario."
+                            yield f"data: {json.dumps({'type': 'chunk', 'content': msg}, ensure_ascii=False)}\n\n"
+                            yield "data: [DONE]\n\n"
+                            return
                     tc_index = 0
                     while tc_index < len(tool_calls):
                         tc = tool_calls[tc_index]
@@ -1186,6 +1203,8 @@ class AgentLoop:
                             # are only queued here (tool_call SSE in original
                             # order); execution happens once the whole block
                             # is collected, concurrently with everything else.
+                            # Shell commands were already approved by the
+                            # global pre-scan above.
                             batch: list[dict[str, Any]] = []
                             _j = tc_index
                             while _j < len(tool_calls) and tool_calls[_j].get("name") != "task":
