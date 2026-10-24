@@ -1,0 +1,82 @@
+name: '🔎 Gemini Review Push - Frontend'
+
+on:
+  push:
+    paths: ['frontend/**']
+
+jobs:
+  review:
+    runs-on: 'ubuntu-latest'
+    timeout-minutes: 10
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+      issues: 'write'
+      pull-requests: 'write'
+    steps:
+      - uses: 'actions/checkout@v4'
+        with:
+          fetch-depth: 0
+      - name: 'Generar diff incremental del push'
+        id: diff
+        env:
+          BEFORE: '${{ github.event.before }}'
+          AFTER: '${{ github.sha }}'
+        run: |
+          git fetch origin "${{ github.ref_name }}" --depth=50 2>/dev/null || true
+          if [[ "${BEFORE}" == "0000000000000000000000000000000000000000" ]]; then
+            BASE=$(git merge-base HEAD "origin/${{ github.event.repository.default_branch }}" 2>/dev/null || echo "")
+            if [[ -z "${BASE}" ]]; then
+              echo "No se pudo determinar la base del diff, se omite la revisión."
+              echo "empty=true" >> "${GITHUB_OUTPUT}"
+              exit 0
+            fi
+            git diff "${BASE}" "${AFTER}" > push_full.diff
+          else
+            git diff "${BEFORE}" "${AFTER}" > push_full.diff
+          fi
+          awk -v prefix="frontend/" '
+            /^diff --git / {
+              keep = (index($0, " b/" prefix) > 0 || index($0, " \"b/" prefix) > 0) ? 1 : 0
+            }
+            keep { print }
+          ' push_full.diff > push.diff
+          echo "Diff filtrado a frontend/: $(wc -l < push.diff) lineas (de $(wc -l < push_full.diff) totales)"
+          if [[ -s push.diff ]]; then
+            echo "empty=false" >> "${GITHUB_OUTPUT}"
+          else
+            echo "empty=true" >> "${GITHUB_OUTPUT}"
+          fi
+      - uses: 'google-github-actions/run-gemini-cli@v0'
+        id: gemini
+        if: steps.diff.outputs.empty != 'true'
+        env:
+          GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
+          GEMINI_API_KEY: '${{ secrets.GOOGLE_API_KEY || secrets.GEMINI_API_KEY }}'
+          GEMINI_CLI_TRUST_WORKSPACE: 'true'
+        with:
+          gemini_api_key: '${{ secrets.GOOGLE_API_KEY || secrets.GEMINI_API_KEY }}'
+          gemini_model: 'gemini-3.5-flash-lite'
+          prompt: '/review-push-frontend'
+      - name: 'Publicar review del push'
+        if: steps.diff.outputs.empty != 'true'
+        env:
+          GH_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
+          REVIEW_BODY: '${{ steps.gemini.outputs.summary }}'
+          BRANCH: '${{ github.ref_name }}'
+          SHORT_SHA: '${{ github.sha }}'
+        run: |
+          if [[ -z "${REVIEW_BODY}" ]]; then
+            echo "Gemini no devolvió respuesta, no se publica nada."
+            exit 0
+          fi
+          {
+            printf '**🔎 Push review** — rama `%s`, commit `%s`\n\n' "${BRANCH}" "${SHORT_SHA:0:7}"
+            printf '%s\n' "${REVIEW_BODY}"
+          } > review.md
+          PR_NUMBER=$(gh pr list --head "${BRANCH}" --state open --json number --jq '.[0].number' --repo "${{ github.repository }}")
+          if [[ -n "${PR_NUMBER}" && "${PR_NUMBER}" != "null" ]]; then
+            gh pr comment "${PR_NUMBER}" --repo "${{ github.repository }}" --body-file review.md
+          else
+            gh api "repos/${{ github.repository }}/commits/${SHORT_SHA}/comments" -F body=@review.md > /dev/null
+          fi
