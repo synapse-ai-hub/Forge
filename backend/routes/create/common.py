@@ -111,6 +111,7 @@ _AGENT_TOOLS_PERMS: dict[str, str] = {
     "edit": "allow",
     "shell": "allow",
     "list_dir": "allow",
+    "query_model_capabilities": "allow",
 }
 
 

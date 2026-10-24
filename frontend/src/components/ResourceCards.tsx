@@ -244,8 +244,6 @@ interface ResourceCardsProps {
   /** Prefix of the ids of the dropdowns (there can be several forms in a page). */
   idPrefix: string;
   disabled?: boolean;
-  /** List MCP tools too in the tools dropdown (the router panel needs them). */
-  includeMcp?: boolean;
   /** Render picked tools as plain chips (no argument cards). */
   hideToolArgs?: boolean;
   /** Intro text; defaults to the creators one (picked = mandatory). */
@@ -259,7 +257,7 @@ interface ResourceCardsProps {
  * @param props - Kinds to offer, what is picked and how to change it.
  * @returns The cards.
  */
-export function ResourceCards({ kinds, selection, onChange, idPrefix, disabled = false, includeMcp = false, hideToolArgs = false, intro }: ResourceCardsProps): ReactElement {
+export function ResourceCards({ kinds, selection, onChange, idPrefix, disabled = false, hideToolArgs = false, intro }: ResourceCardsProps): ReactElement {
   const [agentes, setAgentes] = useState<Option[]>([]);
   const [tools, setTools] = useState<ToolInfo[]>([]);
   const [skills, setSkills] = useState<Option[]>([]);
@@ -270,7 +268,7 @@ export function ResourceCards({ kinds, selection, onChange, idPrefix, disabled =
     let cancelled = false;
     Promise.all([
       kinds.includes("agentes") ? configService.getAgents().catch(() => []) : Promise.resolve([]),
-      kinds.includes("tools") ? configService.getTools(includeMcp).catch(() => []) : Promise.resolve([]),
+      kinds.includes("tools") ? configService.getTools().catch(() => []) : Promise.resolve([]),
       kinds.includes("skills") ? configService.getSkills().catch(() => []) : Promise.resolve([]),
       kinds.includes("rag") ? configService.listKnowledge().catch(() => []) : Promise.resolve([]),
     ]).then(([a, t, s, k]) => {

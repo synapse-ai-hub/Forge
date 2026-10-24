@@ -19,6 +19,9 @@ from backend.instances import agent
 
 logger = logging.getLogger(__name__)
 
+_HIDDEN_FROM_UI = frozenset({"query_model_capabilities"})
+"""Native helpers never listed in the UI dropdowns (not for the user)."""
+
 
 def get_skills_list() -> list[dict[str, str]]:
     """Scan skills directory and return structured list.
@@ -64,6 +67,8 @@ def get_tools_list(include_mcp: bool = False) -> list[dict[str, Any]]:
     Reads the already-built ``_tools_registry`` (native + external tools)
     **without** applying any permission filtering. MCP tools are excluded
     by default because they are managed separately via the MCP endpoint.
+    Internal helpers (``_HIDDEN_FROM_UI``) are never listed: they are not
+    for the user, the creator flows allow them via their own permissions.
 
     Args:
         include_mcp: When ``True``, MCP tools are listed too (the router
@@ -82,6 +87,8 @@ def get_tools_list(include_mcp: bool = False) -> list[dict[str, Any]]:
         func = entry.get("function", {})
         name = func.get("name", "")
         description = func.get("description", "")
+        if name in _HIDDEN_FROM_UI:
+            continue
         if name and (include_mcp or not is_mcp_tool(name)):
             result.append({
                 "name": name,

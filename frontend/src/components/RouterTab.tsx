@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactElement } from "react";
+import { RefreshCw } from "lucide-react";
 import configService, { type McpServerStatus } from "../services/configService";
 import { ResourceCards } from "./ResourceCards";
 import { EMPTY_SELECTION, type ResourceSelection } from "../utils/resourceSelection";
@@ -21,6 +22,8 @@ export function RouterTab(): ReactElement {
   const [toggling, setToggling] = useState<string | null>(null);
   const [toggleError, setToggleError] = useState("");
   const [toolsKey, setToolsKey] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState("");
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mounted = useRef(true);
 
@@ -112,13 +115,67 @@ export function RouterTab(): ReactElement {
     []
   );
 
+  /**
+   * Reload everything the dropdowns offer (tools registry on the backend,
+   * then agentes, tools, skills, RAG and MCP servers) without a page refresh.
+   */
+  const refreshAll = useCallback(async (): Promise<void> => {
+    // Drop any pending debounced save: it holds the pre-refresh selection
+    // and would overwrite what we are about to load.
+    if (timer.current) {
+      clearTimeout(timer.current);
+      timer.current = null;
+    }
+    setRefreshing(true);
+    setRefreshError("");
+    try {
+      // Let an in-flight save finish first so the reload reads its result.
+      await saveChain.current;
+      // Rebuild the tools registry on the backend (external + native + MCP).
+      await configService.refresh();
+      const [router, mcp] = await Promise.all([configService.getRouter(), configService.getMcp()]);
+      if (!mounted.current) return;
+      setSelection({
+        agentes: router.selection.agentes ?? [],
+        tools: router.selection.tools ?? [],
+        toolArgs: {},
+        skills: router.selection.skills ?? [],
+        rag: router.selection.rag ?? [],
+      });
+      setSource(router.source);
+      setServers(mcp.servers);
+      // ResourceCards fetches its options on mount: remount it to refetch.
+      setToolsKey((k) => k + 1);
+    } catch (err: unknown) {
+      if (!mounted.current) return;
+      setRefreshError(err instanceof Error ? err.message : "No se pudo actualizar.");
+    } finally {
+      if (mounted.current) setRefreshing(false);
+    }
+  }, []);
+
   return (
     <div className="space-y-4 p-3">
       <div>
-        <h3 className="text-sm font-semibold text-app-text">Router</h3>
+        <div className="flex items-center justify-between gap-2">
+          <h3 className="text-sm font-semibold text-app-text">Router</h3>
+          <button
+            type="button"
+            onClick={refreshAll}
+            disabled={refreshing}
+            className="flex items-center gap-1.5 rounded-lg border border-app-border px-2 py-1 text-[11px] text-app-text-secondary hover:bg-app-bg-tertiary disabled:opacity-50"
+            title="Recargar herramientas, skills, agentes, RAG y MCP"
+          >
+            <RefreshCw size={12} className={refreshing ? "animate-spin" : ""} />
+            <span>Actualizar</span>
+          </button>
+        </div>
         <p className="text-xs text-app-text-secondary mt-0.5">
           Qué puede usar el router. Se guarda solo y rige desde la próxima respuesta.
         </p>
+        {refreshError && (
+          <p className="text-xs text-red-500 mt-1">No se pudo actualizar: {refreshError}</p>
+        )}
       </div>
 
       {!loaded ? (
@@ -138,7 +195,6 @@ export function RouterTab(): ReactElement {
             selection={selection}
             onChange={change}
             idPrefix="router"
-            includeMcp
             hideToolArgs
             intro="Lo que agregues es lo que el router puede usar. Si lo dejás vacío, usa sus herramientas base."
           />
