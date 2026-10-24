@@ -71,7 +71,7 @@ jobs:
             exit 0
           fi
           {
-            printf '**🔎 Push review** — rama `%s`, commit `%s`\n\n' "${BRANCH}" "${SHORT_SHA:0:7}"
+            printf '**🔎 Push review (backend)** — rama `%s`, commit `%s`\n\n' "${BRANCH}" "${SHORT_SHA:0:7}"
             printf '%s\n' "${REVIEW_BODY}"
           } > review.md
           PR_NUMBER=$(gh pr list --head "${BRANCH}" --state open --json number --jq '.[0].number' --repo "${{ github.repository }}")
