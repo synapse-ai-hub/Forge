@@ -31,6 +31,7 @@ from backend.agent.utils.create_helpers import (
 )
 from backend.instances import agent
 from backend.agent.utils.error_logger import log_error
+from backend.agent.utils.create_review import is_creation_complete
 from backend.agent.utils.creators import track_creator_run
 from backend.routes.create.common import (
     _AGENT_TOOLS_PERMS,
@@ -188,18 +189,36 @@ async def post_create_tool_stream(req: CreateToolRequest) -> StreamingResponse:
                 {"role": "user", "content": mensajes[-1]["content"] if mensajes else "Modificá la tool."},
             ]
 
+            touched = False
             async for event in stream_tool_calling_loop(
                 msgs, tools, _FRIENDLY_ERROR_TOOL, model=_create_model, provider=_create_provider
             ):
                 yield _sse(event)
                 if event["type"] == "error":
                     return
+                if event["type"] == "tool_call" and (event.get("content") or {}).get("name") in ("write", "edit"):
+                    touched = True
 
-            yield _sse({"type": "tool_result_final", "content": {
-                "status": "success",
-                "message": f"Tool '{nombre}' modificada exitosamente.",
-                "data": {"exist": "Sí", "tool": nombre, "tool_path": tool_carpeta},
-            }})
+            complete = await is_creation_complete(
+                kind="tool",
+                nombre=nombre,
+                artifact_path=_TOOLS_DIR / f"{nombre or 'tool'}.py",
+                mensajes=mensajes,
+                model=_create_model,
+                provider=_create_provider,
+                turn_number=len(mensajes),
+            )
+            if complete:
+                message = (
+                    f"Tool '{nombre}' modificada exitosamente."
+                    if touched
+                    else f"Consulta sobre la tool '{nombre}' respondida."
+                )
+                yield _sse({"type": "tool_result_final", "content": {
+                    "status": "success",
+                    "message": message,
+                    "data": {"exist": "Sí", "tool": nombre, "tool_path": tool_carpeta},
+                }})
             return
 
         # ════════════════════════════════════════════════════════════════

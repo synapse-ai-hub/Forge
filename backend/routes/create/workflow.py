@@ -34,6 +34,7 @@ from backend.agent.utils.create_helpers import (
 )
 from backend.instances import agent
 from backend.agent.utils.error_logger import log_error
+from backend.agent.utils.create_review import is_creation_complete
 from backend.agent.utils.creators import track_creator_run
 from backend.routes.create.common import (
     _AGENT_TOOLS_PERMS,
@@ -259,12 +260,15 @@ async def post_create_workflow_stream(req: CreateWorkflowRequest) -> StreamingRe
                 {"role": "system", "content": iter_prompt},
                 {"role": "user", "content": mensajes[-1]["content"] if mensajes else "Modificá el workflow."},
             ]
+            touched = False
             async for event in stream_tool_calling_loop(
                 msgs, tools, _FRIENDLY_ERROR_WORKFLOW, model=_create_model, provider=_create_provider
             ):
                 yield _sse(event)
                 if event["type"] == "error":
                     return
+                if event["type"] == "tool_call" and (event.get("content") or {}).get("name") in ("write", "edit"):
+                    touched = True
             try:
                 from backend.agent.utils.workflow_validator import validate_workflow as _validate_iter
                 import yaml as _yaml_iter
@@ -293,11 +297,26 @@ async def post_create_workflow_stream(req: CreateWorkflowRequest) -> StreamingRe
                 log_error(str(exc), source="create.py:workflow(iterate_validate)")
                 yield _sse({"type": "error", "content": _FRIENDLY_ERROR_WORKFLOW})
                 return
-            yield _sse({"type": "workflow_result_final", "content": {
-                "status": "success",
-                "message": f"Workflow '{valid_iter_name}' modificado exitosamente.",
-                "data": {"exist": "Sí", "workflow": valid_iter_name, "workflow_path": workflow_archivo},
-            }})
+            complete = await is_creation_complete(
+                kind="workflow",
+                nombre=valid_iter_name,
+                artifact_path=_workflow_file_path(valid_iter_name or "workflow"),
+                mensajes=mensajes,
+                model=_create_model,
+                provider=_create_provider,
+                turn_number=len(mensajes),
+            )
+            if complete:
+                message = (
+                    f"Workflow '{valid_iter_name}' modificado exitosamente."
+                    if touched
+                    else f"Consulta sobre el workflow '{valid_iter_name}' respondida."
+                )
+                yield _sse({"type": "workflow_result_final", "content": {
+                    "status": "success",
+                    "message": message,
+                    "data": {"exist": "Sí", "workflow": valid_iter_name, "workflow_path": workflow_archivo},
+                }})
             return
 
         schedule: dict[str, Any] | None = None

@@ -26,6 +26,7 @@ from backend.agent.utils.create_helpers import (
 )
 from backend.instances import agent
 from backend.agent.utils.error_logger import log_error
+from backend.agent.utils.create_review import is_creation_complete
 from backend.agent.utils.creators import track_creator_run
 from backend.routes.create.common import (
     _AGENT_TOOLS_PERMS,
@@ -180,18 +181,36 @@ async def post_create_agent_stream(req: CreateAgentRequest) -> StreamingResponse
                 {"role": "user", "content": mensajes[-1]["content"] if mensajes else "Modificá el agente."},
             ]
 
+            touched = False
             async for event in stream_tool_calling_loop(
                 msgs, tools, _FRIENDLY_ERROR_AGENT, model=_create_model, provider=_create_provider
             ):
                 yield _sse(event)
                 if event["type"] == "error":
                     return
+                if event["type"] == "tool_call" and (event.get("content") or {}).get("name") in ("write", "edit"):
+                    touched = True
 
-            yield _sse({"type": "agent_result_final", "content": {
-                "status": "success",
-                "message": f"Agente '{nombre}' modificado exitosamente.",
-                "data": {"exist": "Sí", "agent": nombre, "agent_path": agent_carpeta},
-            }})
+            complete = await is_creation_complete(
+                kind="agent",
+                nombre=nombre,
+                artifact_path=_AGENTS_DIR / f"{nombre or 'agent'}.md",
+                mensajes=mensajes,
+                model=_create_model,
+                provider=_create_provider,
+                turn_number=len(mensajes),
+            )
+            if complete:
+                message = (
+                    f"Agente '{nombre}' modificado exitosamente."
+                    if touched
+                    else f"Consulta sobre el agente '{nombre}' respondida."
+                )
+                yield _sse({"type": "agent_result_final", "content": {
+                    "status": "success",
+                    "message": message,
+                    "data": {"exist": "Sí", "agent": nombre, "agent_path": agent_carpeta},
+                }})
             return
 
         # ════════════════════════════════════════════════════════════════

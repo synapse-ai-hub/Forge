@@ -33,6 +33,7 @@ from backend.agent.utils.create_helpers import (
 from backend.instances import agent
 from backend.routes.file_text_extractor import extract_text_from_bytes
 from backend.agent.utils.error_logger import log_error
+from backend.agent.utils.create_review import is_creation_complete
 from backend.agent.utils.creators import track_creator_run
 from backend.routes.create.common import (
     _AGENT_TOOLS_PERMS,
@@ -244,18 +245,36 @@ async def post_create_skill_stream(
                 {"role": "user", "content": mensajes[-1]["content"] if mensajes else "Modificá la skill."},
             ]
 
+            touched = False
             async for event in stream_tool_calling_loop(
                 msgs, tools, _FRIENDLY_ERROR, model=_create_model, provider=_create_provider
             ):
                 yield _sse(event)
                 if event["type"] == "error":
                     return
+                if event["type"] == "tool_call" and (event.get("content") or {}).get("name") in ("write", "edit"):
+                    touched = True
 
-            yield _sse({"type": "skill_result", "content": {
-                "status": "success",
-                "message": f"Skill '{nombre}' modificada exitosamente.",
-                "data": {"exist": "Sí", "skill": nombre, "skill_path": skill_carpeta},
-            }})
+            complete = await is_creation_complete(
+                kind="skill",
+                nombre=nombre,
+                artifact_path=_SKILLS_DIR / (nombre or "skill") / "SKILL.md",
+                mensajes=mensajes,
+                model=_create_model,
+                provider=_create_provider,
+                turn_number=len(mensajes),
+            )
+            if complete:
+                message = (
+                    f"Skill '{nombre}' modificada exitosamente."
+                    if touched
+                    else f"Consulta sobre la skill '{nombre}' respondida."
+                )
+                yield _sse({"type": "skill_result", "content": {
+                    "status": "success",
+                    "message": message,
+                    "data": {"exist": "Sí", "skill": nombre, "skill_path": skill_carpeta},
+                }})
             return
 
         # ════════════════════════════════════════════════════════════════
