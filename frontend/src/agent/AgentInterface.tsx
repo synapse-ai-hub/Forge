@@ -33,12 +33,6 @@ function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
 }
 
-/** Mensaje de la entrevista enviado al backend (/api/create/agent). */
-interface HistorialMsg {
-  role: "user" | "assistant";
-  content: string;
-}
-
 export function AgentInterface() {
   /* ---- state ---- */
   const [setupDone, setSetupDone] = useState(false);
@@ -55,7 +49,6 @@ export function AgentInterface() {
   const [noProviders, setNoProviders] = useState(false);
 
   const [messages, setMessages] = useState<Message[]>([]);
-  const historialRef = useRef<HistorialMsg[]>([]);
   /* Conversation of the creator: the history sidebar reopens it later. */
   const creatorIdRef = useRef<string>(newCreatorId());
   const [historyKey, setHistoryKey] = useState(0);
@@ -65,7 +58,6 @@ export function AgentInterface() {
   const [resultMsg, setResultMsg] = useState<string | null>(null);
   const [resultType, setResultType] = useState<"success" | "error" | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
-  const [isIterating, setIsIterating] = useState(false);
 
   /* ---- refs ---- */
   const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -161,7 +153,7 @@ export function AgentInterface() {
 
   /* ---- envío al backend (streaming SSE /api/create/agent) ---- */
   const enviar = useCallback(
-    async (texto: string, iterate: boolean = false) => {
+    async (texto: string) => {
       if (isStreaming) return;
       setInput("");
       setChatError(null);
@@ -186,11 +178,6 @@ export function AgentInterface() {
       setIsStreaming(true);
       setResultMsg(null);
       setResultType(null);
-
-      historialRef.current = [
-        ...historialRef.current,
-        { role: "user", content: texto },
-      ];
 
       let accumulatedContent = "";
       let accumulatedReasoning = "";
@@ -217,11 +204,9 @@ export function AgentInterface() {
           body: JSON.stringify({
             descripcion,
             name: nombre || null,
-            mensajes: historialRef.current,
             creator_id: creatorIdRef.current,
             model: createModel,
             provider: createProvider,
-            iterate,
             ...selectionToRequest(seleccion),
           }),
           signal: abort.signal,
@@ -377,31 +362,6 @@ export function AgentInterface() {
                   break;
                 }
 
-                case "agent_action": {
-                  const action = event.content?.action;
-                  if (action === "question") {
-                    historialRef.current = [
-                      ...historialRef.current,
-                      { role: "assistant", content: accumulatedContent },
-                    ];
-                    setMessages((prev) =>
-                      prev.map((m) => (m.id === assistantId ? { ...m, isStreaming: false } : m)),
-                    );
-                    setIsStreaming(false);
-                  } else if (action === "creating") {
-                    historialRef.current = [
-                      ...historialRef.current,
-                      { role: "assistant", content: accumulatedContent },
-                    ];
-                  } else if (action === "iterating") {
-                    historialRef.current = [
-                      ...historialRef.current,
-                      { role: "assistant", content: accumulatedContent },
-                    ];
-                  }
-                  break;
-                }
-
                 case "agent_result_final": {
                   const data = event.content || {};
                   setMessages((prev) =>
@@ -458,17 +418,15 @@ export function AgentInterface() {
         setHistoryKey((k) => k + 1);
       }
     },
-    [isStreaming, descripcion, nombre, createModel, createProvider, isIterating, seleccion],
+    [isStreaming, descripcion, nombre, createModel, createProvider, seleccion],
   );
 
   /* ---- enviar desde el chat ---- */
   const handleSend = useCallback(() => {
     const text = input.trim();
     if (!text || isStreaming) return;
-    const iterate = isIterating;
-    setIsIterating(false);
-    enviar(text, iterate);
-  }, [input, isStreaming, enviar, isIterating]);
+    enviar(text);
+  }, [input, isStreaming, enviar]);
 
   /* ---- detener streaming ---- */
   const handleCancel = useCallback(() => {
@@ -520,7 +478,6 @@ export function AgentInterface() {
   const resetConversation = useCallback((): void => {
     abortRef.current?.abort();
     creatorIdRef.current = newCreatorId();
-    historialRef.current = [];
     setMessages([]);
     setSetupDone(false);
     setNombre("");
@@ -530,7 +487,6 @@ export function AgentInterface() {
     setChatError(null);
     setResultMsg(null);
     setResultType(null);
-    setIsIterating(false);
     setHistoryKey((k) => k + 1);
   }, []);
 
@@ -543,7 +499,6 @@ export function AgentInterface() {
     abortRef.current?.abort();
     const setup = c.setup as Record<string, any>;
     creatorIdRef.current = c.creator_id;
-    historialRef.current = c.historial;
     setNombre(typeof setup.name === "string" ? setup.name : "");
     setDescripcion(typeof setup.descripcion === "string" ? setup.descripcion : "");
     setSeleccion(selectionFromSetup(setup));
@@ -555,7 +510,6 @@ export function AgentInterface() {
     );
     setInput("");
     setChatError(null);
-    setIsIterating(false);
     setSetupDone(true);
     setHistoryKey((k) => k + 1);
   }, []);
@@ -768,19 +722,6 @@ export function AgentInterface() {
                         <Download size={14} />
                         Descargar conversación
                       </button>
-                      {resultType === "success" && (
-                        <button
-                          onClick={() => {
-                            setResultMsg(null);
-                            setResultType(null);
-                            setIsIterating(true);
-                            setTimeout(() => scrollToBottom("smooth"), 50);
-                          }}
-                          className="flex items-center gap-1 bg-app-bg-tertiary text-app-text text-sm font-medium px-4 py-2 rounded-lg hover:bg-app-bg-secondary transition-colors border border-app-border"
-                        >
-                          Seguir iterando
-                        </button>
-                      )}
                       <button
                         onClick={() => window.close()}
                         className="bg-gradient-to-r from-app-primary to-app-gradient-secondary text-white text-sm font-medium px-5 py-2 rounded-lg hover:opacity-90 transition-colors"
@@ -789,12 +730,34 @@ export function AgentInterface() {
                       </button>
                     </div>
                 </div>
-              ) : (
-                <>
+              ) : null}
+              <>
                   {chatError && (
                     <div className="mb-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-4 py-2.5">
                       {chatError}
                     </div>
+                  )}
+
+                  <div className="flex gap-2 mb-2">
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          setDownloadError(null);
+                          const md = await fetchConversationMarkdown(messages, "Conversación - Creador de Agentes");
+                          await saveFileWithPicker(md, "conversacion-agente", ".md");
+                        } catch (err) {
+                          setDownloadError(err instanceof Error ? err.message : "No se pudo descargar la conversación.");
+                        }
+                      }}
+                      className="flex items-center gap-1 bg-app-bg-tertiary text-app-text text-sm font-medium px-4 py-2 rounded-lg hover:bg-app-bg-secondary transition-colors border border-app-border"
+                    >
+                      <Download size={14} />
+                      Descargar conversación
+                    </button>
+                  </div>
+                  {downloadError && (
+                    <p className="text-sm text-red-600 mb-2">{downloadError}</p>
                   )}
 
                   <div className="relative">
@@ -854,8 +817,7 @@ export function AgentInterface() {
                       />
                     )}
                   </div>
-                </>
-              )}
+              </>
             </div>
           </div>
         </div>

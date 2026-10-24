@@ -44,13 +44,6 @@ function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
 }
 
-/** Mensaje de la entrevista enviado al backend (/api/create/skill). */
-interface HistorialMsg {
-  role: "user" | "assistant";
-  content: string;
-  files?: Array<{ name: string; size: number }>;
-}
-
 export function SkillInterface() {
   /* ---- state ---- */
   const [setupDone, setSetupDone] = useState(false);
@@ -65,7 +58,6 @@ export function SkillInterface() {
   const [noProviders, setNoProviders] = useState(false);
 
   const [messages, setMessages] = useState<Message[]>([]);
-  const historialRef = useRef<HistorialMsg[]>([]);
   /* Conversation of the creator: the history sidebar reopens it later. */
   const creatorIdRef = useRef<string>(newCreatorId());
   const [historyKey, setHistoryKey] = useState(0);
@@ -77,7 +69,6 @@ export function SkillInterface() {
   const [resultMsg, setResultMsg] = useState<string | null>(null);
   const [resultType, setResultType] = useState<"success" | "error" | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
-  const [isIterating, setIsIterating] = useState(false);
 
   /* ---- refs ---- */
   const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -227,7 +218,7 @@ export function SkillInterface() {
 
   /* ---- envío al backend (streaming SSE /api/create/skill) ---- */
   const enviar = useCallback(
-    async (texto: string, archivos: File[], iterate: boolean = false) => {
+    async (texto: string, archivos: File[]) => {
       if (isStreaming) return;
       setInput("");
       setFiles([]);
@@ -255,13 +246,6 @@ export function SkillInterface() {
       setResultMsg(null);
       setResultType(null);
 
-      // Guardar solo nombres para el historial de display
-      const fileNames = archivos.map((f) => ({ name: f.name, size: f.size }));
-      historialRef.current = [
-        ...historialRef.current,
-        { role: "user", content: texto, files: fileNames.length ? fileNames : undefined },
-      ];
-
       let accumulatedContent = "";
       let accumulatedReasoning = "";
       let accumulatedBlocks: ContentBlock[] = [];
@@ -285,11 +269,9 @@ export function SkillInterface() {
         const formData = new FormData();
         formData.append("descripcion", descripcion);
         if (nombre) formData.append("name", nombre);
-        formData.append("mensajes", JSON.stringify(historialRef.current));
         formData.append("creator_id", creatorIdRef.current);
         if (createModel) formData.append("model", createModel);
         if (createProvider) formData.append("provider", createProvider);
-        if (iterate) formData.append("iterate", "true");
         archivos.forEach((f) => formData.append("files", f));
 
         const resp = await fetch(`${API}/create/skill`, {
@@ -453,35 +435,7 @@ export function SkillInterface() {
                   break;
                 }
 
-                case "skill_action": {
-                  const action = event.content?.action;
-                  if (action === "question") {
-                    // La entrevista devuelve el control al usuario: finalizar el mensaje y habilitar input
-                    historialRef.current = [
-                      ...historialRef.current,
-                      { role: "assistant", content: accumulatedContent },
-                    ];
-                    setMessages((prev) =>
-                      prev.map((m) => (m.id === assistantId ? { ...m, isStreaming: false } : m)),
-                    );
-                    setIsStreaming(false);
-                  } else if (action === "creating") {
-                    // Sigue el stream (FASE 2/3): el typing aparece en los lapsos muertos
-                    historialRef.current = [
-                      ...historialRef.current,
-                      { role: "assistant", content: accumulatedContent },
-                    ];
-                  } else if (action === "iterating") {
-                    // Iteración: el LLM va a modificar la creación existente
-                    historialRef.current = [
-                      ...historialRef.current,
-                      { role: "assistant", content: accumulatedContent },
-                    ];
-                  }
-                  break;
-                }
-
-                case "skill_result": {
+                case "skill_result_final": {
                   const data = event.content || {};
                   setMessages((prev) =>
                     prev.map((m) => (m.id === assistantId ? { ...m, isStreaming: false } : m)),
@@ -544,17 +498,15 @@ export function SkillInterface() {
         setHistoryKey((k) => k + 1);
       }
     },
-    [isStreaming, descripcion, nombre, createModel, createProvider, isIterating],
+    [isStreaming, descripcion, nombre, createModel, createProvider],
   );
 
   /* ---- enviar desde el chat ---- */
   const handleSend = useCallback(() => {
     const text = input.trim();
     if (!text || isStreaming) return;
-    const iterate = isIterating;
-    setIsIterating(false);
-    enviar(text, files, iterate);
-  }, [input, files, isStreaming, enviar, isIterating]);
+    enviar(text, files);
+  }, [input, files, isStreaming, enviar]);
 
   /* ---- detener streaming ---- */
   const handleCancel = useCallback(() => {
@@ -605,7 +557,6 @@ export function SkillInterface() {
   const resetConversation = useCallback((): void => {
     abortRef.current?.abort();
     creatorIdRef.current = newCreatorId();
-    historialRef.current = [];
     setMessages([]);
     setSetupDone(false);
     setNombre("");
@@ -614,7 +565,6 @@ export function SkillInterface() {
     setChatError(null);
     setResultMsg(null);
     setResultType(null);
-    setIsIterating(false);
     setFiles([]);
     setFileWarning(null);
     setHistoryKey((k) => k + 1);
@@ -629,7 +579,6 @@ export function SkillInterface() {
     abortRef.current?.abort();
     const setup = c.setup as Record<string, any>;
     creatorIdRef.current = c.creator_id;
-    historialRef.current = c.historial;
     setNombre(typeof setup.name === "string" ? setup.name : "");
     setDescripcion(typeof setup.descripcion === "string" ? setup.descripcion : "");
     setFiles([]);
@@ -641,7 +590,6 @@ export function SkillInterface() {
     );
     setInput("");
     setChatError(null);
-    setIsIterating(false);
     setSetupDone(true);
     setHistoryKey((k) => k + 1);
   }, []);
@@ -848,19 +796,6 @@ export function SkillInterface() {
                         <Download size={14} />
                         Descargar conversación
                       </button>
-                      {resultType === "success" && (
-                        <button
-                          onClick={() => {
-                            setResultMsg(null);
-                            setResultType(null);
-                            setIsIterating(true);
-                            setTimeout(() => scrollToBottom("smooth"), 50);
-                          }}
-                          className="flex items-center gap-1 bg-app-bg-tertiary text-app-text text-sm font-medium px-4 py-2 rounded-lg hover:bg-app-bg-secondary transition-colors border border-app-border"
-                        >
-                          Seguir iterando
-                        </button>
-                      )}
                       <button
                         onClick={() => window.close()}
                         className="bg-gradient-to-r from-[#4f46e5] to-[#8b5cf6] text-white text-sm font-medium px-5 py-2 rounded-lg hover:opacity-90 transition-colors"
@@ -869,8 +804,8 @@ export function SkillInterface() {
                       </button>
                     </div>
                 </div>
-              ) : (
-                <>
+              ) : null}
+              <>
               {chatError && (
                 <div className="mb-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-4 py-2.5">
                   {chatError}
@@ -905,6 +840,28 @@ export function SkillInterface() {
                 className="hidden"
                 onChange={handleFilesSelected}
               />
+
+              <div className="flex gap-2 mb-2">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      setDownloadError(null);
+                      const md = await fetchConversationMarkdown(messages, "Conversación - Creador de Skills");
+                      await saveFileWithPicker(md, "conversacion-skill", ".md");
+                    } catch (err) {
+                      setDownloadError(err instanceof Error ? err.message : "No se pudo descargar la conversación.");
+                    }
+                  }}
+                  className="flex items-center gap-1 bg-app-bg-tertiary text-app-text text-sm font-medium px-4 py-2 rounded-lg hover:bg-app-bg-secondary transition-colors border border-app-border"
+                >
+                  <Download size={14} />
+                  Descargar conversación
+                </button>
+              </div>
+              {downloadError && (
+                <p className="text-sm text-red-600 mb-2">{downloadError}</p>
+              )}
 
               {/* Textarea wrapper with buttons inside */}
               <div className="relative">
@@ -979,8 +936,7 @@ export function SkillInterface() {
                   />
                 )}
               </div>
-                </>
-              )}
+              </>
             </div>
           </div>
         </div>
