@@ -14,6 +14,7 @@ PROMPTS = Path(__file__).resolve().parents[2] / "backend" / "agent" / "prompts"
 STRUCTURED = {
     "tools": ["read"],
     "decision": False,
+    "is_llm": True,
     "programada": True,
     "agentes": [{"name": "<<agente>>", "description": "<<descripcion-agente>>"}],
     "seleccion": {

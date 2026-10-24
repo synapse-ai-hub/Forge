@@ -1,0 +1,12 @@
+{{ user_message }}{% if context is defined and context %}
+
+
+## Contexto
+{{ context }}{% endif %}{% if attachments_section is defined and attachments_section %}
+
+
+{{ attachments_section }}{% endif %}{% if frontier is defined and frontier %}
+
+
+## Trabajo sin cerrar del turno anterior
+{{ frontier }}{% endif %}

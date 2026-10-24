@@ -66,11 +66,13 @@ from backend.instances import agent, session_manager
 from backend.agent.utils.loop_helpers import (
     _tool_call_ctx,
     build_initial_messages,
+    build_subagent_sections,
     build_system_prompt,
+    build_user_message,
     execute_tool,
     fetch_context_window_turns,
-    format_workflows_section,
-    router_agents,
+    get_temp_dir,
+    load_context_text,
 )
 from backend.agent.utils.model_resolver import (
     ensure_context_window,
@@ -392,10 +394,7 @@ class AgentLoop:
             )
 
             # --- 1d. Create temp directory for agent's markdown file ---
-            from backend.agent.utils.config_dir import get_config_dir
-            temp_dir = get_config_dir() / "temp"
-            temp_dir.mkdir(parents=True, exist_ok=True)
-            temp_path = str(temp_dir)
+            temp_path = get_temp_dir()
             
 
             # Router permissions (router_config table) are read once: tools and
@@ -424,7 +423,24 @@ class AgentLoop:
             agent.tools._current_tool_permissions = tool_permissions or {}
 
             # --- 3. Build system prompt ---
+            # Every section is resolved here and passed as a template variable;
+            # the assembly lives in Jinja (system_prompt.jinja / subagent_prompt.jinja).
             if system_prompt is None:
+                skills_section = ""
+                agents_section = ""
+                if agent_name is not None:
+                    # Sub-agents get their skills/agents (the router lists its
+                    # agents in build_system_prompt; its skills come from the stored selection).
+                    skills_section, agents_section = build_subagent_sections(
+                        tool_permissions, skill_permissions
+                    )
+                elif router_perms is not None:
+                    # Router: no skills by default. If the stored selection lists
+                    # skills, they are injected like a sub-agent's.
+                    router_skills = router_perms.get("skills")
+                    if isinstance(router_skills, dict) and router_skills:
+                        skills_section = format_skills_section(skill_permissions=router_skills)
+
                 system_prompt = build_system_prompt(
                     agent_name,
                     tools=(
@@ -437,81 +453,94 @@ class AgentLoop:
                         if agent_name is None
                         else None
                     ),
+                    skills_section=skills_section,
+                    agents_section=agents_section,
+                    temp_dir=temp_path,
                 )
-
-            # Sub-agents get their skills/agents appended (the router lists its
-            # agents in build_system_prompt; its skills come from the stored selection).
-            if agent_name is not None:
-                skills_section = format_skills_section(skill_permissions=skill_permissions)
-                # Only the agents its ``task`` permission allows (none without it).
-                task_perms = (tool_permissions or {}).get("task", {})
-                agents_section = agent.prompt(
-                    "agentes_subagente",
-                    agentes=router_agents(("task",) if task_perms else (), task_perms),
-                )
-                system_prompt = (
-                    f"{system_prompt}\n\n"
-                    f"## Skills Disponibles\n{skills_section}\n\n"
-                    f"{agents_section}"
-                )
-            elif router_perms is not None:
-                # Router: no skills by default. If the stored selection lists
-                # skills, they are injected like a sub-agent's.
-                router_skills = router_perms.get("skills")
-                if isinstance(router_skills, dict) and router_skills:
-                    skills_section = format_skills_section(skill_permissions=router_skills)
-                    if skills_section:
-                        system_prompt = (
-                            f"{system_prompt}\n\n## Skills Disponibles\n{skills_section}"
-                        )
-
-            # Workflows this agent may run through the ``workflow`` tool.
-            workflows_section = format_workflows_section(tool_permissions)
-            if workflows_section:
-                system_prompt = (
-                    f"{system_prompt}\n\n## Workflows Disponibles\n{workflows_section}"
-                )
-
-            # Append temp directory path to system prompt (concatenation, no .format)
-            system_prompt = f"{system_prompt}\n\n## Directorio temporal\n{temp_path}"
             
-            # --- 4. Build initial messages array (history does NOT include current message) ---
-            # Append attached files (if any) to the user message
-            effective_message = user_message
-            if file_contents:
-                try:
-                    parts: list[str] = []
-                    for fn, text in file_contents:
-                        parts.append(f"**Archivo: {fn}**\n{text}")
-                    attachments_section = (
-                        "<inicio_adjuntos>\n"
-                        + "\n".join(parts)
-                        + "\n<fin_adjuntos>"
-                    )
-                    effective_message = f"{user_message}\n\n{attachments_section}"
-                except Exception as exc:
-                    logger.warning("Error building attachments section: %s", exc)
-                    log_error(str(exc), source="loop.py:run")
-
-            messages = build_initial_messages(
-                session_manager,
-                session_id,
-                system_prompt,
-                effective_message,
-                max_turns=await asyncio.to_thread(fetch_context_window_turns),
+            # --- 4. Gate message: raw text + attachments (guardrail/gate input) ---
+            # Variable per-turn data (context files, pending frontier) is NOT
+            # part of the gate input: the guardrail and the continuity gate
+            # see exactly what they saw before (message + attachments).
+            gate_message = build_user_message(
+                user_message, file_contents=file_contents
             )
-            
+
             # --- 5. Input guardrail (router only) ---
             # With the decision model enabled the security rules go to it (the
             # router prompt has no "Seguridad" block), and an attack is stopped
             # before the LLM runs. The blocked text is not kept in the
             # history, so later turns never send it to the LLM.
             blocked = agent_name is None and await is_message_blocked(
-                session_id, turn_number, effective_message,
+                session_id, turn_number, gate_message,
                 [t["function"]["name"] for t in tools],
             )
 
-            # --- 5-bis. Save user message to DB (after building messages so history is clean) ---
+            # --- 5a. Resume unsettled frontier (read-first) ---
+            # A cut flow leaves open rows behind (they are only deleted on
+            # validated close). They are read FIRST, before the LLM runs,
+            # and injected as part of the user content (facts only, nothing
+            # truncated). In-memory only, never persisted — the same pattern
+            # as the empty-response hint. Confirmed rows older than the TTL
+            # are garbage-collected first (open rows are never collected:
+            # any future turn may resume them).
+            try:
+                collect_garbage(float(os.getenv("FRONTIER_TTL_HOURS", "24") or 24))
+            except Exception as exc:
+                log_error(str(exc), source="loop.py:run(frontier_gc)")
+            # Continuity gate (Option A): when the new message is unrelated
+            # to the pending frontier, discard it instead of re-injecting
+            # it forever. Only runs with a decision model enabled; without
+            # one should_keep_pending returns True (current behavior).
+            # Emits a "decision" SSE event so the frontend can render it
+            # as a card (ignored by older frontends).
+            try:
+                keep_pending = await should_keep_pending(session_id, gate_message)
+            except Exception as exc:
+                log_error(str(exc), source="loop.py:run(continuity)")
+                keep_pending = True
+            if not keep_pending:
+                try:
+                    clear_session(session_id)
+                except Exception as exc:
+                    log_error(str(exc), source="loop.py:run(continuity_clear)")
+                yield f"data: {json.dumps({'type': 'decision', 'content': {'action': 'discarded', 'reason': 'unrelated'}}, ensure_ascii=False)}\n\n"
+                resume_text = None
+            else:
+                try:
+                    resume_text = build_resume_message(session_id)
+                except Exception as exc:
+                    log_error(str(exc), source="loop.py:run(resume)")
+                    resume_text = None
+
+            # --- 5b. Build initial messages array (history does NOT include current message) ---
+            # The current user content is rendered via user_prompt.jinja:
+            # message + context files (router only, sub-agents stay isolated)
+            # + attachments + pending frontier. Only the raw message is
+            # persisted below, so the history stays clean.
+            try:
+                context_text = (
+                    await asyncio.to_thread(load_context_text)
+                    if agent_name is None else ""
+                )
+            except Exception as exc:
+                log_error(str(exc), source="loop.py:run(context)")
+                context_text = ""
+            user_content = build_user_message(
+                user_message,
+                context=context_text,
+                file_contents=file_contents,
+                frontier=resume_text or "",
+            )
+            messages = build_initial_messages(
+                session_manager,
+                session_id,
+                system_prompt,
+                user_content,
+                max_turns=await asyncio.to_thread(fetch_context_window_turns),
+            )
+
+            # --- 5-c. Save user message to DB (after building messages so history is clean) ---
             session_manager.save_message(
                 session_id, "user",
                 content=BLOCKED_USER_TEXT if blocked else user_message,
@@ -529,45 +558,6 @@ class AgentLoop:
                 yield "data: [DONE]\n\n"
                 _schedule_latency()
                 return
-
-            # --- 5a. Resume unsettled frontier (read-first) ---
-            # A cut flow leaves open rows behind (they are only deleted on
-            # validated close). They are read FIRST, before the LLM runs,
-            # and injected as an ephemeral system message: facts only,
-            # nothing truncated. In-memory only, never persisted — the
-            # same pattern as the empty-response hint. Confirmed rows
-            # older than the TTL are garbage-collected first (open rows
-            # are never collected: any future turn may resume them).
-            try:
-                collect_garbage(float(os.getenv("FRONTIER_TTL_HOURS", "24") or 24))
-            except Exception as exc:
-                log_error(str(exc), source="loop.py:run(frontier_gc)")
-            # Continuity gate (Option A): when the new message is unrelated
-            # to the pending frontier, discard it instead of re-injecting
-            # it forever. Only runs with a decision model enabled; without
-            # one should_keep_pending returns True (current behavior).
-            # Emits a "decision" SSE event so the frontend can render it
-            # as a card (ignored by older frontends).
-            try:
-                keep_pending = await should_keep_pending(session_id, effective_message)
-            except Exception as exc:
-                log_error(str(exc), source="loop.py:run(continuity)")
-                keep_pending = True
-            if not keep_pending:
-                try:
-                    clear_session(session_id)
-                except Exception as exc:
-                    log_error(str(exc), source="loop.py:run(continuity_clear)")
-                yield f"data: {json.dumps({'type': 'decision', 'content': {'action': 'discarded', 'reason': 'unrelated'}}, ensure_ascii=False)}\n\n"
-                resume_text = None
-            else:
-                try:
-                    resume_text = build_resume_message(session_id)
-                except Exception as exc:
-                    log_error(str(exc), source="loop.py:run(resume)")
-                    resume_text = None
-            if resume_text:
-                messages.append({"role": "system", "content": resume_text})
 
             # --- 5b. Generate title on first turn (root sessions only, non-blocking) ---
             # Sub-agents (depth > 0) skip title generation entirely: each one
@@ -792,10 +782,10 @@ class AgentLoop:
                     except Exception as e:
                         error_category = classify_error_category(e)
                         logger.exception("Error in agent streaming: %s", e)
-                        log_error(str(e), source="loop.py:run(llm_stream)")
 
                         # User cancellation always wins: never retry.
                         if stream_cancel_event is not None and stream_cancel_event.is_set():
+                            log_error(str(e), source="loop.py:run(llm_stream)")
                             # The failed attempt never reached the agent's
                             # spend record: count it here (zero tokens when
                             # no usage was captured) so SUM(spend) == SUM(messages).
@@ -828,6 +818,7 @@ class AgentLoop:
                             return
                         # Fatal, budget and too-large errors: no retry.
                         if error_category in ("fatal", "budget", "too_large"):
+                            log_error(str(e), source="loop.py:run(llm_stream)")
                             error_msg = (
                                 RATE_LIMIT_MESSAGES["413"]
                                 if error_category == "too_large"
@@ -1068,6 +1059,7 @@ class AgentLoop:
                             "tool_permissions": tool_permissions or {},
                             "task_config": btc_cfg,
                             "subagent_event_queue": btc_queue,
+                            "file_contents": file_contents,
                         }
                         token = _tool_call_ctx.set(snap)
                         started = _time.perf_counter()
@@ -1404,7 +1396,7 @@ class AgentLoop:
                         # A task call exposes its child session id in the
                         # result XML: attach it to the frontier row so the
                         # child stays visible to the parent.
-                        if tc.get("name") in ("task", "workflow"):
+                        if tc.get("name") == "task":
                             child_id = extract_task_child_id(result_data)
                             if child_id:
                                 set_task_child(
