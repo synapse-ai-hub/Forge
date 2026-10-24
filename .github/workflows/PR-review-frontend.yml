@@ -79,5 +79,8 @@ jobs:
             echo "Gemini no devolvió respuesta, no se publica nada."
             exit 0
           fi
-          printf '%s\n' "${REVIEW_BODY}" > review.md
+          {
+            printf '**🔎 PR review (frontend)** — PR `#%s`\n\n' "${PR_NUMBER}"
+            printf '%s\n' "${REVIEW_BODY}"
+          } > review.md
           gh pr comment "${PR_NUMBER}" --repo "${{ github.repository }}" --body-file review.md
