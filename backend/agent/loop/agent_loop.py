@@ -160,6 +160,8 @@ class AgentLoop:
         parent_id: str | None = None,
         parent_model: str | None = None,
         parent_provider: str | None = None,
+        is_creator: bool = False,
+        user_setup: dict | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Run the agent loop for a single user message.
 
@@ -186,6 +188,14 @@ class AgentLoop:
             parent_provider: Parent agent's effective provider (any curated provider id or ``"LOCAL"``).
                 Used together with ``parent_model`` to decide whether to liberate
                 the parent model (only meaningful when both are LOCAL).
+            is_creator: Creator run (skill/tool/agent/workflow creators).
+                Skips the session title, the long-term memory indexing and
+                the step-frontier machinery (resume/record/close): creator
+                conversations persist in the ``creators`` table and every
+                turn is self-contained.
+            user_setup: Setup form of a creator request (stored as JSON on
+                the user row so the creator page can rebuild it). Only
+                honored by session managers that support it.
 
         Yields:
             SSE events (raw ``"data: {...}\\n\\n"`` strings):
@@ -494,24 +504,30 @@ class AgentLoop:
             # one should_keep_pending returns True (current behavior).
             # Emits a "decision" SSE event so the frontend can render it
             # as a card (ignored by older frontends).
-            try:
-                keep_pending = await should_keep_pending(session_id, gate_message)
-            except Exception as exc:
-                log_error(str(exc), source="loop.py:run(continuity)")
-                keep_pending = True
-            if not keep_pending:
-                try:
-                    clear_session(session_id)
-                except Exception as exc:
-                    log_error(str(exc), source="loop.py:run(continuity_clear)")
-                yield f"data: {json.dumps({'type': 'decision', 'content': {'action': 'discarded', 'reason': 'unrelated'}}, ensure_ascii=False)}\n\n"
+            # Creators skip the continuity gate and the resume injection:
+            # their turns persist in the creators table and every turn is
+            # self-contained (no frontier rows are ever recorded for them).
+            if is_creator:
                 resume_text = None
             else:
                 try:
-                    resume_text = build_resume_message(session_id)
+                    keep_pending = await should_keep_pending(session_id, gate_message)
                 except Exception as exc:
-                    log_error(str(exc), source="loop.py:run(resume)")
+                    log_error(str(exc), source="loop.py:run(continuity)")
+                    keep_pending = True
+                if not keep_pending:
+                    try:
+                        clear_session(session_id)
+                    except Exception as exc:
+                        log_error(str(exc), source="loop.py:run(continuity_clear)")
+                    yield f"data: {json.dumps({'type': 'decision', 'content': {'action': 'discarded', 'reason': 'unrelated'}}, ensure_ascii=False)}\n\n"
                     resume_text = None
+                else:
+                    try:
+                        resume_text = build_resume_message(session_id)
+                    except Exception as exc:
+                        log_error(str(exc), source="loop.py:run(resume)")
+                        resume_text = None
 
             # --- 5b. Build initial messages array (history does NOT include current message) ---
             # The current user content is rendered via user_prompt.jinja:
@@ -541,10 +557,15 @@ class AgentLoop:
             )
 
             # --- 5-c. Save user message to DB (after building messages so history is clean) ---
+            user_row_kwargs: dict[str, Any] = {}
+            if user_setup is not None:
+                # Only creator session managers accept it; the chat never sends it.
+                user_row_kwargs["setup"] = user_setup
             session_manager.save_message(
                 session_id, "user",
                 content=BLOCKED_USER_TEXT if blocked else user_message,
                 turn_number=turn_number,
+                **user_row_kwargs,
             )
             if blocked:
                 session_manager.save_message(
@@ -565,7 +586,7 @@ class AgentLoop:
             # the loop. For root sessions the title is generated in a background
             # task so it doesn't block the response stream; the result is pushed
             # to a queue that the loop drains to emit the session_title event.
-            if turn_number == 1 and depth == 0:
+            if turn_number == 1 and depth == 0 and not is_creator:
                 try:
                     existing_titles = session_manager.get_all_titles()
                     if existing_titles:
@@ -1185,20 +1206,22 @@ class AgentLoop:
                     # flip to done on ordered commit and are only deleted
                     # when the step closes with a validated done signal.
                     # Never breaks the loop (the helper never raises).
-                    record_block_dispatch(
-                        session_id,
-                        turn_number,
-                        step,
-                        [
-                            (
-                                idx,
-                                btc.get("id", ""),
-                                btc.get("name", "?"),
-                                btc.get("args") or {},
-                            )
-                            for idx, btc, _cfg, _queue in pending
-                        ],
-                    )
+                    # Creators never record frontier rows (self-contained turns).
+                    if not is_creator:
+                        record_block_dispatch(
+                            session_id,
+                            turn_number,
+                            step,
+                            [
+                                (
+                                    idx,
+                                    btc.get("id", ""),
+                                    btc.get("name", "?"),
+                                    btc.get("args") or {},
+                                )
+                                for idx, btc, _cfg, _queue in pending
+                            ],
+                        )
 
                     # ---- Execute the whole block concurrently ----
                     # Every queued call runs under its own ContextVar
@@ -1392,11 +1415,14 @@ class AgentLoop:
                         )
 
                         # The result committed: flip its frontier row to done.
-                        mark_call_done(session_id, turn_number, step, idx)
+                        # Skipped for creators (they never record frontier rows).
+                        if not is_creator:
+                            mark_call_done(session_id, turn_number, step, idx)
                         # A task call exposes its child session id in the
                         # result XML: attach it to the frontier row so the
-                        # child stays visible to the parent.
-                        if tc.get("name") == "task":
+                        # child stays visible to the parent. Creators never
+                        # delegate to sub-agents, so there is nothing to attach.
+                        if not is_creator and tc.get("name") == "task":
                             child_id = extract_task_child_id(result_data)
                             if child_id:
                                 set_task_child(
@@ -1526,7 +1552,8 @@ class AgentLoop:
                 # to the model in the resume message of this turn, so a
                 # validated close finishes them too: the whole session
                 # frontier is deleted, not only this turn's.
-                if await should_close_step(session_id, turn_number, cleaned, step=step):
+                # Creators have no frontier: the signal is always accepted.
+                if not is_creator and await should_close_step(session_id, turn_number, cleaned, step=step):
                     clear_session(session_id)
 
                 # Emit the session title before [DONE] so the sidebar refreshes
@@ -1550,8 +1577,9 @@ class AgentLoop:
                 # after the title drain so the indexed metadata can include
                 # the session title. Only root sessions are indexed —
                 # sub-agent child sessions duplicate the parent's content and
-                # would pollute the memory index.
-                if depth == 0:
+                # would pollute the memory index. Creator runs are never
+                # indexed either: they are work sessions, not conversations.
+                if depth == 0 and not is_creator:
                     try:
                         from backend.agent.utils.rag_helpers import index_turn_fire_and_forget
 

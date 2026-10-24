@@ -32,9 +32,14 @@ CREATE TABLE IF NOT EXISTS creators (
     completion_tokens INTEGER DEFAULT 0,  -- output tokens (call rows)
     total_tokens INTEGER DEFAULT 0,  -- input + output tokens (call rows)
     total_time REAL,  -- seconds the call or the request took
+    time_to_first_token REAL,  -- seconds until the first token arrived (assistant rows)
     cost_input REAL DEFAULT 0.0,  -- USD cost of the input tokens
     cost_output REAL DEFAULT 0.0,  -- USD cost of the output tokens
     cost_total REAL DEFAULT 0.0,  -- cost_input + cost_output
+    turn_number INTEGER,  -- turn of the conversation (1, 2, ...); NULL in old rows
+    step INTEGER,  -- step inside the turn (one per LLM round); NULL in old rows
+    substep INTEGER,  -- position inside the step (parallel tool calls); NULL in old rows
+    tool_call_id TEXT,  -- id of the tool call, in tool rows (links to the assistant row)
     created_at TEXT NOT NULL  -- local time, ISO format
 );
 
