@@ -209,7 +209,10 @@ class CreatorSessionManager:
                     if r["turn_number"] is not None
                 })
                 if known_turns:
-                    min_turn = max(known_turns[-max_turns], 0)
+                    # Same approach as the normal chat (session.py):
+                    # arithmetic on the max turn, never negative indexing,
+                    # so asking for more turns than exist loads everything.
+                    min_turn = max(known_turns[-1] - max_turns + 1, 0)
                     rows = [
                         r for r in rows
                         if r["turn_number"] is None or int(r["turn_number"]) >= min_turn

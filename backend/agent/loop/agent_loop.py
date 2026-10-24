@@ -549,12 +549,15 @@ class AgentLoop:
                 file_contents=file_contents,
                 frontier=resume_text or "",
             )
+            # Creators always load the full history: unlike the normal
+            # chat, the user cannot configure a turn window for them.
+            turns = -1 if is_creator else await asyncio.to_thread(fetch_context_window_turns)
             messages = build_initial_messages(
                 session_manager,
                 session_id,
                 system_prompt,
                 user_content,
-                max_turns=await asyncio.to_thread(fetch_context_window_turns),
+                max_turns=turns,
             )
 
             # --- 5-c. Save user message to DB (after building messages so history is clean) ---

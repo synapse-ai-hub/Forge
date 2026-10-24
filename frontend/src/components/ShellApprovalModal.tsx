@@ -49,7 +49,7 @@ export function ShellApprovalModal({ approval, onResolved }: ShellApprovalModalP
       <DialogContent>
         <DialogHeader>
           <DialogTitle>
-            <ShieldAlert size={16} style={{ display: "inline", marginRight: 8 }} />
+            <ShieldAlert size={16} className="inline mr-2" />
             El agente quiere ejecutar un comando
           </DialogTitle>
           <DialogDescription>
@@ -57,24 +57,15 @@ export function ShellApprovalModal({ approval, onResolved }: ShellApprovalModalP
             ejecuta con acceso total al sistema.
           </DialogDescription>
         </DialogHeader>
-        <pre
-          style={{
-            background: "var(--muted, #f4f4f5)",
-            padding: 12,
-            borderRadius: 8,
-            overflowX: "auto",
-            whiteSpace: "pre-wrap",
-            wordBreak: "break-all",
-          }}
-        >
+        <pre className="bg-app-bg-tertiary p-3 rounded-lg overflow-x-auto whitespace-pre-wrap break-all text-sm font-mono text-app-text border border-app-border">
           {approval?.command || ""}
         </pre>
-        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+        <div className="flex gap-2 justify-end">
           <button
             type="button"
             disabled={busy}
             onClick={() => void decide(false)}
-            style={{ display: "flex", alignItems: "center", gap: 6 }}
+            className="flex items-center gap-1 bg-app-bg-tertiary text-app-text text-sm font-medium px-4 py-2 rounded-lg hover:bg-app-bg-secondary transition-colors border border-app-border disabled:opacity-40 disabled:cursor-not-allowed"
           >
             <X size={14} /> Denegar
           </button>
@@ -82,7 +73,7 @@ export function ShellApprovalModal({ approval, onResolved }: ShellApprovalModalP
             type="button"
             disabled={busy}
             onClick={() => void decide(true)}
-            style={{ display: "flex", alignItems: "center", gap: 6 }}
+            className="flex items-center gap-1 bg-app-bg-tertiary text-app-text text-sm font-medium px-4 py-2 rounded-lg hover:bg-app-bg-secondary transition-colors border border-app-border disabled:opacity-40 disabled:cursor-not-allowed"
           >
             <Check size={14} /> Aprobar
           </button>
