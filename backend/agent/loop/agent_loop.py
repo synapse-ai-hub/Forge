@@ -454,11 +454,11 @@ class AgentLoop:
             # the assembly lives in Jinja (system_prompt.jinja / subagent_prompt.jinja).
             if system_prompt is None:
                 skills_section = ""
-                agents_section = ""
+                agentes = ""
                 if agent_name is not None:
                     # Sub-agents get their skills/agents (the router lists its
                     # agents in build_system_prompt; its skills come from the stored selection).
-                    skills_section, agents_section = build_subagent_sections(
+                    skills_section, agentes = build_subagent_sections(
                         tool_permissions, skill_permissions
                     )
                 elif router_perms is not None:
@@ -480,7 +480,7 @@ class AgentLoop:
                         else None
                     ),
                     skills_section=skills_section,
-                    agents_section=agents_section,
+                    agentes=agentes,
                     temp_dir=temp_path,
                 )
             

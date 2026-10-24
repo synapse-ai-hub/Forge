@@ -124,13 +124,13 @@ class TaskMixin:
                 # Same sections a sub-agent gets when invoked via loop.run():
                 # its skills, the agents its ``task`` permission allows, and
                 # the shared temp directory.
-                skills_section, agents_section = build_subagent_sections(
+                skills_section, agentes = build_subagent_sections(
                     tool_perms, skill_perms
                 )
                 system_prompt = build_system_prompt(
                     agent_name,
                     skills_section=skills_section,
-                    agents_section=agents_section,
+                    agentes=agentes,
                     temp_dir=get_temp_dir(),
                 )
                 # print(f'Agente: {agent_name}\n\nPrompt:\n{system_prompt}')

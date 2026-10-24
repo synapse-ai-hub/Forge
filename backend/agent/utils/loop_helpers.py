@@ -256,16 +256,16 @@ def build_subagent_sections(
         skill_permissions: Skill permissions of the sub-agent.
 
     Returns:
-        Tuple ``(skills_section, agents_section)``; each is ``""`` when empty.
+        Tuple ``(skills_section, agentes)``; each is ``""`` when empty.
     """
     skills_section = format_skills_section(skill_permissions=skill_permissions)
     # Only the agents its ``task`` permission allows (none without it).
     task_perms = (tool_permissions or {}).get("task", {})
-    agents_section = agent.prompt(
+    agentes = agent.prompt(
         "agentes_subagente",
         agentes=router_agents(("task",) if task_perms else (), task_perms),
     )
-    return skills_section, agents_section
+    return skills_section, agentes
 
 
 def build_system_prompt(
@@ -273,7 +273,7 @@ def build_system_prompt(
     tools: Iterable[str] | None = None,
     task_perms: dict | None = None,
     skills_section: str = "",
-    agents_section: str = "",
+    agentes: str = "",
     temp_dir: str = "",
 ) -> str:
     """Build the system prompt for an agent.
@@ -301,11 +301,11 @@ def build_system_prompt(
         task_perms: Router only. Nested ``task`` permission; when given,
             the ``## Agentes`` section lists only the agents it allows.
             The section is left out when the router has no ``task`` tool.
-        skills_section: Pre-rendered skills catalog (``## Skills Disponibles``
-            body without the header). Empty means the section is left out.
-        agents_section: Sub-agents only. Pre-rendered agents block
-            (``agentes_subagente.jinja`` output, header included). Empty
-            means the section is left out.
+    skills_section: Pre-rendered skills catalog (``## Skills Disponibles``
+        body without the header). Empty means the section is left out.
+    agentes: Sub-agents only. Pre-rendered agents block
+        (``agentes_subagente.jinja`` output, header included). Empty
+        means the section is left out.
         temp_dir: Temporary directory path. Empty means the section is left out.
 
     Returns:
@@ -331,7 +331,7 @@ def build_system_prompt(
                 seguridad=_security_block(tools),
                 fecha=fecha,
                 skills_section=skills_section,
-                agents_section=agents_section,
+                agentes=agentes,
                 temp_dir=temp_dir,
                 tools=tools,
             )
