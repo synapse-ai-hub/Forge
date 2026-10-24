@@ -1044,7 +1044,7 @@ export function ToolInterface() {
 
                     {/* Sandbox panel */}
                     {sandboxOpen && (
-                      <div className="mt-3 rounded-2xl border border-app-border bg-white p-4 sm:p-5">
+                      <div className="mt-3 rounded-2xl border border-app-border bg-white p-4 sm:p-5 text-left">
                         <div className="flex items-center justify-between mb-3">
                           <h3 className="text-sm font-semibold text-app-text">
                             Sandbox — {createdToolName}
@@ -1070,10 +1070,12 @@ export function ToolInterface() {
                           <div className="space-y-2">
                             {Object.entries(sandboxSchema).map(([key, prop]) => (
                               <div key={key}>
-                                <label className="block text-xs font-medium text-app-text mb-0.5">
+                                <label className="block text-xs font-medium text-app-text mb-0.5 text-left">
                                   {key}
-                                  {sandboxRequired.includes(key) && (
+                                  {sandboxRequired.includes(key) ? (
                                     <span className="text-red-500 ml-0.5">*</span>
+                                  ) : (
+                                    <span className="text-app-text-secondary ml-1 font-normal">(opcional)</span>
                                   )}
                                   {prop.description && (
                                     <span className="text-app-text-secondary ml-1">
