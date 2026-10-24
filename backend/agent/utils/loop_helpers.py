@@ -333,6 +333,7 @@ def build_system_prompt(
                 skills_section=skills_section,
                 agents_section=agents_section,
                 temp_dir=temp_dir,
+                tools=tools,
             )
         logger.warning(
             "Agent '%s' no encontrado; usando system prompt del router.", agent_name

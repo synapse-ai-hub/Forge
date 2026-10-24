@@ -223,6 +223,9 @@ def _router_tool_permissions(router_perms: dict[str, Any] | None) -> dict[str, A
         tool_permissions["rag"] = {**rag_perms, **_ROUTER_RAG_FLOOR}
     else:
         tool_permissions["rag"] = dict(_ROUTER_RAG_FLOOR)
+    # The skill loader is floor too: always available to the router, never
+    # shown in the UI (hidden) and never toggled by the stored selection.
+    tool_permissions["skill"] = "allow"
     return tool_permissions
 
 def _read_param_override(key: str) -> Any:

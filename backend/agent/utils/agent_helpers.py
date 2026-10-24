@@ -19,7 +19,7 @@ from backend.instances import agent
 
 logger = logging.getLogger(__name__)
 
-_HIDDEN_FROM_UI = frozenset({"query_model_capabilities"})
+_HIDDEN_FROM_UI = frozenset({"query_model_capabilities", "skill"})
 """Native helpers never listed in the UI dropdowns (not for the user)."""
 
 

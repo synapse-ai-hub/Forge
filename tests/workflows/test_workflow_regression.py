@@ -639,6 +639,7 @@ def test_router_ignores_legacy_workflows_block(env: WorkflowEnv) -> None:
     """
     assert _router_tool_permissions({"tools": {"read": "allow"}, "workflows": {"nightly": "allow"}}) == {
         "read": "allow",
+        "skill": "allow",
         "rag": {"help": "allow", "agent_conversations": "allow"}}
     assert "workflow" not in _router_tool_permissions({"tools": {"read": "allow"}})
     assert "workflow" not in _router_tool_permissions({"tools": {"read": "allow"}, "workflows": {}})

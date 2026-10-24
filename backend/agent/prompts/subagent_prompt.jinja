@@ -26,6 +26,9 @@
 
 ## Skills Disponibles
 {{ skills_section }}
+{% if tools is defined and tools and "skill" in tools %}
+Para usar una skill, cargala primero con la tool `skill` pasando su nombre; recién después aplicá su contenido. No asumas el contenido de una skill sin haberla cargado.
+{% endif %}
 {% endif %}{% if agents_section is defined and agents_section %}
 
 ---
