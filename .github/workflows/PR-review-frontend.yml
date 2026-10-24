@@ -2,8 +2,9 @@ name: '🔎 Gemini Review - Frontend'
 
 on:
   pull_request:
+    branches: ['main']
     paths: ['frontend/**']
-    types: [opened, synchronize, reopened]
+    types: [opened, reopened]
   issue_comment:
     types: [created]
 
