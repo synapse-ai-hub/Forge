@@ -19,9 +19,11 @@ import {
 } from "../utils/resourceSelection";
 import type { Message, ContentBlock } from "../App";
 import { saveFileWithPicker, fetchConversationMarkdown } from "../utils/conversationExport";
-import { API_BASE_URL } from "../config/api";
+import { API_BASE_URL, type ApiResponse } from "../config/api";
 import { CreatorHistory } from "../components/CreatorHistory";
-import { newCreatorId, type CreatorConversation } from "../services/creatorHistoryService";
+import { newCreatorId, type CreatorConversation } from
+"../services/creatorHistoryService";
+import { useCreatorVerify, VerifyToastBanner } from "../hooks/useCreatorVerify";
 
 const API = API_BASE_URL + "/api";
 
@@ -59,9 +61,8 @@ export function WorkflowInterface() {
   const [resultMsg, setResultMsg] = useState<string | null>(null);
   const [resultType, setResultType] = useState<"success" | "error" | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
-  /* Verificar: veredicto del modelo de decisión (o LLM) sobre la conversación */
-  const [verifying, setVerifying] = useState(false);
-  const [verifyToast, setVerifyToast] = useState<{ done: boolean; reason: string } | null>(null);
+  /* Shared verification (decision model verdict) for creator pages. */
+  const { verifying, verifyToast, verificar } = useCreatorVerify("workflow");
   /* Workflow recién creado para probar */
   const [createdWorkflowName, setCreatedWorkflowName] = useState<string | null>(null);
   const [runMsg, setRunMsg] = useState<string | null>(null);
@@ -459,30 +460,6 @@ export function WorkflowInterface() {
     abortRef.current = null;
   }, []);
 
-  /* ---- verificar: evalúa la conversación completa (botón sobre el textarea) ---- */
-  const verificar = useCallback(async () => {
-    if (verifying || isStreaming || messages.length === 0) return;
-    setVerifying(true);
-    setVerifyToast(null);
-    try {
-      const res = await fetch(`${API}/create/workflow/verify`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ creator_id: creatorIdRef.current }),
-      });
-      const json = await res.json();
-      if (json.status === "success" && json.data) {
-        setVerifyToast({ done: !!json.data.done, reason: json.message || "" });
-      } else {
-        setVerifyToast({ done: false, reason: json.message || "No se pudo verificar." });
-      }
-    } catch (err) {
-      setVerifyToast({ done: false, reason: err instanceof Error ? err.message : "Error de conexión." });
-    } finally {
-      setVerifying(false);
-    }
-  }, [verifying, messages.length]);
-
   /* ---- keyboard ---- */
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -808,7 +785,7 @@ export function WorkflowInterface() {
                           const resp = await fetch(`${API}/workflows/${encodeURIComponent(createdWorkflowName)}/run`, {
                             method: "POST",
                           });
-                          const json = await resp.json().catch(() => null);
+                          const json: ApiResponse | null = await resp.json().catch(() => null);
                           if (resp.ok && json && json.status === "success") {
                             setRunMsg(json.message || `Workflow «${createdWorkflowName}» en ejecución.`);
                           } else {
@@ -827,7 +804,7 @@ export function WorkflowInterface() {
                     </button>
                     <button
                       type="button"
-                      onClick={verificar}
+                      onClick={() => void verificar(creatorIdRef.current, isStreaming || messages.length === 0)}
                       disabled={verifying || isStreaming || messages.length === 0}
                       title="Verificar si el trabajo cumple con lo pedido"
                       className="flex items-center gap-1 bg-app-bg-tertiary text-app-text text-sm font-medium px-4 py-2 rounded-lg hover:bg-app-bg-secondary transition-colors border border-app-border disabled:opacity-40 disabled:cursor-not-allowed"
@@ -858,12 +835,7 @@ export function WorkflowInterface() {
                   {downloadError && (
                     <p className="text-sm text-red-600 mb-2">{downloadError}</p>
                   )}
-                  {verifyToast && (
-                    <div className={`mb-2 text-sm rounded-lg px-4 py-2.5 border ${verifyToast.done ? "text-green-700 bg-green-50 border-green-200" : "text-amber-700 bg-amber-50 border-amber-200"}`}>
-                      <span className="font-medium">{verifyToast.done ? "Verificación: cumple." : "Verificación: no cumple."}</span>
-                      {verifyToast.reason && <span> {verifyToast.reason}</span>}
-                    </div>
-                  )}
+                  <VerifyToastBanner toast={verifyToast} />
 
                   <div className="relative">
                     <textarea
