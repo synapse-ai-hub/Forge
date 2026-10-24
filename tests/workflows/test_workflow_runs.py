@@ -1,8 +1,8 @@
-"""Workflow runs: execution, retry/resume, cancel, notifications and permissions.
+"""Workflow runs: execution, retry/resume, cancel and notifications.
 
-Runs the real ``WorkflowService``/``WorkflowRunner``, the real routes' helpers
-and the real ``execute_tool`` against an isolated SQLite database and an
-isolated workflows folder in a temp directory, so the user's ``agent.db`` and
+Runs the real ``WorkflowService``/``WorkflowRunner`` and the real routes'
+helpers against an isolated SQLite database and an isolated workflows folder
+in a temp directory, so the user's ``agent.db`` and
 ``~/.config/synapseForge/workflows`` are never touched. Nodes are ``run``
 nodes (shell commands), so no LLM is needed: without a selected model the
 judge and the failure explainer take their fallback paths.
@@ -21,11 +21,9 @@ import backend.agent.utils.error_logger as error_logger
 import backend.agent.utils.workflow_loader as loader
 import backend.agent.utils.workflow_service as service_module
 import backend.agent.utils.workflows_helpers as helpers
-from backend.agent.permissions import filter_tools, get_tool_permissions, is_tool_allowed
 from backend.agent.utils import notifications_helpers, workflow_db
-from backend.agent.utils.loop_helpers import _tool_call_ctx, execute_tool
 from backend.agent.utils.workflow_service import WorkflowService
-from backend.instances import agent, session_manager
+from backend.instances import session_manager
 from pathlib import Path
 from collections.abc import Awaitable, Callable, Coroutine, Iterator, AsyncIterator
 from typing import Any
@@ -352,57 +350,6 @@ def test_interrupted_run_resumes_from_the_last_committed_node(env: WorkflowEnv) 
     ]
 
 
-def test_workflow_tool_respects_permissions_and_keeps_the_caller(env: WorkflowEnv) -> None:
-    """Workflow tool respects permissions and keeps the caller session in the run, without opening one.
-
-    Args:
-        env: Workflow service, workflow writer, database query function and temporary directory.
-    """
-    svc, write, query, _ = env
-    _simple_flow(write)
-    _simple_flow(write, "other-flow")
-
-    async def go() -> tuple[Any, Any]:
-        """Call the workflow tool from an agent that may run ``ok-flow`` only.
-
-        Returns:
-            ``(allowed, denied)``: the result of ``ok-flow`` and of ``other-flow``.
-        """
-        session_manager.create_session("caller-1")
-        token = _tool_call_ctx.set({
-            "parent_session_id": "caller-1",
-            "tool_permissions": {"workflow": {"ok-flow": "allow"}},
-        })
-        try:
-            allowed = await execute_tool(agent, {"name": "workflow", "args": {"name": "ok-flow"}})
-            denied = await execute_tool(agent, {"name": "workflow", "args": {"name": "other-flow"}})
-        finally:
-            _tool_call_ctx.reset(token)
-        return allowed, denied
-
-    allowed, denied = _run(go())
-    assert allowed["status"] == "success" and "<workflow id=" in allowed["data"]
-    assert denied["status"] == "error" and "Permission denied" in denied["message"]
-    assert query("select session_id from sessions") == [{"session_id": "caller-1"}], "a run never opens a session"
-    run = query("select parent_session_id from workflow_runs where kind='run' and workflow_name='ok-flow'")
-    assert run == [{"parent_session_id": "caller-1"}], "the run keeps the session of the caller"
-    assert notifications_helpers.list_notifications() == [], "runs called by an agent do not notify"
-
-
-def test_workflows_permission_block_and_enum() -> None:
-    """Workflows permission block and enum."""
-    perms = {"workflow": {"nightly": "allow", "other": "deny"}, "read": "allow"}
-    assert is_tool_allowed(perms, "workflow", {"name": "nightly"}) is True
-    assert is_tool_allowed(perms, "workflow", {"name": "other"}) is False
-    assert is_tool_allowed(perms, "workflow", {"name": "missing"}) is False
-
-    registry = agent.tools.tools_registry(perms)
-    tool = next(t for t in registry if t["function"]["name"] == "workflow")
-    assert tool["function"]["parameters"]["properties"]["name"]["enum"] == ["nightly"]
-    assert filter_tools(agent.tools._tools_registry, {"read": "allow"}) != []
-    assert all(t["function"]["name"] != "workflow" for t in filter_tools(agent.tools._tools_registry, {"read": "allow"}))
-
-
 def test_notifications_read_delete_and_clear(env: WorkflowEnv) -> None:
     """Notifications read delete and clear.
 
@@ -435,33 +382,6 @@ def test_notification_requires_exactly_one_origin(env: WorkflowEnv) -> None:
     assert notifications_helpers.add_notification("workflow", "x", "success", "m") is None
     assert notifications_helpers.add_notification(
         "workflow", "x", "success", "m", workflow_name="not-registered") is None
-
-
-def test_agent_frontmatter_workflows_block_becomes_the_workflow_permission(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Agent frontmatter workflows block becomes the workflow permission.
-
-    Args:
-        tmp_path: Temporary directory of the test.
-        monkeypatch: Pytest monkeypatch fixture.
-    """
-    import backend.agent.permissions as permissions
-
-    agents_dir = tmp_path / "agents"
-    agents_dir.mkdir()
-    (agents_dir / "ops.md").write_text(
-        "---\nname: ops\ndescription: d\npermissions:\n  tools:\n    read: allow\n"
-        "  workflows:\n    nightly: allow\n---\nbody\n",
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(permissions, "get_agents_dir", lambda: agents_dir)
-    result = get_tool_permissions("ops")
-    assert result["status"] == "success"
-    import json
-
-    assert json.loads(result["data"]) == {"read": "allow", "workflow": {"nightly": "allow"}}
 
 
 def test_delete_workflow_removes_file_runs_commits_and_notifications(

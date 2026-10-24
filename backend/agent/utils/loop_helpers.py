@@ -133,44 +133,6 @@ def _agent_tool_names(agent_name: str) -> list[str]:
         return []
 
 
-def format_workflows_section(tool_permissions: dict | None) -> str:
-    """List the workflows an agent may run through the ``workflow`` tool.
-
-    Built from the nested ``workflow`` permission (``workflows:`` block of the
-    agent frontmatter or ``config.yaml``): only the workflows that resolve to
-    ``allow`` are listed, with their description, so the agent knows what it
-    can call. Same idea as the agents filtered by the ``task`` permission.
-
-    Args:
-        tool_permissions: Effective tool permissions of the running agent.
-
-    Returns:
-        One ``- name: description`` line per allowed workflow, or ``""`` when
-        the agent has no workflow permission or none of them exists.
-    """
-    try:
-        perms = (tool_permissions or {}).get("workflow")
-        if not isinstance(perms, dict) or not perms:
-            return ""
-        from backend.agent.permissions import wildcard_match
-        from backend.agent.utils.workflows_helpers import _listar_workflows_locales
-
-        lines: list[str] = []
-        for entry in _listar_workflows_locales():
-            name = entry["name"]
-            allowed = any(
-                isinstance(action, str) and action == "allow" and wildcard_match(key, name)
-                for key, action in perms.items()
-            )
-            if allowed:
-                description = entry.get("description") or "sin descripción"
-                lines.append(f"- {name}: {description}")
-        return "\n".join(lines)
-    except Exception as exc:
-        log_error(str(exc), source="loop_helpers.py:format_workflows_section")
-        return ""
-
-
 def load_context_text() -> str:
     """Load all context files from SQLite and return their content joined.
 

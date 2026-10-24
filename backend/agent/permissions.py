@@ -44,11 +44,11 @@ from backend.agent.utils.error_logger import log_error
 
 logger = logging.getLogger(__name__)
 
-_GROUP_ARG = {"task": "agent_name", "workflow": "name", "rag": "collection"}
+_GROUP_ARG = {"task": "agent_name", "rag": "collection"}
 """Discriminating argument of the tools whose permission is a nested group.
 
 ``tasks: {explorer: allow}`` constrains ``task(agent_name=...)`` and
-``workflows: {nightly: allow}`` constrains ``workflow(name=...)``.
+``rag: {docs: allow}`` constrains ``rag(collection=...)``.
 """
 
 # ---------------------------------------------------------------------------
@@ -179,8 +179,7 @@ def get_tool_permissions(agent_name: str | None) -> dict[str, Any]:
 
     Reads ``agents/<agent_name>.md`` and returns the ``tools`` block
     under ``permissions``, combining it with the ``tasks`` block (as the
-    nested ``task`` permission) and the ``workflows`` block (as the nested
-    ``workflow`` permission) if present.
+    nested ``task`` permission) if present.
 
     Args:
         agent_name: Agent name (without ``.md``). ``None``/empty → empty
@@ -206,9 +205,6 @@ def get_tool_permissions(agent_name: str | None) -> dict[str, Any]:
     tasks_perms = permissions.get("tasks")
     if isinstance(tasks_perms, dict) and tasks_perms:
         tools_perms["task"] = tasks_perms
-    workflows_perms = permissions.get("workflows")
-    if isinstance(workflows_perms, dict) and workflows_perms:
-        tools_perms["workflow"] = workflows_perms
 
     return make_success_response(
         message=f"Tool permissions for agent '{agent_name}'.",
@@ -476,8 +472,8 @@ def is_tool_allowed(
       key (wildcard) and the value is exactly ``"allow"``.
     - **Nested group with exact match** (``{"task": {"explorer": "allow"}}``):
       for the single tool named like the group key (``task``), the first
-      relevant argument (``agent_name`` for ``task``, ``name`` for
-      ``workflow``) must match one of the allowed sub-keys.
+      relevant argument (``agent_name`` for ``task``) must match one of
+      the allowed sub-keys.
     - **Nested group with prefix** (``{"notebooklm": {"*": "allow"}}``):
       tools named ``<group>_<sub>`` are allowed when the group has
       ``"*": "allow"`` or the sub-tool name is explicitly allowed.

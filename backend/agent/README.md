@@ -367,7 +367,6 @@ Las skills listadas se inyectan en el system prompt del router como `## Skills D
 - Si hay una selección guardada → usa **solo** esos permisos: no se suma ninguna tool base.
 - **Piso fijo**: con o sin selección, el router siempre puede usar `rag` sobre las colecciones internas `help` (documentación del sistema, un documento por sección) y `agent_conversations`. Lo que la selección liste en `rag` se suma a esas dos. Las colecciones internas no son para el usuario: no aparecen en las listas de la interfaz.
 - `task` solo está disponible si la selección incluye la tool `task` o nombra subagentes; `agentes` limita a qué sub-agentes puede delegar.
-- `workflow` solo está disponible si la selección incluye la tool `workflow`. El system prompt agrega la sección `## Workflows Disponibles` con los permitidos.
 
 El system prompt del router incluye solo las secciones de las tools que tiene habilitadas. Los cambios se aplican en el siguiente mensaje, sin reiniciar el backend.
 
@@ -481,7 +480,6 @@ Definidas como métodos de la clase `Tools`, un módulo por tool. Incluyen:
 - `help` — Documentación interna del agente.
 - `query_model_capabilities` — Capacidades de un modelo desde el catálogo local.
 - `task` — Delegación a sub-agentes.
-- `workflow` — Ejecución de un workflow guardado; devuelve su resultado como un bloque `<workflow>`. Su permiso es un grupo (`workflows: {nombre: allow}`) que limita el argumento `name`.
 
 ### 2. Tools externas (en `~/.config/synapseForge/tools/`)
 

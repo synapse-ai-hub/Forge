@@ -93,7 +93,6 @@ from backend.agent.tools.skill import SkillMixin
 from backend.agent.tools.task import TaskMixin
 from backend.agent.tools.webfetch import WebfetchMixin
 from backend.agent.tools.websearch import WebsearchMixin
-from backend.agent.tools.workflow import WorkflowMixin
 from backend.agent.tools.write import WriteMixin
 
 
@@ -719,7 +718,6 @@ class Tools(
     TaskMixin,
     WebfetchMixin,
     WebsearchMixin,
-    WorkflowMixin,
     WriteMixin,
     ToolsBase,
 ):

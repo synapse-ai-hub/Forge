@@ -230,34 +230,6 @@ class WorkflowService:
         active.task = task
         return task
 
-    async def run_and_wait(
-        self, name: str, parent_session_id: str | None = None
-    ) -> dict[str, Any]:
-        """Run a workflow on behalf of an agent and wait for its outcome.
-
-        Args:
-            name: Workflow name.
-            parent_session_id: Session of the calling agent.
-
-        Returns:
-            ``{"status": "success" | "error" | "cancelled", "run_id",
-            "result", "error_text"}``; start failures come back
-            as ``status="error"`` with the friendly message in ``error_text``.
-        """
-        started = await self.start_run(name, source="tool", parent_session_id=parent_session_id)
-        if not started.get("ok"):
-            return {
-                "status": "error", "run_id": None,
-                "result": "", "error_text": started.get("message", ""),
-            }
-        try:
-            # Shielded: the cancellation of the caller must not look like a
-            # backend shutdown to the run (which would leave it "running").
-            return await asyncio.shield(started["task"])
-        except asyncio.CancelledError:
-            await self.cancel(started["run_id"])
-            raise
-
     # ------------------------------------------------------------------
     # Cancel / shutdown / resume
     # ------------------------------------------------------------------

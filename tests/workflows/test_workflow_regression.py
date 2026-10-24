@@ -23,7 +23,7 @@ from fastapi.testclient import TestClient
 
 import backend.agent.utils.scheduler_helpers as scheduler_helpers
 from backend.agent.loop.helpers import _router_tool_permissions
-from backend.agent.permissions import get_tool_permissions, is_tool_allowed
+from backend.agent.permissions import get_tool_permissions
 from backend.agent.utils import notifications_helpers, workflow_db
 from backend.agent.utils import workflow_judge
 from backend.agent.utils.workflow_judge import GENERIC_FAILURE_TEXT, explain_failure, judge_run
@@ -631,25 +631,18 @@ def test_judge_prompt_renders_in_both_variants(decision: bool) -> None:
 # ───────────────────────── 4. Permissions ─────────────────────────
 
 
-def test_router_workflows_permissions(env: WorkflowEnv) -> None:
-    """Router workflows permissions.
+def test_router_ignores_legacy_workflows_block(env: WorkflowEnv) -> None:
+    """Router ignores legacy workflows block.
 
     Args:
         env: Workflow service, workflow writer, database query function and temporary directory.
     """
     assert _router_tool_permissions({"tools": {"read": "allow"}, "workflows": {"nightly": "allow"}}) == {
-        "read": "allow", "workflow": {"nightly": "allow"},
+        "read": "allow",
         "rag": {"help": "allow", "agent_conversations": "allow"}}
     assert "workflow" not in _router_tool_permissions({"tools": {"read": "allow"}})
     assert "workflow" not in _router_tool_permissions({"tools": {"read": "allow"}, "workflows": {}})
     assert "workflow" not in _router_tool_permissions(None), "the floor tools never include workflows"
-
-
-def test_workflow_is_denied_without_a_workflows_block() -> None:
-    """Workflow is denied without a workflows block."""
-    assert is_tool_allowed({"read": "allow"}, "workflow", {"name": "nightly"}) is False
-    assert is_tool_allowed({"workflow": {"nightly": "allow"}}, "workflow", {"name": "nightly"}) is True
-    assert is_tool_allowed({"workflow": {"nightly": "deny"}}, "workflow", {"name": "nightly"}) is False
 
 
 def test_subagent_frontmatter_permissions(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -668,43 +661,13 @@ def test_subagent_frontmatter_permissions(tmp_path: Path, monkeypatch: pytest.Mo
     (agents_dir / "plain.md").write_text(
         "---\nname: plain\ndescription: d\npermissions:\n  tools:\n    read: allow\n---\n", encoding="utf-8")
     (agents_dir / "both.md").write_text(
-        "---\nname: both\ndescription: d\npermissions:\n  tasks:\n    helper: allow\n"
-        "  workflows:\n    nightly: allow\n    other: deny\n---\n", encoding="utf-8")
+        "---\nname: both\ndescription: d\npermissions:\n  tasks:\n    helper: allow\n---\n",
+        encoding="utf-8")
     monkeypatch.setattr(permissions, "get_agents_dir", lambda: agents_dir)
 
     assert json.loads(get_tool_permissions("plain")["data"]) == {"read": "allow"}
     assert json.loads(get_tool_permissions("both")["data"]) == {
-        "task": {"helper": "allow"}, "workflow": {"nightly": "allow", "other": "deny"}}
-
-
-def test_scheduled_task_workflow_permissions_reach_its_subagent(
-    env: WorkflowEnv,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Scheduled task workflow permissions reach its subagent.
-
-    Args:
-        env: Workflow service, workflow writer, database query function and temporary directory.
-        tmp_path: Temporary directory of the test.
-        monkeypatch: Pytest monkeypatch fixture.
-    """
-    import yaml
-
-    agents_dir = tmp_path / "sched-agents"
-    agents_dir.mkdir()
-    monkeypatch.setattr(scheduler_helpers, "_agent_md_path", lambda name: str(agents_dir / f"{name}.md"))
-    monkeypatch.setattr(scheduler_helpers, "_agent_name_conflict", lambda name: False)
-
-    result = scheduler_helpers.add_task(
-        "nocturna", "corré el flujo", "03:00", [1],
-        tool_permissions={"read": "allow", "workflow": {"nightly": "allow"}},
-    )
-    assert result["status"] == "success", result
-    text = (agents_dir / "nocturna.md").read_text(encoding="utf-8")
-    front = yaml.safe_load(text.split("---")[1])
-    assert front["permissions"]["workflows"] == {"nightly": "allow"}
-    assert front["permissions"]["tools"] == {"read": "allow"}, "workflow is not a flat tool"
+        "task": {"helper": "allow"}}
 
 
 # ───────────────────────── 5. Chat ─────────────────────────
