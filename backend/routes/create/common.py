@@ -20,10 +20,11 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from backend.agent.utils.config_dir import get_agents_dir, get_skills_dir, get_tools_dir, get_workflows_dir
+from backend.agent.utils.contract import zero_usage
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(prefix="/create", tags=["create"])
 """Shared router where the creation endpoints register their routes."""
 
 _AGENT_TOOLS_PERMS: dict[str, str] = {
@@ -77,6 +78,12 @@ class CreateAgentRequest(BaseModel):
     tool_args: dict[str, dict[str, Any]] | None = None
     model: str | None = None
     provider: str | None = None
+
+
+class VerifyCreatorRequest(BaseModel):
+    """Request to verify a creator conversation on demand."""
+
+    creator_id: str
 
 
 def _sse(event: dict[str, Any]) -> str:
@@ -387,3 +394,40 @@ def _exact_path(kind: str, item_name: str | None) -> Path:
         except ValueError:
             return Path("")
     return Path("")
+
+
+async def verify_creator_conversation(kind: str, session_manager: Any,
+                                     creator_id: str | None) -> JSONResponse:
+    """Verify a creator conversation on demand (Verificar button).
+
+    Evaluates the full context (request, history, created items) with the
+    decision model when enabled, otherwise with an LLM with JSON output.
+    The verdict is persisted as a ``"decisor"`` row in ``creators`` and,
+    when it is done, the step frontier of the conversation is deleted.
+
+    Args:
+        kind: Creator kind (only used for the error messages).
+        session_manager: ``CreatorSessionManager`` of the kind.
+        creator_id: Creator conversation id.
+
+    Returns:
+        A ``JSONResponse`` with ``{"done", "reason"}``.
+    """
+    from backend.agent.utils.creators import is_valid_id
+    from backend.agent.utils.decision import verify_creator
+
+    if not creator_id or not is_valid_id(creator_id):
+        return error_response("Falta el identificador de la conversación.")
+    if not session_manager.has_rows(creator_id):
+        return error_response("La conversación no existe.")
+    try:
+        result = await verify_creator(session_manager, creator_id)
+    except Exception as exc:
+        logger.exception("Error verificando el creador de %s: %s", kind, exc)
+        return error_response("No se pudo verificar la conversación.", status_code=500)
+    return JSONResponse(status_code=200, content={
+        "status": "success",
+        "message": result.get("reason") or "",
+        "data": {"done": bool(result.get("done"))},
+        "usage": zero_usage(),
+    })

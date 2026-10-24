@@ -25,7 +25,9 @@ from backend.routes.create.common import (
     _SKILLS_DIR,
     error_response,
     router,
+    VerifyCreatorRequest,
     stream_creator_turn,
+    verify_creator_conversation,
 )
 from backend.routes.file_text_extractor import extract_text_from_bytes
 
@@ -129,3 +131,16 @@ async def post_create_skill_stream(
         ),
         media_type="text/event-stream",
     )
+
+
+@router.post("/skill/verify")
+async def post_verify_skill(req: VerifyCreatorRequest):
+    """Verify the skill creator conversation on demand.
+
+    Args:
+        req: The verification request (creator conversation id).
+
+    Returns:
+        ``{"done", "reason"}``: whether the work fulfils the request.
+    """
+    return await verify_creator_conversation("skill", creator_sessions, req.creator_id)

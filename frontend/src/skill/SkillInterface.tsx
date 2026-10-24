@@ -8,7 +8,7 @@ import {
   type FormEvent,
 } from "react";
 import { flushSync } from "react-dom";
-import { Send, Square, Paperclip, Download } from "lucide-react";
+import { Send, Square, Paperclip, Download, ShieldCheck } from "lucide-react";
 import { FileChip, FileWarningBanner, MessageRow } from "../components/chatBlocks";
 import { CreateModelSelector } from "../components/CreateModelSelector";
 import type { Message, ContentBlock } from "../App";
@@ -69,6 +69,9 @@ export function SkillInterface() {
   const [resultMsg, setResultMsg] = useState<string | null>(null);
   const [resultType, setResultType] = useState<"success" | "error" | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
+  /* Verificar: veredicto del modelo de decisión (o LLM) sobre la conversación */
+  const [verifying, setVerifying] = useState(false);
+  const [verifyToast, setVerifyToast] = useState<{ done: boolean; reason: string } | null>(null);
 
   /* ---- refs ---- */
   const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -514,6 +517,30 @@ export function SkillInterface() {
     abortRef.current = null;
   }, []);
 
+  /* ---- verificar: evalúa la conversación completa (botón sobre el textarea) ---- */
+  const verificar = useCallback(async () => {
+    if (verifying || isStreaming || messages.length === 0) return;
+    setVerifying(true);
+    setVerifyToast(null);
+    try {
+      const res = await fetch(`${API}/create/skill/verify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ creator_id: creatorIdRef.current }),
+      });
+      const json = await res.json();
+      if (json.status === "success" && json.data) {
+        setVerifyToast({ done: !!json.data.done, reason: json.message || "" });
+      } else {
+        setVerifyToast({ done: false, reason: json.message || "No se pudo verificar." });
+      }
+    } catch (err) {
+      setVerifyToast({ done: false, reason: err instanceof Error ? err.message : "Error de conexión." });
+    } finally {
+      setVerifying(false);
+    }
+  }, [verifying, messages.length]);
+
   /* ---- keyboard ---- */
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -844,6 +871,16 @@ export function SkillInterface() {
               <div className="flex gap-2 mb-2">
                 <button
                   type="button"
+                  onClick={verificar}
+                  disabled={verifying || isStreaming || messages.length === 0}
+                  title="Verificar si el trabajo cumple con lo pedido"
+                  className="flex items-center gap-1 bg-app-bg-tertiary text-app-text text-sm font-medium px-4 py-2 rounded-lg hover:bg-app-bg-secondary transition-colors border border-app-border disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <ShieldCheck size={14} />
+                  {verifying ? "Verificando..." : "Verificar"}
+                </button>
+                <button
+                  type="button"
                   onClick={async () => {
                     try {
                       setDownloadError(null);
@@ -861,6 +898,12 @@ export function SkillInterface() {
               </div>
               {downloadError && (
                 <p className="text-sm text-red-600 mb-2">{downloadError}</p>
+              )}
+              {verifyToast && (
+                <div className={`mb-2 text-sm rounded-lg px-4 py-2.5 border ${verifyToast.done ? "text-green-700 bg-green-50 border-green-200" : "text-amber-700 bg-amber-50 border-amber-200"}`}>
+                  <span className="font-medium">{verifyToast.done ? "Verificación: cumple." : "Verificación: no cumple."}</span>
+                  {verifyToast.reason && <span> {verifyToast.reason}</span>}
+                </div>
               )}
 
               {/* Textarea wrapper with buttons inside */}

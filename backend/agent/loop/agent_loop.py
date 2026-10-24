@@ -191,9 +191,10 @@ class AgentLoop:
                 the parent model (only meaningful when both are LOCAL).
             is_creator: Creator run (skill/tool/agent/workflow creators).
                 Skips the session title, the long-term memory indexing and
-                the step-frontier machinery (resume/record/close): creator
-                conversations persist in the ``creators`` table and every
-                turn is self-contained.
+                the per-turn close gate (verification is manual via the
+                Verificar button): creator conversations persist in the
+                ``creators`` table and run the same frontier machinery
+                (resume/record/close) keyed by creator_id.
             user_setup: Setup form of a creator request (stored as JSON on
                 the user row so the creator page can rebuild it). Only
                 honored by session managers that support it.
@@ -520,30 +521,31 @@ class AgentLoop:
             # one should_keep_pending returns True (current behavior).
             # Emits a "decision" SSE event so the frontend can render it
             # as a card (ignored by older frontends).
-            # Creators skip the continuity gate and the resume injection:
-            # their turns persist in the creators table and every turn is
-            # self-contained (no frontier rows are ever recorded for them).
-            if is_creator:
+            # Creators run it too: their turns persist in the creators
+            # table and the frontier is keyed by creator_id, so nothing
+            # ever mixes with the chat sessions. The verdict row is saved
+            # through their own session manager.
+            try:
+                keep_pending = await should_keep_pending(session_id, gate_message, manager=session_manager)
+            except Exception as exc:
+                log_error(str(exc), source="loop.py:run(continuity)")
+                keep_pending = True
+            if not keep_pending:
+                try:
+                    clear_session(session_id)
+                except Exception as exc:
+                    log_error(str(exc), source="loop.py:run(continuity_clear)")
+                yield f"data: {json.dumps({'type': 'decision', 'content': {'action': 'discarded', 'reason': 'unrelated'}}, ensure_ascii=False)}\n\n"
                 resume_text = None
             else:
                 try:
-                    keep_pending = await should_keep_pending(session_id, gate_message)
+                    resume_text = build_resume_message(
+                        session_id,
+                        manager=session_manager if is_creator else None,
+                    )
                 except Exception as exc:
-                    log_error(str(exc), source="loop.py:run(continuity)")
-                    keep_pending = True
-                if not keep_pending:
-                    try:
-                        clear_session(session_id)
-                    except Exception as exc:
-                        log_error(str(exc), source="loop.py:run(continuity_clear)")
-                    yield f"data: {json.dumps({'type': 'decision', 'content': {'action': 'discarded', 'reason': 'unrelated'}}, ensure_ascii=False)}\n\n"
+                    log_error(str(exc), source="loop.py:run(resume)")
                     resume_text = None
-                else:
-                    try:
-                        resume_text = build_resume_message(session_id)
-                    except Exception as exc:
-                        log_error(str(exc), source="loop.py:run(resume)")
-                        resume_text = None
 
             # --- 5b. Build initial messages array (history does NOT include current message) ---
             # The current user content is rendered via user_prompt.jinja:
@@ -1244,22 +1246,22 @@ class AgentLoop:
                     # flip to done on ordered commit and are only deleted
                     # when the step closes with a validated done signal.
                     # Never breaks the loop (the helper never raises).
-                    # Creators never record frontier rows (self-contained turns).
-                    if not is_creator:
-                        record_block_dispatch(
-                            session_id,
-                            turn_number,
-                            step,
-                            [
-                                (
-                                    idx,
-                                    btc.get("id", ""),
-                                    btc.get("name", "?"),
-                                    btc.get("args") or {},
-                                )
-                                for idx, btc, _cfg, _queue in pending
-                            ],
-                        )
+                    # Creator rows are keyed by creator_id, never mixed
+                    # with the chat sessions.
+                    record_block_dispatch(
+                        session_id,
+                        turn_number,
+                        step,
+                        [
+                            (
+                                idx,
+                                btc.get("id", ""),
+                                btc.get("name", "?"),
+                                btc.get("args") or {},
+                            )
+                            for idx, btc, _cfg, _queue in pending
+                        ],
+                    )
 
                     # ---- Execute the whole block concurrently ----
                     # Every queued call runs under its own ContextVar
@@ -1454,9 +1456,7 @@ class AgentLoop:
                         )
 
                         # The result committed: flip its frontier row to done.
-                        # Skipped for creators (they never record frontier rows).
-                        if not is_creator:
-                            mark_call_done(session_id, turn_number, step, idx)
+                        mark_call_done(session_id, turn_number, step, idx)
                         # A task call exposes its child session id in the
                         # result XML: attach it to the frontier row so the
                         # child stays visible to the parent. Creators never

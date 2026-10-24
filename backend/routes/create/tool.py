@@ -21,9 +21,11 @@ from backend.agent.utils.creators import is_valid_id
 from backend.instances import agent
 from backend.routes.create.common import (
     CreateToolRequest,
+    VerifyCreatorRequest,
     error_response,
     router,
     stream_creator_turn,
+    verify_creator_conversation,
 )
 
 logger = logging.getLogger(__name__)
@@ -125,3 +127,16 @@ async def post_create_tool_stream(req: CreateToolRequest):
         ),
         media_type="text/event-stream",
     )
+
+
+@router.post("/tool/verify")
+async def post_verify_tool(req: VerifyCreatorRequest):
+    """Verify the tool creator conversation on demand.
+
+    Args:
+        req: The verification request (creator conversation id).
+
+    Returns:
+        ``{"done", "reason"}``: whether the work fulfils the request.
+    """
+    return await verify_creator_conversation("tool", creator_sessions, req.creator_id)

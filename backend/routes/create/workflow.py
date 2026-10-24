@@ -31,9 +31,11 @@ from backend.agent.utils.workflows_helpers import _workflow_file_path
 from backend.instances import agent
 from backend.routes.create.common import (
     _WORKFLOWS_DIR,
+    VerifyCreatorRequest,
     error_response,
     router,
     stream_creator_turn,
+    verify_creator_conversation,
 )
 
 logger = logging.getLogger(__name__)
@@ -201,6 +203,19 @@ async def post_create_workflow_stream(req: CreateWorkflowRequest):
         ),
         media_type="text/event-stream",
     )
+
+
+@router.post("/workflow/verify")
+async def post_verify_workflow(req: VerifyCreatorRequest):
+    """Verify the workflow creator conversation on demand.
+
+    Args:
+        req: The verification request (creator conversation id).
+
+    Returns:
+        ``{"done", "reason"}``: whether the work fulfils the request.
+    """
+    return await verify_creator_conversation("workflow", creator_sessions, req.creator_id)
 
 
 async def create_scheduled_task(req: CreateWorkflowRequest) -> dict[str, str]:
