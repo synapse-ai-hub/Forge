@@ -411,6 +411,14 @@ class AgentLoop:
             # Router permissions (router_config table) are read once: tools and
             # tasks are resolved below, skills are injected into the system prompt.
             router_perms = _load_router_permissions() if agent_name is None else None
+            # Router's explicit skill selection ({} when nothing is selected).
+            # Resolved here so both the prompt and the skill permission check
+            # use the same per-turn value.
+            router_skills: dict[str, Any] = {}
+            if router_perms is not None:
+                _selected_skills = router_perms.get("skills")
+                if isinstance(_selected_skills, dict):
+                    router_skills = _selected_skills
 
             # --- 2. Resolve tools (before the prompt: the router prompt depends on them) ---
             if agent_name is None:
@@ -432,6 +440,14 @@ class AgentLoop:
             # Expose the effective permissions to the execution layer so
             # execute_tool can enforce them (deny by default) on every call.
             agent.tools._current_tool_permissions = tool_permissions or {}
+            # Explicit skill permissions of the running agent (router: stored
+            # selection; sub-agent: its frontmatter). The skill tool enforces
+            # them by name: {} means no skill may be loaded.
+            if agent_name is None:
+                caller_skill_permissions = router_skills
+            else:
+                caller_skill_permissions = skill_permissions or {}
+            agent.tools._current_skill_permissions = caller_skill_permissions
 
             # --- 3. Build system prompt ---
             # Every section is resolved here and passed as a template variable;
@@ -448,8 +464,7 @@ class AgentLoop:
                 elif router_perms is not None:
                     # Router: no skills by default. If the stored selection lists
                     # skills, they are injected like a sub-agent's.
-                    router_skills = router_perms.get("skills")
-                    if isinstance(router_skills, dict) and router_skills:
+                    if router_skills:
                         skills_section = format_skills_section(skill_permissions=router_skills)
 
                 system_prompt = build_system_prompt(
@@ -1082,6 +1097,7 @@ class AgentLoop:
                             "depth": depth,
                             "stream_cancel_event": stream_cancel_event,
                             "tool_permissions": tool_permissions or {},
+                            "skill_permissions": caller_skill_permissions,
                             "task_config": btc_cfg,
                             "subagent_event_queue": btc_queue,
                             "file_contents": file_contents,
@@ -1326,6 +1342,7 @@ class AgentLoop:
                     agent.tools._current_depth = depth
                     agent.tools._stream_cancel_event = stream_cancel_event
                     agent.tools._current_tool_permissions = tool_permissions or {}
+                    agent.tools._current_skill_permissions = caller_skill_permissions
 
                     # --- Re-resolve model after subagents (task tool) ---
                     # A subagent may have used a different model and liberated it.

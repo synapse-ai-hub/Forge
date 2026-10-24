@@ -557,7 +557,7 @@ class WorkflowRunner:
             started_at = datetime.now().isoformat()
             started = time.monotonic()
             # No session: a workflow the agent runs through its tool has no caller session either.
-            token = _tool_call_ctx.set({"tool_permissions": tool_perms, "parent_session_id": None})
+            token = _tool_call_ctx.set({"tool_permissions": tool_perms, "skill_permissions": skill_perms, "parent_session_id": None})
             result: Any = None
             try:
                 result = await execute_tool(self._agent, {"name": name, "args": args})
