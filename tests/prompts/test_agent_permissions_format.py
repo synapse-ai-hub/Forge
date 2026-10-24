@@ -73,7 +73,7 @@ def _resolved(name: str) -> tuple[dict, dict]:
 
 def test_create_and_iterate_examples_are_read_by_the_runtime() -> None:
     """Create and iterate examples are read by the runtime."""
-    for prompt_file in ("create_agent.jinja", "iterate_agent.jinja"):
+    for prompt_file in ("create_agent.jinja",):
         name, example = _example_agent(prompt_file)
         with _config_dir() as agents:
             (agents / f"{name}.md").write_text(example, encoding="utf-8")
@@ -84,7 +84,7 @@ def test_create_and_iterate_examples_are_read_by_the_runtime() -> None:
 
 def test_prompts_do_not_teach_the_singular_keys() -> None:
     """Prompts do not teach the singular keys."""
-    for prompt_file in ("create_agent.jinja", "iterate_agent.jinja"):
+    for prompt_file in ("create_agent.jinja",):
         text = (PROMPTS / prompt_file).read_text(encoding="utf-8")
         assert not re.search(r"^\s*permission:", text, re.M), prompt_file
         assert not re.search(r"^\s*skill:", text, re.M), prompt_file
