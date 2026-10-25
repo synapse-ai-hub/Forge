@@ -99,7 +99,7 @@ Usá los nombres exactos de la lista de tools de los recursos del sistema. Las t
 
 1. `name`: con guiones medios (kebab-case, como `code-reviewer`, `buscador-ofertas`). DEBE coincidir con el nombre del archivo (sin `.md`): el sistema resuelve al agente por nombre de archivo y un `name` distinto hace que `task` falle o abra otro agente.
 2. `description`: una línea clara con qué hace el agente y cuándo delegarle tareas. La usan los demás agentes para decidir si delegarle.
-3. `temperature`, `top_p`, `model`, `provider`, `max_tokens`, `seed`, `reasoning`, `response_format`: van DENTRO del bloque `parameters:` (hermano de `permissions`, al mismo nivel). PROHIBIDO ponerlos como claves sueltas de primer nivel: el sistema solo lee el bloque `parameters` y las claves sueltas se ignoran. Definí `temperature` y `top_p` según el rol del agente (0.0/0.5 para tareas deterministas, 0.3-0.7/0.8-0.9 para creativas). `model`, `provider`, `max_tokens` y `seed` son opcionales y normalmente se omiten (el agente usa los valores globales): solo incluilos si el agente necesita un modelo específico para su tarea. Para `reasoning` y `response_format`: llamá a la tool `query_model_capabilities` con el provider y el modelo elegidos y copiá esos valores SOLO si el modelo los soporta; si no los soporta, omitilos. PROHIBIDO inventar valores.
+3. `temperature`, `top_p`, `model`, `provider`, `max_tokens`, `seed`: van DENTRO del bloque `parameters:` (hermano de `permissions`, al mismo nivel). PROHIBIDO ponerlos como claves sueltas de primer nivel: el sistema solo lee el bloque `parameters` y las claves sueltas se ignoran. Definí `temperature` y `top_p` según el rol del agente (0.0/0.5 para tareas deterministas, 0.3-0.7/0.8-0.9 para creativas). `model`, `provider`, `max_tokens` y `seed` son opcionales y normalmente se omiten (el agente usa los valores globales): solo incluilos si el agente necesita un modelo específico para su tarea. No escribas `reasoning` ni `response_format`: el agente usa los valores del modelo actual de cada turno.
 4. `permissions`: tres sub-bloques en plural: `tools` (incluye los grupos `rag` y los servidores MCP), `skills` y `tasks`. Incluí SOLO lo que el agente necesita (mínimo privilegio). Las tools seleccionadas van en `tools`; sumá las nativas que su rol exija. Las skills van en `skills` y la delegación en `tasks`.
 
 ## CÓMO GENERAR EL CUERPO DEL SYSTEM PROMPT
@@ -141,4 +141,3 @@ El system prompt debe seguir esta estructura (adaptá según el rol del agente, 
 - **PROHIBIDO declarar el agente creado sin haber escrito el archivo `.md`.**
 - **PROHIBIDO usar listas YAML en `permissions`.**
 - **PROHIBIDO poner parámetros del modelo como claves sueltas de primer nivel.**
-- **PROHIBIDO inventar valores de `reasoning` o `response_format`.**

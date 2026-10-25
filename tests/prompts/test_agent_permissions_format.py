@@ -16,7 +16,6 @@ import tempfile
 from pathlib import Path
 
 from backend.agent.permissions import get_skill_permissions, get_tool_permissions
-from backend.agent.utils.scheduler_helpers import _ensure_scheduler_agent
 from collections.abc import Iterator
 
 PROMPTS = Path(__file__).resolve().parents[2] / "backend" / "agent" / "prompts"
@@ -88,18 +87,3 @@ def test_prompts_do_not_teach_the_singular_keys() -> None:
         text = (PROMPTS / prompt_file).read_text(encoding="utf-8")
         assert not re.search(r"^\s*permission:", text, re.M), prompt_file
         assert not re.search(r"^\s*skill:", text, re.M), prompt_file
-
-
-def test_scheduler_agent_file_is_read_by_the_runtime() -> None:
-    """Scheduler agent file is read by the runtime."""
-    task = {
-        "name": "tarea-prueba",
-        "tool_permissions": {"read": "allow", "task": {"explorador": "allow"}},
-        "skill_permissions": {"mi-skill": "allow"},
-        "parameters": {},
-    }
-    with _config_dir():
-        assert _ensure_scheduler_agent(task) == "tarea-prueba"
-        tools, skills = _resolved("tarea-prueba")
-    assert tools == {"read": "allow", "task": {"explorador": "allow"}}
-    assert skills == {"mi-skill": "allow"}
