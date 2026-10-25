@@ -37,7 +37,7 @@ creator_sessions = CreatorSessionManager(kind="skill")
 """Persistence of the skill creator conversations."""
 
 _MAX_FILES = 3
-_MAX_FILE_BYTES = 2 * 1024 * 1024
+_MAX_TOTAL_BYTES = 1 * 1024 * 1024
 
 
 @router.post("/skill")
@@ -72,6 +72,7 @@ async def post_create_skill_stream(
     first_turn = not creator_sessions.has_rows(cid)
     file_contents: list[tuple[str, str]] = []
     if first_turn and files:
+        total_bytes = 0
         for i, file in enumerate(files[:_MAX_FILES]):
             filename = file.filename or f"archivo_{i + 1}"
             try:
@@ -79,9 +80,11 @@ async def post_create_skill_stream(
             except Exception as exc:
                 logger.warning("Error leyendo archivo %s: %s", filename, exc)
                 continue
-            if len(content) > _MAX_FILE_BYTES:
-                file_contents.append((filename, f"[Archivo omitido: supera los {_MAX_FILE_BYTES // (1024 * 1024)} MB.]"))
-                continue
+            total_bytes += len(content)
+            if total_bytes > _MAX_TOTAL_BYTES:
+                return error_response(
+                    f"Los adjuntos superan 1 MB en total."
+                )
             try:
                 result = extract_text_from_bytes(filename, content)
                 file_contents.append((filename, result.text or f"[Error al procesar {filename}]"))

@@ -34,9 +34,8 @@ const ALLOWED_FILE_TYPES = [
   "application/xml",
   "text/xml",
 ];
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB per file
 const MAX_FILES = 3;
-const MAX_TOTAL_SIZE = 25 * 1024 * 1024; // 25 MB total
+const MAX_TOTAL_SIZE = 1 * 1024 * 1024; // 1 MB total
 
 /** Generate a unique ID with safe fallback when crypto is unavailable. */
 function generateId(): string {
@@ -177,10 +176,6 @@ export function SkillInterface() {
           warning = `Tipo de archivo no soportado: ${f.name}. Permitidos: PDF, DOCX, XLSX, TXT, CSV, JSON, XML.`;
           continue;
         }
-        if (f.size > MAX_FILE_SIZE) {
-          warning = `Archivo demasiado grande: ${f.name} (máx 10 MB).`;
-          continue;
-        }
         if (valid.length + files.length >= MAX_FILES) {
           warning = `Máximo ${MAX_FILES} archivos permitidos.`;
           break;
@@ -283,7 +278,14 @@ export function SkillInterface() {
           body: formData,
           signal: abort.signal,
         });
-        if (!resp.ok) throw new Error("HTTP " + resp.status);
+        if (!resp.ok) {
+          let detail = "HTTP " + resp.status;
+          try {
+            const body = await resp.json();
+            if (body && typeof body.message === "string" && body.message) detail = body.message;
+          } catch { /* keep generic detail */ }
+          throw new Error(detail);
+        }
 
         const reader = resp.body!.getReader();
         const decoder = new TextDecoder();
