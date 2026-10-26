@@ -33,6 +33,7 @@ from backend.routes.create.common import (
     _WORKFLOWS_DIR,
     VerifyCreatorRequest,
     error_response,
+    prompt_error_stream,
     router,
     stream_creator_turn,
     verify_creator_conversation,
@@ -189,7 +190,7 @@ async def post_create_workflow_stream(req: CreateWorkflowRequest):
         )
     except Exception:
         logger.exception("Prompt create_workflow.jinja no encontrado.")
-        return error_response("No se pudo cargar el prompt del creador de workflows.", status_code=500)
+        return prompt_error_stream()
 
     return StreamingResponse(
         stream_creator_turn(

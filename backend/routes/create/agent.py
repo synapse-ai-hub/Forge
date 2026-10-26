@@ -23,6 +23,7 @@ from backend.routes.create.common import (
     CreateAgentRequest,
     VerifyCreatorRequest,
     error_response,
+    prompt_error_stream,
     router,
     stream_creator_turn,
     verify_creator_conversation,
@@ -109,7 +110,7 @@ async def post_create_agent_stream(req: CreateAgentRequest):
         system_prompt = agent.prompt("create_agent", **recursos)
     except Exception:
         logger.exception("Prompt create_agent.jinja no encontrado.")
-        return error_response("No se pudo cargar el prompt del creador de agentes.", status_code=500)
+        return prompt_error_stream()
 
     return StreamingResponse(
         stream_creator_turn(

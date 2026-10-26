@@ -23,6 +23,7 @@ from backend.routes.create.common import (
     CreateToolRequest,
     VerifyCreatorRequest,
     error_response,
+    prompt_error_stream,
     router,
     stream_creator_turn,
     verify_creator_conversation,
@@ -113,7 +114,7 @@ async def post_create_tool_stream(req: CreateToolRequest):
         system_prompt = agent.prompt("create_tool")
     except Exception:
         logger.exception("Prompt create_tool.jinja no encontrado.")
-        return error_response("No se pudo cargar el prompt del creador de tools.", status_code=500)
+        return prompt_error_stream()
 
     return StreamingResponse(
         stream_creator_turn(

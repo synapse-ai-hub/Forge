@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from backend.agent.utils.config_dir import get_agents_dir, get_skills_dir, get_tools_dir, get_workflows_dir
@@ -112,6 +112,26 @@ def error_response(message: str, status_code: int = 400) -> JSONResponse:
         status_code=status_code,
         content={"status": "error", "message": message, "data": None, "usage": None},
     )
+
+
+def prompt_error_stream() -> StreamingResponse:
+    """Stream a user-friendly error when a creator prompt cannot be loaded.
+
+    The frontend opens an SSE stream for creator turns, so a JSON error
+    would show nothing. This yields the same message the chat shows when
+    the loop fails, as an ``error`` event plus ``[DONE]``.
+
+    Returns:
+        A ``StreamingResponse`` with the error event and ``[DONE]``.
+    """
+    async def _events():
+        yield _sse({
+            "type": "error",
+            "content": "En este momento no se puede ejecutar la solicitud. Por favor, intentá más tarde.",
+        })
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(_events(), media_type="text/event-stream")
 
 
 def _touched(path: Path, since_ts: float) -> bool:

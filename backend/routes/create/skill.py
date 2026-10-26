@@ -24,6 +24,7 @@ from backend.instances import agent
 from backend.routes.create.common import (
     _SKILLS_DIR,
     error_response,
+    prompt_error_stream,
     router,
     VerifyCreatorRequest,
     stream_creator_turn,
@@ -119,7 +120,7 @@ async def post_create_skill_stream(
         system_prompt = agent.prompt("create_skill", carpeta=str(_SKILLS_DIR / (nombre or "skill")))
     except Exception:
         logger.exception("Prompt create_skill.jinja no encontrado.")
-        return error_response("No se pudo cargar el prompt del creador de skills.", status_code=500)
+        return prompt_error_stream()
 
     return StreamingResponse(
         stream_creator_turn(
