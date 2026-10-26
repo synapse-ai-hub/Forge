@@ -101,7 +101,7 @@ frontend/
 │  │  └─ ui/                   # shadcn/ui: avatar, button, dialog, input, separator, textarea, collapsible, utils
 │  ├─ services/                # Capa de comunicación con API
 │  │  ├─ chatService.ts        # Streaming SSE a /api/chat
-│  │  ├─ configService.ts      # Providers, models, modelo de decisión, router, workflows (validar/guardar/generar), MCP, verbose, contexto
+│  │  ├─ configService.ts      # Providers, models, modelo de decisión, router, workflows (validar/guardar), MCP, verbose, contexto
 │  │  ├─ workflowService.ts    # Workflows: listado con estado, play, cancelar y eliminar
 │  │  ├─ notificationService.ts# Notificaciones persistidas de la campanita
 │  │  ├─ feedbackService.ts    # 👍/👎 sobre las respuestas (por sesión y turno)
@@ -211,7 +211,7 @@ Página de creación de skills (multi-page). Flujo en dos fases: setup (nombre +
 Páginas de creación de tools y agentes, con el mismo patrón de entrevista iterativa vía streaming SSE.
 
 ### `workflow/WorkflowInterface.tsx`
-Página de creación de workflows (multi-page). Entrevista por chat con streaming SSE a `/api/create/workflow` y editor YAML con generar, validar y guardar (`/api/config/workflows/generate`, `/validate`, `/save`).
+Página de creación de workflows (multi-page). Entrevista por chat con streaming SSE a `/api/create/workflow` y editor YAML con validar y guardar (`/validate`, `/save`).
 
 ### `rag/RagInterface.tsx`
 Página de gestión de colecciones RAG: crear colecciones, subir archivos y agregar URLs.

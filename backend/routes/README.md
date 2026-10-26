@@ -378,16 +378,6 @@ Valida y guarda un workflow como `<nombre>.yaml`. El `name` del YAML debe coinci
 
 **Respuesta:** contrato con `data: {name}`.
 
-#### `POST /api/config/workflows/generate`
-
-Genera un workflow en YAML a partir de una descripción y lo valida antes de devolverlo. No escribe en disco.
-
-Para ejecutar un workflow ver la sección Workflows (`POST /api/workflows/{name}/run`).
-
-**Body (JSON):** `{"description": "..."}`.
-
-**Respuesta:** contrato con `data: {yaml, name}`. Si el YAML generado es inválido, `500` con el YAML en `data`.
-
 ---
 
 ### 4. Context Files (`backend/routes/context_files.py`)
