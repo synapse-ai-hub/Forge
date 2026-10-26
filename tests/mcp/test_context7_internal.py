@@ -82,7 +82,7 @@ def test_internal_server_resolves(_clean_mappings) -> None:
     """The code-defined server resolves by label; unknown labels do not."""
     server = mh.get_internal_mcp_server(mh.CONTEXT7_INTERNAL_LABEL)
     assert server is not None
-    assert "npx" in server["command"]
+    assert "npx" in server["command"][0]
     assert mh.get_internal_mcp_server("nope") is None
 
 

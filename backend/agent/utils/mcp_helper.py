@@ -361,7 +361,12 @@ def _mcp_tool_to_function_schema(
     else:
         name = name_override or getattr(mcp_tool, "name", "")
         description = getattr(mcp_tool, "description", "") or ""
-        input_schema = getattr(mcp_tool, "inputSchema", {}) or {}
+        # SDK >= 2.x uses snake_case; older versions and plain dicts use camelCase.
+        input_schema = (
+            getattr(mcp_tool, "input_schema", None)
+            or getattr(mcp_tool, "inputSchema", None)
+            or {}
+        )
     return {
         "type": "function",
         "function": {
@@ -629,7 +634,15 @@ def get_internal_mcp_server(label: str) -> McpServerConfig | None:
         label, otherwise ``None``.
     """
     if label == CONTEXT7_INTERNAL_LABEL:
-        return CONTEXT7_INTERNAL_SERVER
+        server = dict(CONTEXT7_INTERNAL_SERVER)
+        if os.name == "nt":
+            # On Windows `npx` is a .cmd shim, not an executable: spawning
+            # it directly fails with WinError 193.
+            cmd = list(server.get("command", []))
+            if cmd and cmd[0] == "npx":
+                cmd[0] = "npx.cmd"
+                server["command"] = cmd
+        return server
     return None
 
 
@@ -651,7 +664,11 @@ def get_context7_tools() -> list[dict[str, Any]]:
         if _context7_schemas_cache is not None:
             return list(_context7_schemas_cache)
         try:
-            schemas = _run_discovery([CONTEXT7_INTERNAL_SERVER])
+            # Resolve through get_internal_mcp_server so platform fixes
+            # (e.g. `npx.cmd` on Windows) apply to discovery as well.
+            server = get_internal_mcp_server(CONTEXT7_INTERNAL_LABEL)
+            assert server is not None
+            schemas = _run_discovery([server])
         except Exception as exc:
             logger.warning("Internal context7 discovery failed: %s", exc)
             log_error(str(exc), source="mcp_helper.py:get_context7_tools")
