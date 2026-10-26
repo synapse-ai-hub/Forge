@@ -1,4 +1,4 @@
-﻿"""Workflow endpoints: validate, save and generate."""
+"""Workflow endpoints: validate and save."""
 
 from __future__ import annotations
 
