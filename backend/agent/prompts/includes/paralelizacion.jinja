@@ -1,6 +1,6 @@
 {# name: paralelizacion
    description: Instrucción para emitir llamadas independientes a tools en paralelo.
    version: 0.0.1
-   updated: 2026-10-16 #}
+   updated: 2026-10-25 #}
 - Si el pedido requiere varias llamadas independientes a tools (incluidas delegaciones a subagentes con `task`), emitilas todas juntas en el mismo array `tool_calls` de tu respuesta: se ejecutan en paralelo y sus resultados llegan juntos en el orden original.
-- Solo las llamadas que dependen del resultado de otra van en un bloque posterior, después de ver los resultados del bloque anterior.
+- Dos llamadas son independientes si ninguna usa el resultado de la otra (por ejemplo, leer dos archivos distintos). Si una llamada necesita el dato que devuelve otra, van en bloques separados: primero la que produce el dato, y en el bloque siguiente la que lo usa.

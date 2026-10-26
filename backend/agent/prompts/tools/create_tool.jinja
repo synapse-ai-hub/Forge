@@ -92,7 +92,37 @@ if __name__ == "__main__":
 - Si la tool trae contenido web, devolvé texto limpio (markdown o texto plano con lo relevante) y no el HTML crudo: el resultado entra completo al contexto del modelo y el ruido de scripts y estilos cuesta tokens.
 - **No uses backticks** en el contenido del archivo.
 
-{% include "libs_tools.jinja" %}
+## LIBRERÍAS DE TERCEROS
+
+Si la tool necesita una librería que no es de la biblioteca estándar:
+
+1. Verificá si ya está, con `shell`: `python -c "import <modulo>"`.
+2. Si no está, instalala con `shell`: `python -m pip install <paquete>` (o `<paquete>==1.2.3`). Un comando solo, sin `&&`, `;` ni `|`, y sin opciones salvo `-q` y `-U`. No se aceptan `-r`, URLs, rutas ni git.
+3. Si la instalación falla, mostrale el error al usuario y proponé otra librería.
+4. Importala en la tool y probala con los tests.
+
+- La instalación queda registrada sola: no edites ningún `requirements.txt`.
+- Usá el nombre exacto del paquete en PyPI. Si dudás, buscalo antes.
+- Preferí la biblioteca estándar y las librerías que ya están, si alcanzan.
+
+En el código de la tool, importala normal. Si es pesada o es opcional, importala dentro de la función y devolvé un error claro si falta:
+
+```python
+async def extraer_texto(url: str) -> dict:
+    """Extrae el texto principal de una página web."""
+    try:
+        import trafilatura
+    except ImportError:
+        return {
+            "status": "error",
+            "message": "Falta la librería trafilatura: python -m pip install trafilatura",
+            "data": None,
+            "usage": None,
+        }
+    html = await asyncio.to_thread(trafilatura.fetch_url, url)
+    texto = trafilatura.extract(html) if html else None
+    return {"status": "success", "message": "OK", "data": texto or "", "usage": None}
+```
 
 ## ESTRUCTURA DE CARPETAS (la real que usa el sistema)
 

@@ -51,7 +51,7 @@ def _example_agent(prompt_file: str) -> tuple[str, str]:
     Returns:
         ``(agent_name, example_text)``.
     """
-    text = (PROMPTS / prompt_file).read_text(encoding="utf-8")
+    text = next(PROMPTS.rglob(prompt_file)).read_text(encoding="utf-8")
     example = re.search(r"```markdown\n(.*?)```", text, re.S).group(1)
     return re.search(r"^name:\s*(\S+)", example, re.M).group(1), example
 
@@ -84,6 +84,6 @@ def test_create_and_iterate_examples_are_read_by_the_runtime() -> None:
 def test_prompts_do_not_teach_the_singular_keys() -> None:
     """Prompts do not teach the singular keys."""
     for prompt_file in ("create_agent.jinja",):
-        text = (PROMPTS / prompt_file).read_text(encoding="utf-8")
+        text = next(PROMPTS.rglob(prompt_file)).read_text(encoding="utf-8")
         assert not re.search(r"^\s*permission:", text, re.M), prompt_file
         assert not re.search(r"^\s*skill:", text, re.M), prompt_file

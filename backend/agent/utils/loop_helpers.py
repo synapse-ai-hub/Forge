@@ -262,7 +262,7 @@ def build_subagent_sections(
     # Only the agents its ``task`` permission allows (none without it).
     task_perms = (tool_permissions or {}).get("task", {})
     agents_section = agent.prompt(
-        "agentes_subagente",
+        "agentes_disponibles",
         agentes=router_agents(("task",) if task_perms else (), task_perms),
     )
     return skills_section, agents_section
@@ -304,7 +304,7 @@ def build_system_prompt(
         skills_section: Pre-rendered skills catalog (``## Skills``
             body without the header). Empty means the section is left out.
         agents_section: Sub-agents only. Pre-rendered agents block
-            (``agentes_subagente.jinja`` output, header included). Empty
+            (``agentes_disponibles.jinja`` output, header included). Empty
             means the section is left out.
         temp_dir: Temporary directory path. Empty means the section is left out.
 

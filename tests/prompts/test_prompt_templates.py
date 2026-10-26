@@ -50,7 +50,7 @@ def _variables_of(name: str) -> set[str]:
     Returns:
         The names of the undeclared variables of the template and of its includes.
     """
-    source = (PROMPTS / f"{name}.jinja").read_text(encoding="utf-8")
+    source = next(PROMPTS.rglob(f"{name}.jinja")).read_text(encoding="utf-8")
     tree = agent._prompt_env.parse(source)
     variables = set(meta.find_undeclared_variables(tree))
     for included in meta.find_referenced_templates(tree):
@@ -73,13 +73,13 @@ def _context_for(name: str) -> dict:
 
 def test_prompts_dir_only_has_jinja_templates() -> None:
     """Prompts dir only has jinja templates."""
-    assert not list(PROMPTS.glob("*.md")), "los prompts viven como .jinja"
-    assert list(PROMPTS.glob("*.jinja"))
+    assert not list(PROMPTS.rglob("*.md")), "los prompts viven como .jinja"
+    assert list(PROMPTS.rglob("*.jinja"))
 
 
 def test_every_template_renders_without_falling_back_to_raw_text() -> None:
     """Every template renders without falling back to raw text."""
-    for path in sorted(PROMPTS.glob("*.jinja")):
+    for path in sorted(PROMPTS.rglob("*.jinja")):
         name = path.stem
         context = _context_for(name)
         out = agent.prompt(name, **context)

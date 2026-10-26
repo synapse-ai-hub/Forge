@@ -1,8 +1,10 @@
-{# name: agentes_subagente
+{# name: agentes_disponibles
    description: Agentes a los que un sub-agente puede delegar (su permiso task). Se agrega al system prompt del sub-agente.
    version: 0.0.1
-   updated: 2026-10-21 #}
+   updated: 2026-10-25 #}
 ## Agentes
+
+Elegí el agente cuya descripción mejor coincida con la subtarea a delegar. Si la lista es `(ninguno)`, no delegues: resolvé con tus tools.
 
 {% for a in agentes %}
 - {{ a.name }}: {{ a.description }}

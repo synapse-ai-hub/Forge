@@ -168,7 +168,6 @@ Todos los prompts son templates Jinja (`.jinja`) y se cargan con `agent.prompt(n
 - `paralelizacion.jinja` — Instrucciones para emitir llamadas independientes en paralelo.
 - `title.jinja` — Generación de títulos de sesión.
 - `create_*.jinja`, `iterate_*.jinja`, `interview_*.jinja` — Prompts de creación, iteración y entrevista vía LLM (agent, skill, tool, workflow).
-- `generate_workflow.jinja` — Generación de workflows.
 - `evaluate_skills.jinja`, `explain_skill.jinja` — Prompts auxiliares. `recursos_creador.jinja` es lo que ven los creadores (todos los agentes, las tools con sus parámetros, las skills y el RAG, y lo que el usuario eligió como obligatorio); `agentes_subagente.jinja` lista los agentes a los que puede delegar un sub-agente. `system_agent_node.jinja` y `user_agent_node.jinja` arman los mensajes de un nodo `agent` de un workflow (el prompt del agente con sus skills, y el prompt del nodo con los resultados de los nodos anteriores).
 - `decision_close.jinja`, `decision_continue.jinja` — Instrucciones de las preguntas del modelo de decisión (cierre de paso y continuidad).
 
