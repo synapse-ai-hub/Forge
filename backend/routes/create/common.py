@@ -9,6 +9,7 @@ modified item at the end of a turn.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -27,7 +28,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/create", tags=["create"])
 """Shared router where the creation endpoints register their routes."""
 
-_AGENT_TOOLS_PERMS: dict[str, str] = {
+_AGENT_TOOLS_PERMS: dict[str, Any] = {
     "read": "allow",
     "write": "allow",
     "edit": "allow",
@@ -335,8 +336,29 @@ async def stream_creator_turn(
     start_ts = current_timestamp()
     item_name = (user_setup or {}).get("name")
     existed_before = _exact_path(kind, item_name).exists() if item_name else False
+    tool_permissions: dict[str, Any] = dict(_AGENT_TOOLS_PERMS)
+    if kind == "tool":
+        # Internal context7 (updated library docs) is only granted to the
+        # tool creator: it is code-defined (not in mcp.json) and hidden from
+        # every other permission set by filter_tools.
+        try:
+            from backend.agent.utils.mcp_helper import (
+                CONTEXT7_INTERNAL_LABEL,
+                ensure_context7_in_registry,
+            )
+
+            added = await asyncio.to_thread(
+                ensure_context7_in_registry, agent.tools._tools_registry
+            )
+            if added:
+                logger.info("Context7 interno agregado al registry: %s", added)
+            tool_permissions[CONTEXT7_INTERNAL_LABEL] = {"*": "allow"}
+        except Exception as exc:
+            logger.warning("No se pudo habilitar context7 interno: %s", exc)
     try:
-        tools = list(agent.tools.tools_registry(_AGENT_TOOLS_PERMS))
+        # Validation warmup: fails early with a friendly SSE error when the
+        # registry cannot be built. loop.run() re-resolves the tools itself.
+        _tools_warmup = list(agent.tools.tools_registry(tool_permissions))
     except Exception as exc:
         logger.exception("Error obteniendo tools del creador: %s", exc)
         yield _sse({"type": "error", "content": "No se pudieron cargar las herramientas del creador."})
@@ -349,7 +371,7 @@ async def stream_creator_turn(
         user_message=user_message,
         file_contents=file_contents,
         system_prompt=system_prompt,
-        tool_permissions=dict(_AGENT_TOOLS_PERMS),
+        tool_permissions=tool_permissions,
         parameters=parameters,
         agent_name=f"creator_{kind}",
         is_creator=True,

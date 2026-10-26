@@ -43,6 +43,7 @@ from backend.agent.permissions import (
 )
 from backend.agent.utils.error_logger import log_error
 from backend.agent.utils.db import db_transaction, get_connection
+from backend.agent.utils.mcp_helper import is_internal_mcp_tool
 from backend.agent.utils.queries import load_query
 from backend.agent.utils.skill_loader import format_skills_section
 from backend.agent.utils.contract import make_error_response, make_success_response, zero_usage
@@ -109,10 +110,17 @@ def _security_block(tools: Iterable[str], decision: bool = False) -> str:
 def _all_tool_names() -> list[str]:
     """List every tool of the registry (what an unrestricted agent gets).
 
+    Internal tools (context7docs_*) are excluded: they are only granted
+    explicitly to the tool-creator turn, never via wildcard.
+
     Returns:
         The tool names.
     """
-    return [t["function"]["name"] for t in agent.tools.tools_registry({"*": "allow"})]
+    return [
+        t["function"]["name"]
+        for t in agent.tools.tools_registry({"*": "allow"})
+        if not is_internal_mcp_tool(t["function"]["name"])
+    ]
 
 
 def _agent_tool_names(agent_name: str) -> list[str]:

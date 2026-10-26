@@ -124,6 +124,19 @@ async def extraer_texto(url: str) -> dict:
     return {"status": "success", "message": "OK", "data": texto or "", "usage": None}
 ```
 
+## DOCUMENTACIÓN ACTUALIZADA (context7docs_*)
+
+Tenés dos tools de documentación actualizada de librerías (solo vos las ves):
+
+- `context7docs_resolve-library-id`: nombre de librería → ID interno de context7.
+- `context7docs_query-docs`: ID + pregunta → documentación y ejemplos vigentes.
+
+Metodología:
+
+- Si dudás sobre una librería (firmas, parámetros, versión, ejemplos), consultá la documentación actualizada ANTES de escribir el código. Tu conocimiento puede estar desactualizado.
+- Si un test falla y el código parece correcto, considerá que la API de la librería pudo haber cambiado: revisá la documentación actualizada antes de seguir tocando el código.
+- Si `context7docs_*` falla (sin API key o límites excedidos), buscá en internet con `websearch`/`webfetch` en lugar de adivinar.
+
 ## ESTRUCTURA DE CARPETAS (la real que usa el sistema)
 
 ```

@@ -52,6 +52,7 @@ from backend.agent.permissions import (
 from backend.agent.utils.mcp_helper import (
     execute_mcp_tool,
     get_mcp_tools,
+    is_internal_mcp_tool,
     is_mcp_tool,
     mcp_servers_configured,
     mcp_tools_discovered,
@@ -238,14 +239,16 @@ class ToolsBase:
 
             Checks the registry content (not the discovery mapping) so a late
             background discovery that populated the mapping but not the registry
-            still triggers the self-heal.
+            still triggers the self-heal. Internal tools (``context7docs_*``)
+            do not count: they are granted per-turn, not via ``mcp.json``.
 
             Returns:
                 ``True`` when at least one registry tool is MCP-managed.
             """
             return any(
-                is_mcp_tool(str(tool.get("function", {}).get("name", "")))
+                is_mcp_tool(name) and not is_internal_mcp_tool(name)
                 for tool in self._tools_registry
+                for name in [str(tool.get("function", {}).get("name", ""))]
             )
     def _build_tool_schema(
             self,

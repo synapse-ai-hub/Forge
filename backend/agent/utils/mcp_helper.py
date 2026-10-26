@@ -297,6 +297,42 @@ _last_selfheal_ts: float = 0.0
 
 
 # ---------------------------------------------------------------------------
+# Internal context7 server (tool creator only, not in mcp.json)
+# ---------------------------------------------------------------------------
+
+CONTEXT7_INTERNAL_LABEL = "context7docs"
+"""Label of the internal context7 server.
+
+It is deliberately different from any user label (a user may add their own
+``context7`` entry in ``mcp.json`` without collision): tools are exposed as
+``context7docs_*`` and are only granted to the tool-creator turn.
+"""
+
+CONTEXT7_INTERNAL_SERVER: McpServerConfig = {
+    "label": CONTEXT7_INTERNAL_LABEL,
+    "transport": "stdio",
+    "command": ["npx", "-y", "@upstash/context7-mcp"],
+    "description": "Documentación actualizada de librerías (interno del creador de tools).",
+    "timeout": 60.0,
+}
+"""Code-defined context7 server: never read from nor written to ``mcp.json``.
+
+``CONTEXT7_API_KEY`` is picked up from the backend environment automatically
+(``_build_stdio_params`` inherits ``os.environ``); without a key the server
+still starts and answers with lower rate limits.
+"""
+
+_internal_mcp_tool_to_server: dict[str, str] = {}
+"""Maps internal tool name → internal server label (survives mcp.json re-discoveries)."""
+
+_context7_schemas_cache: list[dict[str, Any]] | None = None
+"""Discovered context7 schemas, cached so ``npx`` is spawned only once per process."""
+
+_context7_lock = threading.Lock()
+"""Guards the check-then-set of ``_context7_schemas_cache`` under concurrency."""
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -562,9 +598,103 @@ def is_mcp_tool(tool_name: str) -> bool:
         tool_name: Tool name to check.
 
     Returns:
-        ``True`` if the tool is managed by an MCP server.
+        ``True`` if the tool is managed by an MCP server (including the
+        internal context7 server).
     """
-    return tool_name in _mcp_tool_to_server
+    return tool_name in _mcp_tool_to_server or tool_name in _internal_mcp_tool_to_server
+
+
+def is_internal_mcp_tool(tool_name: str) -> bool:
+    """Check if *tool_name* belongs to the internal context7 server.
+
+    Args:
+        tool_name: Tool name to check.
+
+    Returns:
+        ``True`` only for ``context7docs_*`` tools. Used to hide them from
+        the UI listings and from every permission set except the explicit
+        tool-creator grant.
+    """
+    return tool_name in _internal_mcp_tool_to_server
+
+
+def get_internal_mcp_server(label: str) -> McpServerConfig | None:
+    """Return the code-defined server config for an internal label.
+
+    Args:
+        label: Server label to look up.
+
+    Returns:
+        The internal server config when *label* is the context7 internal
+        label, otherwise ``None``.
+    """
+    if label == CONTEXT7_INTERNAL_LABEL:
+        return CONTEXT7_INTERNAL_SERVER
+    return None
+
+
+def get_context7_tools() -> list[dict[str, Any]]:
+    """Discover the internal context7 tools (cached, never raises).
+
+    Spawns the code-defined server once per process and returns its tools
+    as function schemas (``context7docs_*``). Failures (missing ``npx``,
+    no network, bad package) are logged and yield ``[]`` so the caller
+    turn continues without context7.
+
+    Returns:
+        List of function schemas (possibly empty).
+    """
+    global _context7_schemas_cache
+    if _context7_schemas_cache is not None:
+        return list(_context7_schemas_cache)
+    with _context7_lock:
+        if _context7_schemas_cache is not None:
+            return list(_context7_schemas_cache)
+        try:
+            schemas = _run_discovery([CONTEXT7_INTERNAL_SERVER])
+        except Exception as exc:
+            logger.warning("Internal context7 discovery failed: %s", exc)
+            log_error(str(exc), source="mcp_helper.py:get_context7_tools")
+            _context7_schemas_cache = []
+            return []
+        # Move the entries out of the mcp.json mapping into the internal one so
+        # a later global re-discovery cannot wipe them.
+        for schema in schemas:
+            name = schema.get("function", {}).get("name", "")
+            if name:
+                _internal_mcp_tool_to_server[name] = CONTEXT7_INTERNAL_LABEL
+                _mcp_tool_to_server.pop(name, None)
+        _context7_schemas_cache = schemas
+        logger.info("Internal context7 — discovered %d tool(s)", len(schemas))
+        return list(schemas)
+
+
+def ensure_context7_in_registry(registry: list[dict[str, Any]]) -> list[str]:
+    """Append the internal context7 schemas missing from a tool registry.
+
+    Idempotent: names already present are skipped, so registry rebuilds
+    (refresh button, agent editor) are repaired on the next tool-creator
+    turn without re-spawning ``npx`` (schemas are cached).
+
+    Args:
+        registry: Mutable tool registry (e.g. ``agent.tools._tools_registry``).
+
+    Returns:
+        Names of the schemas that were appended (empty when none).
+    """
+    try:
+        schemas = get_context7_tools()
+    except Exception as exc:  # noqa: BLE001 - never break the turn
+        logger.warning("ensure_context7_in_registry failed: %s", exc)
+        return []
+    present = {e.get("function", {}).get("name", "") for e in registry}
+    added = []
+    for schema in schemas:
+        name = schema.get("function", {}).get("name", "")
+        if name and name not in present:
+            registry.append(schema)
+            added.append(name)
+    return added
 
 
 def _mcp_content_to_serializable(content: list[Any]) -> Any:
@@ -621,7 +751,13 @@ async def execute_mcp_tool(tool_name: str, arguments: dict[str, Any]) -> Any:
         ValueError: If the tool is not registered in any MCP server.
     """
     global _last_selfheal_ts
-    label = _mcp_tool_to_server.get(tool_name)
+    label = _internal_mcp_tool_to_server.get(tool_name) or _mcp_tool_to_server.get(tool_name)
+    if label is None and tool_name.startswith(f"{CONTEXT7_INTERNAL_LABEL}_"):
+        # Prefix fallback: the internal server spawns per call, so it can
+        # run even when its schemas were never discovered in this process.
+        # Resolved before the self-heal below so an internal tool never
+        # triggers a full (blocking) re-discovery of mcp.json servers.
+        label = CONTEXT7_INTERNAL_LABEL
     if label is None:
         # One-shot self-heal: the mapping may be empty because discovery
         # failed at startup. Re-discover once (bounded by a cooldown) and
@@ -641,9 +777,17 @@ async def execute_mcp_tool(tool_name: str, arguments: dict[str, Any]) -> Any:
 
     servers = load_mcp_config()
     config = next((s for s in servers if s.get("label") == label), None)
+    if is_internal_mcp_tool(tool_name) or tool_name.startswith(f"{CONTEXT7_INTERNAL_LABEL}_"):
+        # The internal label is reserved: a user entry with the same tool
+        # name in mcp.json must not hijack the internal server. Force the
+        # code-defined server regardless of the resolved label.
+        config = get_internal_mcp_server(CONTEXT7_INTERNAL_LABEL) or config
+    if config is None:
+        # Fall back to the code-defined internal servers (not in mcp.json).
+        config = get_internal_mcp_server(label)
     if config is None:
         raise ValueError(
-            f"MCP server '{label}' (for tool '{tool_name}') not found in config"
+            f"Tool '{tool_name}' is not registered in any MCP server"
         )
     if not is_server_enabled(config):
         raise ValueError(f"MCP server '{label}' is disabled")
