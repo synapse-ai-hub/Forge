@@ -132,8 +132,8 @@ En el primer inicio, configurá una API key de cualquier proveedor cloud curado 
 | `synapseForge update [dir]` | Actualizar el proyecto al último template (preserva datos) |
 
 <p align="center">
-  <a href="assets/pipeline-video.html">
-    <img src="assets/pipeline-es.gif" alt="Diagrama dibujado a mano: de pip install a app distribuible" width="100%">
+  <a href="https://github.com/synapse-ai-hub/sources/blob/main/videos/pipeline-video.html">
+    <img src="https://github.com/synapse-ai-hub/sources/raw/main/videos/pipeline-es.gif" alt="Diagrama dibujado a mano: de pip install a app distribuible" width="100%">
   </a>
 </p>
 
