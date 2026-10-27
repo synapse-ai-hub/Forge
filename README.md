@@ -132,11 +132,9 @@ On first launch, configure an API key from any curated cloud provider (all offer
 | `synapseForge update [dir]` | Update project to latest template (preserves data) |
 
 <p align="center">
-  <a href="assets/pipeline-video-en.html" title="Watch the 60-second hand-drawn walkthrough">
-    <img src="assets/pipeline-hand-drawn-en.svg" alt="Hand-drawn pipeline: from pip install to distributable app" width="100%">
+  <a href="assets/pipeline-video-en.html">
+    <img src="assets/pipeline-en.gif" alt="Hand-drawn pipeline: from pip install to distributable app" width="100%">
   </a>
-  <br>
-  <em>Hand-drawn diagram — click to watch the 60-second video version.</em>
 </p>
 
 ---

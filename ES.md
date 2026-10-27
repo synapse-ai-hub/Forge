@@ -132,11 +132,9 @@ En el primer inicio, configurá una API key de cualquier proveedor cloud curado 
 | `synapseForge update [dir]` | Actualizar el proyecto al último template (preserva datos) |
 
 <p align="center">
-  <a href="assets/pipeline-video.html" title="Ver el video dibujado a mano de 60 segundos">
-    <img src="assets/pipeline-hand-drawn.svg" alt="Diagrama dibujado a mano: de pip install a app distribuible" width="100%">
+  <a href="assets/pipeline-video.html">
+    <img src="assets/pipeline-es.gif" alt="Diagrama dibujado a mano: de pip install a app distribuible" width="100%">
   </a>
-  <br>
-  <em>Diagrama dibujado a mano — clic para ver la versión en video de 60 segundos.</em>
 </p>
 
 ---
