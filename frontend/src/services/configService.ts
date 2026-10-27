@@ -541,20 +541,6 @@ export const configService = {
     }
   },
 
-  /** Generate workflow YAML with the agent from a description. */
-  async generateWorkflow(description: string): Promise<{ yaml: string; name: string }> {
-    const response = await fetch(`${API_BASE_URL}/api/config/workflows/generate`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ description }),
-    });
-    const data = await response.json();
-    if (!response.ok || data.status === "error") {
-      throw new Error(data.message || `HTTP ${response.status}`);
-    }
-    return { yaml: data.data?.yaml || "", name: data.data?.name || "" };
-  },
-
   /** List decision providers (from the decision_catalog table) + current selection. */
   async getDecisionModels(): Promise<DecisionModelsResponse> {
     const response = await fetch(`${API_BASE_URL}/api/config/models/decision`, {

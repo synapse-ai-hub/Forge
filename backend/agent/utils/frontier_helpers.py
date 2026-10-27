@@ -170,20 +170,27 @@ def load_open_frontier(session_id: str) -> list[dict[str, Any]]:
         return []
 
 
-def _user_text(session_id: str, turn_number: int) -> str:
+def _user_text(session_id: str, turn_number: int,
+               manager: Any | None = None) -> str:
     """Read the user message of a turn.
 
     Args:
         session_id: Session identifier.
         turn_number: Turn of the session.
+        manager: Creator session manager. ``None`` reads the global
+            ``messages`` table (chat); any other value reads the
+            ``creators`` table keyed by creator_id.
 
     Returns:
         The content of the message, or an empty string if none.
     """
     try:
+        query = (load_query("creators/user_content_by_turn.sql")
+                 if manager is not None
+                 else load_query("messages/user_content_by_turn.sql"))
         with db_transaction() as conn:
             cur = conn.execute(
-                load_query("messages/user_content_by_turn.sql"),
+                query,
                 (session_id, turn_number),
             )
             row = cur.fetchone()
@@ -193,7 +200,8 @@ def _user_text(session_id: str, turn_number: int) -> str:
         return ""
 
 
-def _tool_result_text(row: dict[str, Any]) -> str:
+def _tool_result_text(row: dict[str, Any],
+                      manager: Any | None = None) -> str:
     """Return the last recorded tool result for a frontier row.
 
     Matches by exact ``tool_call_id`` first (ids are synthesized at
@@ -202,20 +210,24 @@ def _tool_result_text(row: dict[str, Any]) -> str:
 
     Args:
         row: Frontier row dict.
+        manager: Creator session manager. ``None`` reads the global
+            ``messages`` table (chat); any other value reads the
+            ``creators`` table keyed by creator_id.
 
     Returns:
         The recorded result content, or "" when none exists.
     """
     try:
+        prefix = "creators" if manager is not None else "messages"
         with db_transaction() as conn:
             if row.get("tool_call_id"):
                 cur = conn.execute(
-                    load_query("messages/get_tool_result.sql"),
+                    load_query(f"{prefix}/get_tool_result.sql"),
                     (row["session_id"], row["tool_call_id"]),
                 )
             else:
                 cur = conn.execute(
-                    load_query("messages/get_tool_result_by_name.sql"),
+                    load_query(f"{prefix}/get_tool_result_by_name.sql"),
                     (
                         row["session_id"],
                         row["turn_number"],
@@ -232,7 +244,8 @@ def _tool_result_text(row: dict[str, Any]) -> str:
         return ""
 
 
-def build_resume_message(session_id: str) -> str | None:
+def build_resume_message(session_id: str,
+                         manager: Any | None = None) -> str | None:
     """Build the ephemeral resume block for unsettled frontier rows.
 
     Facts only, nothing truncated: the original user request of each
@@ -241,6 +254,11 @@ def build_resume_message(session_id: str) -> str | None:
 
     Args:
         session_id: Session starting a new turn.
+        manager: Creator session manager. ``None`` reads the user text
+            and tool results from the global ``messages`` table (chat);
+            any other value reads them from the ``creators`` table
+            keyed by creator_id. Frontier rows always live in the
+            global ``step_frontier`` table keyed by session id.
 
     Returns:
         The resume block text, or None. Never raises.
@@ -254,9 +272,9 @@ def build_resume_message(session_id: str) -> str | None:
             turns.setdefault(row["turn_number"], []).append(row)
         parts: list[str] = []
         for turn in sorted(turns):
-            lines = [f"Pedido del usuario en ese turno: {_user_text(session_id, turn)}"]
+            lines = [f"Pedido del usuario en ese turno: {_user_text(session_id, turn, manager)}"]
             for position, row in enumerate(turns[turn], start=1):
-                result = _tool_result_text(row)
+                result = _tool_result_text(row, manager)
                 detail = f"Último resultado registrado: {result}" if result else "Sin resultado registrado."
                 child = row.get("child_id")
                 if row["tool_name"] == "task":

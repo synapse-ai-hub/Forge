@@ -135,7 +135,6 @@ class TaskMixin:
                 )
                 # print(f'Agente: {agent_name}\n\nPrompt:\n{system_prompt}')
             except Exception as exc:
-                log_error(str(exc), source="tools.py:task(system_prompt)")
                 return make_error_response(
                     message=f"No se pudo preparar el agente '{agent_name}'. Revisá su definición e intentá de nuevo.",
                     usage=zero_usage(),
@@ -248,9 +247,10 @@ class TaskMixin:
                             final_text += payload.get("content", "")
             except Exception as exc:
                 logger.exception("Error en sub-agente '%s': %s", agent_name, exc)
-                log_error(str(exc), source="tools.py:task")
-                final_text = "Ocurrió un error al ejecutar el sub-agente."
-                state = "error"
+                return make_error_response(
+                    message=f"Error en sub-agente '{agent_name}': {exc}",
+                    usage=zero_usage(),
+                )
 
             # 4. Return the result wrapped in XML (consumed by the parent as tool result)
 

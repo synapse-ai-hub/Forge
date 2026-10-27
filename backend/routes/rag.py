@@ -22,7 +22,7 @@ import time
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, File, UploadFile
+from fastapi import APIRouter, File, Form, UploadFile
 from pydantic import BaseModel
 
 # ---------------------------------------------------------------------------
@@ -72,6 +72,64 @@ class AddUrlRequest(BaseModel):
     """Request to add a web page to a collection."""
 
     url: str
+    # Any: se validan manualmente en _resolve_chunking para devolver
+    # errores en español dentro del contrato (en vez del 422 de Pydantic).
+    chunk_size: Any = None
+    overlap: Any = None
+
+
+DEFAULT_CHUNK_SIZE = 500
+DEFAULT_OVERLAP = 60
+
+
+def _parse_chunk_int(value: Any, default: int, name: str) -> int | str:
+    """Parse one chunking param, accepting int or numeric string.
+
+    Args:
+        value: Raw value (None = default).
+        default: Default when ``value`` is None.
+        name: ``"chunk"`` or ``"overlap"`` (used in the error message).
+
+    Returns:
+        Parsed int, or an error message (str) in Spanish if invalid.
+    """
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        pass  # falls through to the integer error below
+    elif isinstance(value, int):
+        return value
+    elif isinstance(value, str):
+        try:
+            return int(value.strip())
+        except (ValueError, AttributeError):
+            pass
+    if name == "chunk":
+        return "El tamaño de chunk debe ser un entero mayor a 0."
+    return "El overlap debe ser un entero mayor o igual a 0."
+
+
+def _resolve_chunking(chunk_size: Any, overlap: Any) -> tuple[int, int] | str:
+    """Resolve and validate chunking params, falling back to defaults.
+
+    Args:
+        chunk_size: Desired chunk size in chars (None = default).
+        overlap: Desired overlap in chars (None = default).
+
+    Returns:
+        ``(chunk_size, overlap)`` tuple, or an error message (str) if invalid.
+    """
+    size = _parse_chunk_int(chunk_size, DEFAULT_CHUNK_SIZE, "chunk")
+    if isinstance(size, str):
+        return size
+    if size <= 0:
+        return "El tamaño de chunk debe ser un entero mayor a 0."
+    ov = _parse_chunk_int(overlap, DEFAULT_OVERLAP, "overlap")
+    if isinstance(ov, str):
+        return ov
+    if ov < 0:
+        return "El overlap debe ser un entero mayor o igual a 0."
+    return (size, ov)
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────
@@ -395,12 +453,19 @@ async def delete_source(name: str, kind: str, source: str = "") -> dict:
 
 
 @router.post("/collections/{name}/files")
-async def upload_files(name: str, files: list[UploadFile] = File(...)) -> dict:
+async def upload_files(
+    name: str,
+    files: list[UploadFile] = File(...),
+    chunk_size: str | None = Form(None),
+    overlap: str | None = Form(None),
+) -> dict:
     """Upload files to a collection: extract text, chunk and store.
 
     Args:
         name: Target collection name.
         files: List of files to process.
+        chunk_size: Chunk size in chars (optional, default 500).
+        overlap: Overlap in chars (optional, default 60).
 
     Returns:
         Contract with the processing details per file.
@@ -409,6 +474,11 @@ async def upload_files(name: str, files: list[UploadFile] = File(...)) -> dict:
         error = validar_nombre_coleccion(name)
         if error:
             return make_error_response(message=error)
+
+        resolved = _resolve_chunking(chunk_size, overlap)
+        if isinstance(resolved, str):
+            return make_error_response(message=resolved)
+        chunk_size_chars, overlap_chars = resolved
 
         if len(files) > MAX_FILES:
             return make_error_response(
@@ -461,7 +531,11 @@ async def upload_files(name: str, files: list[UploadFile] = File(...)) -> dict:
                 )
                 continue
 
-            chunks = chunk_file_content(filename, text)
+            chunks = chunk_file_content(
+                filename, text,
+                chunk_size_chars=chunk_size_chars,
+                overlap_chars=overlap_chars,
+            )
             if not chunks:
                 errores.append(
                     {"filename": filename, "error": "No se generaron chunks."}
@@ -520,7 +594,8 @@ async def add_url(name: str, req: AddUrlRequest) -> dict:
 
     Args:
         name: Target collection name.
-        req: Body with ``url``.
+        req: Body with ``url`` (required), ``chunk_size`` and ``overlap``
+            (optional, defaults 500/60).
 
     Returns:
         Contract with the details of the added page.
@@ -533,6 +608,11 @@ async def add_url(name: str, req: AddUrlRequest) -> dict:
         url = (req.url or "").strip()
         if not url:
             return make_error_response(message="La URL es obligatoria.")
+
+        resolved = _resolve_chunking(req.chunk_size, req.overlap)
+        if isinstance(resolved, str):
+            return make_error_response(message=resolved)
+        chunk_size_chars, overlap_chars = resolved
 
         db = get_vector_db()
         try:
@@ -557,7 +637,11 @@ async def add_url(name: str, req: AddUrlRequest) -> dict:
                 message="No se pudo extraer contenido de la URL."
             )
 
-        chunks = chunk_file_content(url, text)
+        chunks = chunk_file_content(
+            url, text,
+            chunk_size_chars=chunk_size_chars,
+            overlap_chars=overlap_chars,
+        )
         if not chunks:
             return make_error_response(
                 message="No se generaron chunks para la URL."

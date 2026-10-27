@@ -5,7 +5,6 @@ import os
 import re
 
 from backend.agent.utils.contract import make_error_response, make_success_response, zero_usage
-from backend.agent.utils.error_logger import log_error
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +60,6 @@ class ListDirMixin:
                 )
             except Exception as e:
                 logger.exception("Error in list_dir: %s", e)
-                log_error(str(e), source="tools.py:list_dir")
                 return make_error_response(
                     message=f"Error listing directory: {e}",
                     usage=zero_usage(),

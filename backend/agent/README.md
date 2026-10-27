@@ -35,7 +35,7 @@ El módulo **Agent** es el núcleo del asistente conversacional. Implementa un b
 - **Checkpoints de flujo**: Cada tool call despachada se registra en `step_frontier`; si el flujo se corta, el trabajo sin confirmar se retoma en el turno siguiente.
 - **Modelo de decisión opcional**: Un modelo de decisión (System One) valida el cierre de cada paso y la continuidad del trabajo pendiente, y revisa el mensaje del usuario como guardrail de seguridad. Deshabilitado, el flujo no hace ninguna llamada extra.
 - **Reglas de seguridad**: Reglas contra prompt injection, fuga de datos y comandos o SQL peligrosos. Van en el system prompt del router o, con el modelo de decisión habilitado, las evalúa el decisor.
-- **Workflows deterministas**: Flujos en YAML que se ejecutan con un botón play, en segundo plano. Cada ejecución se guarda en su propia tabla, se reintenta hasta 3 veces retomando desde el último nodo confirmado y avisa el resultado con una notificación. Los agentes también pueden ejecutarlos con la tool `workflow`.
+- **Workflows deterministas**: Flujos en YAML que se ejecutan con un botón play, en segundo plano. Cada ejecución se guarda en su propia tabla, se reintenta hasta 3 veces retomando desde el último nodo confirmado y avisa el resultado con una notificación. Las tareas programadas (agenda) son workflows con un bloque `schedule`, creados con el creador de workflows.
 
 ---
 
@@ -152,7 +152,11 @@ Contiene módulos de soporte genéricos para el funcionamiento del agente:
 - `spend_handler.py` — Registro de gasto y límites de presupuesto por proveedor y modelo.
 - `rate_limit_handler.py` — Clasificación de errores de rate limit y mensajes por proveedor.
 - `eda_figure.py` — Figuras de distribución de métricas en memoria (base64).
-- `create_helpers.py` — Helpers de creación vía LLM (skills, tools, agentes).
+- `create_helpers.py` — Helpers de creación vía LLM (skills, tools, agentes, workflows).
+- `approvals.py` — Aprobaciones de comandos shell (crear, esperar y resolver).
+- `prompt_loader.py` — Búsqueda jerárquica de plantillas Jinja en el árbol de `prompts/`.
+- `prompt_check.py` — Verificación de cobertura de prompts por dominio.
+- `seed_collections.py` — Carga inicial de las colecciones internas (`help`, `agent_conversations`) desde `seeds/`.
 - `tools_helpers.py` — Helpers de tools externas.
 - `agent_helpers.py` — Helpers de los endpoints AgentInfo.
 - `subagent_logger.py` — Logging de sub-agentes.
@@ -160,17 +164,18 @@ Contiene módulos de soporte genéricos para el funcionamiento del agente:
 
 ### 9. `prompts/` — Prompts del sistema
 
-Todos los prompts son templates Jinja (`.jinja`) y se cargan con `agent.prompt(nombre, **contexto)`, que renderiza `prompts/<nombre>.jinja` con las variables que se le pasen. Si el template tiene un error de sintaxis o le falta una variable, se registra el error y se devuelve el texto crudo, sin cortar el chat. Los prompts de los sub-agentes no pasan por acá: se toma el texto del `.md` del agente debajo del frontmatter.
+Todos los prompts son templates Jinja (`.jinja`) organizados por dominio (`router/`, `agents/`, `skills/`, `tools/`, `workflows/`, `includes/`) y se cargan con `agent.prompt(nombre, **contexto)`, que busca el template en el árbol (`prompt_loader.py`: primero el subdirectorio del dominio, después la raíz) y lo renderiza con las variables que se le pasen. Si el template tiene un error de sintaxis o le falta una variable, se registra el error y se devuelve el texto crudo, sin cortar el chat. Los prompts de los sub-agentes no pasan por acá: se toma el texto del `.md` del agente debajo del frontmatter.
 
-- `system_prompt.jinja` — Prompt base del router. Solo incluye las secciones de las tools que el router tiene habilitadas (`tools`).
-- `mandatory.jinja` — Reglas `## MANDATORY:` inyectadas al final del system prompt de todos los agentes.
-- `seguridad.jinja` — Reglas de seguridad (prompt injection, fuga de datos, comandos y SQL); las de una tool aparecen solo si el agente la tiene. Sin modelo de decisión se renderiza como `## Seguridad` (reglas e instrucciones) en el system prompt de todos los agentes, después de `MANDATORY`. Con el modelo de decisión habilitado, el router no lo lleva y el decisor recibe las reglas y la pregunta, con el mensaje del usuario como estado.
-- `paralelizacion.jinja` — Instrucciones para emitir llamadas independientes en paralelo.
-- `title.jinja` — Generación de títulos de sesión.
-- `create_*.jinja`, `iterate_*.jinja`, `interview_*.jinja` — Prompts de creación, iteración y entrevista vía LLM (agent, skill, tool, workflow).
-- `generate_workflow.jinja` — Generación de workflows.
-- `evaluate_skills.jinja`, `explain_skill.jinja` — Prompts auxiliares. `recursos_creador.jinja` es lo que ven los creadores (todos los agentes, las tools con sus parámetros, las skills y el RAG, y lo que el usuario eligió como obligatorio); `agentes_subagente.jinja` lista los agentes a los que puede delegar un sub-agente. `system_agent_node.jinja` y `user_agent_node.jinja` arman los mensajes de un nodo `agent` de un workflow (el prompt del agente con sus skills, y el prompt del nodo con los resultados de los nodos anteriores).
-- `decision_close.jinja`, `decision_continue.jinja` — Instrucciones de las preguntas del modelo de decisión (cierre de paso y continuidad).
+- `router/system_prompt.jinja` — Prompt base del router. Solo incluye las secciones de las tools que el router tiene habilitadas (`tools`).
+- `includes/mandatory.jinja` — Reglas `## MANDATORY:` inyectadas al final del system prompt de todos los agentes.
+- `includes/seguridad.jinja` — Reglas de seguridad (prompt injection, fuga de datos, comandos y SQL); las de una tool aparecen solo si el agente la tiene. Sin modelo de decisión se renderiza como `## Seguridad` (reglas e instrucciones) en el system prompt de todos los agentes, después de `MANDATORY`. Con el modelo de decisión habilitado, el router no lo lleva y el decisor recibe las reglas y la pregunta, con el mensaje del usuario como estado.
+- `includes/paralelizacion.jinja` — Instrucciones para emitir llamadas independientes en paralelo.
+- `router/title.jinja` — Generación de títulos de sesión.
+- `agents/create_agent.jinja`, `skills/create_skill.jinja`, `tools/create_tool.jinja`, `workflows/create_workflow.jinja` — Prompts de creación vía LLM (agente, skill, tool, workflow).
+- `skills/evaluate_skills.jinja`, `skills/explain_skill.jinja` — Prompts auxiliares. `includes/recursos_creador.jinja` es lo que ven los creadores (todos los agentes, las tools con sus parámetros, las skills y el RAG, y lo que el usuario eligió como obligatorio); `includes/agentes_disponibles.jinja` lista los agentes a los que puede delegar un sub-agente. `workflows/system_agent_node.jinja` y `workflows/user_agent_node.jinja` arman los mensajes de un nodo `agent` de un workflow (el prompt del agente con sus skills, y el prompt del nodo con los resultados de los nodos anteriores).
+- `router/decision_close.jinja`, `router/decision_continue.jinja` — Instrucciones de las preguntas del modelo de decisión (cierre de paso y continuidad).
+
+`prompt_check.py` verifica la cobertura de prompts (qué plantillas existen por dominio y cuáles se referencian). El creador de tools ve además un servidor MCP interno de documentación actualizada (context7, tools `context7docs_*`): lo usa cuando duda sobre una librería, y si la consulta falla usa `websearch`.
 
 Cada template empieza con un comentario Jinja con su nombre, descripción, versión y fecha de actualización; no forma parte del prompt renderizado.
 
@@ -477,7 +482,6 @@ Definidas como métodos de la clase `Tools`, un módulo por tool. Incluyen:
 - `check_email`, `send_email` — Correo electrónico (IMAP/SMTP).
 - `shell` — Ejecución de comandos en la terminal.
 - `skill`, `reference` — Carga de skills y archivos de referencia.
-- `help` — Documentación interna del agente.
 - `query_model_capabilities` — Capacidades de un modelo desde el catálogo local.
 - `task` — Delegación a sub-agentes.
 

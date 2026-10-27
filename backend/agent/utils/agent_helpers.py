@@ -14,12 +14,12 @@ from typing import Any
 from backend.agent.utils.config_dir import get_skills_dir
 from backend.agent.permissions import list_agents
 from backend.agent.utils.skill_loader import _parse_frontmatter as parse_skill_frontmatter
-from backend.agent.utils.mcp_helper import check_all_mcp_servers_health, is_mcp_tool
+from backend.agent.utils.mcp_helper import check_all_mcp_servers_health, is_internal_mcp_tool, is_mcp_tool
 from backend.instances import agent
 
 logger = logging.getLogger(__name__)
 
-_HIDDEN_FROM_UI = frozenset({"query_model_capabilities"})
+_HIDDEN_FROM_UI = frozenset({"query_model_capabilities", "skill"})
 """Native helpers never listed in the UI dropdowns (not for the user)."""
 
 
@@ -88,6 +88,8 @@ def get_tools_list(include_mcp: bool = False) -> list[dict[str, Any]]:
         name = func.get("name", "")
         description = func.get("description", "")
         if name in _HIDDEN_FROM_UI:
+            continue
+        if is_internal_mcp_tool(name):
             continue
         if name and (include_mcp or not is_mcp_tool(name)):
             result.append({

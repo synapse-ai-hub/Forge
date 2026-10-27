@@ -43,6 +43,7 @@ from backend.agent.permissions import (
 )
 from backend.agent.utils.error_logger import log_error
 from backend.agent.utils.db import db_transaction, get_connection
+from backend.agent.utils.mcp_helper import is_internal_mcp_tool
 from backend.agent.utils.queries import load_query
 from backend.agent.utils.skill_loader import format_skills_section
 from backend.agent.utils.contract import make_error_response, make_success_response, zero_usage
@@ -109,10 +110,17 @@ def _security_block(tools: Iterable[str], decision: bool = False) -> str:
 def _all_tool_names() -> list[str]:
     """List every tool of the registry (what an unrestricted agent gets).
 
+    Internal tools (context7docs_*) are excluded: they are only granted
+    explicitly to the tool-creator turn, never via wildcard.
+
     Returns:
         The tool names.
     """
-    return [t["function"]["name"] for t in agent.tools.tools_registry({"*": "allow"})]
+    return [
+        t["function"]["name"]
+        for t in agent.tools.tools_registry({"*": "allow"})
+        if not is_internal_mcp_tool(t["function"]["name"])
+    ]
 
 
 def _agent_tool_names(agent_name: str) -> list[str]:
@@ -262,7 +270,7 @@ def build_subagent_sections(
     # Only the agents its ``task`` permission allows (none without it).
     task_perms = (tool_permissions or {}).get("task", {})
     agents_section = agent.prompt(
-        "agentes_subagente",
+        "agentes_disponibles",
         agentes=router_agents(("task",) if task_perms else (), task_perms),
     )
     return skills_section, agents_section
@@ -301,10 +309,10 @@ def build_system_prompt(
         task_perms: Router only. Nested ``task`` permission; when given,
             the ``## Agentes`` section lists only the agents it allows.
             The section is left out when the router has no ``task`` tool.
-        skills_section: Pre-rendered skills catalog (``## Skills Disponibles``
+        skills_section: Pre-rendered skills catalog (``## Skills``
             body without the header). Empty means the section is left out.
         agents_section: Sub-agents only. Pre-rendered agents block
-            (``agentes_subagente.jinja`` output, header included). Empty
+            (``agentes_disponibles.jinja`` output, header included). Empty
             means the section is left out.
         temp_dir: Temporary directory path. Empty means the section is left out.
 
@@ -333,6 +341,7 @@ def build_system_prompt(
                 skills_section=skills_section,
                 agents_section=agents_section,
                 temp_dir=temp_dir,
+                tools=tools,
             )
         logger.warning(
             "Agent '%s' no encontrado; usando system prompt del router.", agent_name

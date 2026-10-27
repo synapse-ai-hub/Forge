@@ -28,6 +28,8 @@ import {
 import LogoImage from "../assets/logo_cliente.png";
 import chatService from "../services/chatService";
 import configService from "../services/configService";
+import approvalService from "../services/approvalService";
+import { ShellApprovalModal, type PendingShellApproval } from "../components/ShellApprovalModal";
 import type { AppNotification } from "../services/notificationService";
 import { Button } from "../components/ui/button";
 import { FileChip, FileWarningBanner, MessageRow } from "../components/chatBlocks";
@@ -216,6 +218,7 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
   /* ---- auto scroll ---- */
   const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
   const [showScrollButton, setShowScrollButton] = useState(false);
+  const [pendingApproval, setPendingApproval] = useState<PendingShellApproval | null>(null);
   const userInteractionRef = useRef(false);
   const wheelUpRef = useRef(false);
   const isProgrammaticScrollRef = useRef(false);
@@ -469,12 +472,18 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
   /* ---- new conversation ---- */
   const handleNewConversation = useCallback(() => {
     chatService.cancelStream();
+    // Deny server-side so the loop wakes up immediately instead of
+    // waiting for the approval timeout.
+    if (pendingApproval) {
+      void approvalService.resolve(pendingApproval.approval_id, false).catch(() => {});
+    }
     setIsStreaming(false);
+    setPendingApproval(null);
     setInput("");
     setFiles([]);
     setFileWarning(null);
     onNewChat();
-  }, [onNewChat, setIsStreaming]);
+  }, [onNewChat, setIsStreaming, pendingApproval]);
 
   /* ---- send message ---- */
   const sendMessage = useCallback(
@@ -529,6 +538,7 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
     // Forzar auto-scroll al enviar mensaje (como ProspectingAgent)
     setAutoScrollEnabled(true);
     setDecisionNotice(null);
+    setPendingApproval(null);
     setIsStreaming(true);
 
     let accumulatedContent = "";
@@ -576,6 +586,20 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
               ),
             );
             break;
+
+          case "approval_required": {
+            const payload =
+              typeof event.content === "object" && event.content !== null
+                ? event.content
+                : {};
+            if (typeof payload.approval_id === "string") {
+              setPendingApproval({
+                approval_id: payload.approval_id,
+                command: typeof payload.command === "string" ? payload.command : "",
+              });
+            }
+            break;
+          }
 
           case "router_status":
           case "reasoning":
@@ -694,6 +718,22 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
             const innerEvent: any = payload.event || {};
 
             if (!childId) break;
+
+            // A subagent asking for shell approval: surface the modal at
+            // top level (the nested event never hits "approval_required").
+            if (
+              innerEvent.type === "approval_required" &&
+              typeof innerEvent.content?.approval_id === "string"
+            ) {
+              setPendingApproval({
+                approval_id: innerEvent.content.approval_id,
+                command:
+                  typeof innerEvent.content.command === "string"
+                    ? innerEvent.content.command
+                    : "",
+              });
+              break;
+            }
 
             setMessages((prev) =>
               prev.map((m) => {
@@ -945,7 +985,14 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
   const handleCancel = useCallback(() => {
     // console.log(`[DEBUG_TIEMPO_SSE] handleCancel called — t=${performance.now()}`);
     chatService.cancelStream();
-  }, []);
+    // Deny server-side so the loop wakes up immediately instead of
+    // waiting for the approval timeout. The loop's wait_approval also
+    // watches the cancel event and cuts the turn.
+    if (pendingApproval) {
+      void approvalService.resolve(pendingApproval.approval_id, false).catch(() => {});
+    }
+    setPendingApproval(null);
+  }, [pendingApproval]);
 
   /* ---- keyboard ---- */
   const handleKeyDown = useCallback(
@@ -1400,6 +1447,7 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
           </div>
         </div>
       </div>
+      <ShellApprovalModal approval={pendingApproval} onResolved={() => setPendingApproval(null)} />
     </div>
   );
   },

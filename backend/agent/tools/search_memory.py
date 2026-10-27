@@ -4,7 +4,6 @@ import logging
 import time
 
 from backend.agent.utils.contract import make_error_response, make_success_response, zero_usage
-from backend.agent.utils.error_logger import log_error
 
 logger = logging.getLogger(__name__)
 
@@ -126,7 +125,6 @@ class SearchMemoryMixin:
                 )
             except Exception as e:
                 logger.exception("Error in search_memory: %s", e)
-                log_error(str(e), source="tools.py:search_memory")
                 return make_error_response(
                     message="Error buscando en conversaciones anteriores.",
                     usage=zero_usage(),

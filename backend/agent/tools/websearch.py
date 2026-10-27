@@ -5,7 +5,6 @@ import logging
 from ddgs import DDGS
 
 from backend.agent.utils.contract import make_error_response, make_success_response, zero_usage
-from backend.agent.utils.error_logger import log_error
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +42,6 @@ class WebsearchMixin:
                 )
             except Exception as e:
                 logger.exception("Error in websearch: %s", e)
-                log_error(str(e), source="tools.py:websearch")
                 return make_error_response(
                     message=f"Error in websearch: {e}",
                     usage=zero_usage(),

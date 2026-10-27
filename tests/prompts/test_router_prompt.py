@@ -120,8 +120,8 @@ def test_small_yaml_drops_sections_of_missing_tools() -> None:
 def test_router_without_tools_has_no_tool_sections() -> None:
     """Router without tools has no tool sections."""
     names = _router_tool_names({"tools": {}})
-    # Only the always-on floor remains: rag on the internal collections.
-    assert names == ["rag"]
+    # Only the always-on floor remains: rag on the internal collections + skill loader.
+    assert names == ["rag", "skill"]
     prompt = build_system_prompt(None, tools=names)
     assert "## Cómo encontrar y leer información" not in prompt
     assert "Seguir enlaces o descargar archivos" not in prompt
@@ -131,7 +131,7 @@ def test_router_without_tools_has_no_tool_sections() -> None:
 def test_shell_adds_command_and_sql_rules() -> None:
     """Shell adds command and sql rules."""
     names = _router_tool_names({"tools": {"shell": "allow"}})
-    assert names == ["rag", "shell"]
+    assert names == ["rag", "shell", "skill"]
     prompt = build_system_prompt(None, tools=names)
     assert "comandos destructivos" in prompt
     assert "usá parámetros" in prompt

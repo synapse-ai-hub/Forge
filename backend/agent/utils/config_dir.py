@@ -168,23 +168,57 @@ def _mcp_path() -> Path:
     return get_config_dir() / _MCP_CONFIG_FILE
 
 
+_MCP_CACHE: dict[str, Any] = {"path": None, "mtime": None, "size": None, "servers": []}
+"""Cache of the last ``mcp.json`` read, keyed by path + mtime + size.
+
+``load_mcp_servers`` runs on every MCP tool dispatch, so re-reading and
+re-parsing the file each time is pure overhead. The path is part of the
+key because tests (and multi-instance setups) point the config dir at
+different folders; mtime alone could return another folder's data when
+two files share the same timestamp tick. The cache returns copies, so
+callers can mutate the result without corrupting it.
+"""
+
+
 def load_mcp_servers() -> list[dict[str, Any]]:
     """Load MCP servers from mcp.json (direct array).
+
+    The file is only re-read when its path, mtime or size changed;
+    otherwise a cached copy is returned. A missing or broken file yields
+    ``[]`` (the reason is available via :func:`mcp_config_error`).
 
     Returns:
         List of MCP server config dicts, or empty list if file doesn't exist.
     """
     path = _mcp_path()
     if not path.is_file():
-        logger.info("No mcp.json found at %s, returning empty list", path)
+        _MCP_CACHE["path"] = None
+        _MCP_CACHE["mtime"] = None
+        _MCP_CACHE["size"] = None
+        _MCP_CACHE["servers"] = []
         return []
+
+    try:
+        stat = path.stat()
+        key = (str(path), stat.st_mtime_ns, stat.st_size)
+    except OSError as e:
+        log_error(str(e), source="config_dir.py:load_mcp_servers")
+        return []
+    if (
+        key[0] == _MCP_CACHE["path"]
+        and key[1] == _MCP_CACHE["mtime"]
+        and key[2] == _MCP_CACHE["size"]
+    ):
+        return [dict(s) for s in _MCP_CACHE["servers"]]
 
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
         if isinstance(data, list):
             logger.info("Loaded %d MCP server(s) from mcp.json", len(data))
-            return data
+            _MCP_CACHE["path"], _MCP_CACHE["mtime"], _MCP_CACHE["size"] = key
+            _MCP_CACHE["servers"] = [s for s in data if isinstance(s, dict)]
+            return [dict(s) for s in _MCP_CACHE["servers"]]
         logger.warning("mcp.json must be an array, got %s", type(data).__name__)
         return []
     except (json.JSONDecodeError, OSError) as e:
@@ -234,6 +268,11 @@ def save_mcp_servers(servers: list[dict[str, Any]]) -> bool:
             json.dump(servers, f, indent=2, ensure_ascii=False)
         os.replace(tmp_path, path)
         logger.info("Saved %d MCP server(s) to mcp.json", len(servers))
+        # Invalidate the load cache so the next read sees the new file.
+        _MCP_CACHE["path"] = None
+        _MCP_CACHE["mtime"] = None
+        _MCP_CACHE["size"] = None
+        _MCP_CACHE["servers"] = []
         return True
     except OSError as e:
         log_error(str(e), source="config_dir.py:save_mcp_servers")

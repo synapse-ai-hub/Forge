@@ -168,17 +168,3 @@ steps:
       http_status: 404
       message_contains:
         - "no existe"
----
-scenario: workflow-generate-sin-descripcion
-description: >
-  Generar sin description. Espera 400 sin llamar al LLM.
-cleanup: true
-steps:
-  - action: request
-    method: POST
-    path: /api/config/workflows/generate
-    body:
-      description: ""
-    expect:
-      http_status: 400
-      json_status: error

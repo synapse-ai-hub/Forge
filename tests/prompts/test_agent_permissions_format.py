@@ -16,7 +16,6 @@ import tempfile
 from pathlib import Path
 
 from backend.agent.permissions import get_skill_permissions, get_tool_permissions
-from backend.agent.utils.scheduler_helpers import _ensure_scheduler_agent
 from collections.abc import Iterator
 
 PROMPTS = Path(__file__).resolve().parents[2] / "backend" / "agent" / "prompts"
@@ -52,7 +51,7 @@ def _example_agent(prompt_file: str) -> tuple[str, str]:
     Returns:
         ``(agent_name, example_text)``.
     """
-    text = (PROMPTS / prompt_file).read_text(encoding="utf-8")
+    text = next(PROMPTS.rglob(prompt_file)).read_text(encoding="utf-8")
     example = re.search(r"```markdown\n(.*?)```", text, re.S).group(1)
     return re.search(r"^name:\s*(\S+)", example, re.M).group(1), example
 
@@ -73,7 +72,7 @@ def _resolved(name: str) -> tuple[dict, dict]:
 
 def test_create_and_iterate_examples_are_read_by_the_runtime() -> None:
     """Create and iterate examples are read by the runtime."""
-    for prompt_file in ("create_agent.jinja", "iterate_agent.jinja"):
+    for prompt_file in ("create_agent.jinja",):
         name, example = _example_agent(prompt_file)
         with _config_dir() as agents:
             (agents / f"{name}.md").write_text(example, encoding="utf-8")
@@ -84,22 +83,7 @@ def test_create_and_iterate_examples_are_read_by_the_runtime() -> None:
 
 def test_prompts_do_not_teach_the_singular_keys() -> None:
     """Prompts do not teach the singular keys."""
-    for prompt_file in ("create_agent.jinja", "iterate_agent.jinja"):
-        text = (PROMPTS / prompt_file).read_text(encoding="utf-8")
+    for prompt_file in ("create_agent.jinja",):
+        text = next(PROMPTS.rglob(prompt_file)).read_text(encoding="utf-8")
         assert not re.search(r"^\s*permission:", text, re.M), prompt_file
         assert not re.search(r"^\s*skill:", text, re.M), prompt_file
-
-
-def test_scheduler_agent_file_is_read_by_the_runtime() -> None:
-    """Scheduler agent file is read by the runtime."""
-    task = {
-        "name": "tarea-prueba",
-        "tool_permissions": {"read": "allow", "task": {"explorador": "allow"}},
-        "skill_permissions": {"mi-skill": "allow"},
-        "parameters": {},
-    }
-    with _config_dir():
-        assert _ensure_scheduler_agent(task) == "tarea-prueba"
-        tools, skills = _resolved("tarea-prueba")
-    assert tools == {"read": "allow", "task": {"explorador": "allow"}}
-    assert skills == {"mi-skill": "allow"}

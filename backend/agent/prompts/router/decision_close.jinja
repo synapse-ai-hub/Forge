@@ -1,0 +1,17 @@
+{# name: decision_close
+   description: Pregunta del modelo de decisión: si el paso puede cerrarse con la respuesta propuesta.
+   version: 0.0.1
+   updated: 2026-10-25 #}
+Decidí si el paso puede cerrarse.
+
+Revisá lo pedido por el usuario, la respuesta final propuesta y si cumple o no con su solicitud.
+
+## Instrucciones
+
+- Leé con atención lo pedido por el usuario (`user_request`).
+- Leé la respuesta final propuesta (`proposed_final`).
+- Revisá los pendientes (`pending`): solo aceptá el cierre si no queda ningún pendiente sin resolver.
+- El paso solo puede cerrarse si la respuesta final cumple con lo solicitado por el usuario de forma completa.
+- Completa = responde todo lo pedido (por ejemplo: pide un resumen y lo entrega). Parcial = falta algo de lo pedido o deja trabajo sin confirmar (por ejemplo: entrega el resumen pero no confirma el envío que también se pidió). Evasiva = no responde a lo pedido.
+- Si la respuesta final es parcial, evasiva, no responde a lo pedido o deja trabajo sin confirmar, el paso no puede cerrarse.
+- Ante cualquier duda, no cierres el paso.
