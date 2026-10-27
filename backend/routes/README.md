@@ -508,7 +508,7 @@ Elimina una colección y todos sus datos.
 
 Sube archivos a una colección: extrae texto, lo divide en chunks y lo almacena.
 
-**Parámetros (FormData):** `files` (list[File], **requerido**). Máximo 20 archivos por request, 50 MB cada uno.
+**Parámetros (FormData):** `files` (list[File], **requerido**). Máximo 20 archivos por request, 50 MB cada uno. Opcionales: `chunk_size` y `overlap` (enteros, en caracteres; por defecto 500 y 60).
 
 **Respuesta:** contrato con `data: {processed[], errors[]}`.
 
@@ -516,7 +516,7 @@ Sube archivos a una colección: extrae texto, lo divide en chunks y lo almacena.
 
 Agrega una página web a una colección.
 
-**Body (JSON):** `{"url": "https://..."}`.
+**Body (JSON):** `{"url": "https://..."}`. Opcionales: `chunk_size` y `overlap` (enteros, en caracteres; por defecto 500 y 60).
 
 **Respuesta:** contrato con `data: {url, chunks}`.
 

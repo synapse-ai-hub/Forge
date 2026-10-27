@@ -87,7 +87,7 @@ La fábrica transforma esas definiciones en sistemas autónomos.
 - **Memoria** — indexación persistente de conversaciones y recuperación cross-sesión
 - **LLM multi-proveedor** — Ollama (local), providers cloud curados (OpenAI-compatibles + Google)
 - **Integración MCP** — conectá servidores de herramientas externos vía Model Context Protocol (stdio, HTTP o SSE), con un interruptor por servidor
-- **Scheduler** — ejecutá prompts en un schedule, notificá vía UI y Telegram
+- **Scheduler** — workflows con bloque `schedule` que corren en un horario, notifican vía UI y Telegram
 
 ### Vos distribuís
 
@@ -152,13 +152,13 @@ flowchart LR
 
 Aplicación FastAPI con routers REST/SSE. El framework de agentes vive en `backend/agent/`: AgentLoop con tool calling nativo, registro de tools (nativos + externos + MCP), sesiones SQLite, permisos por agente, skills, RAG (ChromaDB) y memoria de largo plazo.
 
-**Tools nativos**: `read`, `write`, `edit`, `glob`, `grep`, `list_dir`, `webfetch`, `websearch`, `shell`, `task` (delegación a sub-agentes), `workflow` (ejecutar un workflow guardado), `skill`, `reference`, `rag`, `search_memory`, `check_email`, `send_email`, `query_model_capabilities`, `help`.
+**Tools nativos**: `read`, `write`, `edit`, `glob`, `grep`, `list_dir`, `webfetch`, `websearch`, `shell`, `task` (delegación a sub-agentes), `skill`, `reference`, `rag`, `search_memory`, `check_email`, `send_email`, `query_model_capabilities`.
 
 ### Workflows
 
-Flujos deterministas definidos como archivos YAML planos (`~/.config/synapseForge/workflows/<nombre>.yaml`, un archivo por workflow). Cada workflow es una lista de nodos con `id`, `type` (`agent`, `tool`, `rag` o `run`), `step` (entero desde 1) y exactamente un nodo con `final: true`. Los nodos del mismo step corren en paralelo con barrera; los distintos steps corren en secuencia. Los nodos agente corren en una sesión hija con los permisos propios de ese agente; los nodos `run` ejecutan comandos shell estilo GitHub Actions.
+Flujos deterministas definidos como archivos YAML planos (`~/.config/synapseForge/workflows/<nombre>.yaml`, un archivo por workflow). Cada workflow es una lista de nodos con `id`, `type` (`agent`, `tool`, `rag` o `run`), `step` (entero desde 1) y exactamente un nodo con `final: true`. Los nodos del mismo step corren en paralelo con barrera; los distintos steps corren en secuencia. Los nodos agente corren en memoria, sin sesión, con el prompt, los permisos y los parámetros propios de ese agente (sin `task`); los nodos `run` ejecutan comandos shell estilo GitHub Actions.
 
-Un workflow se ejecuta con el botón **play** de su tarjeta en el panel de info del agente. Corre en segundo plano, en paralelo con el chat, y abre una sesión en el historial (`nombre — fecha`); mientras corre la tarjeta muestra "Ejecutando…" y se puede cancelar. Antes de ejecutar, el backend verifica que cada agente, tool y colección referenciada exista — si falta algo, avisa qué en vez de ejecutar. Los workflows corren con permisos de mínimo privilegio derivados de sus propios nodos. Cada nodo se confirma con su resultado completo: si un nodo falla o la aplicación se detiene, la ejecución se reintenta (3 intentos en total, con espera exponencial) desde el primer nodo sin resultado confirmado. Cuando todos los nodos terminan, un juez (el modelo de decisión, o el modelo de chat si no está habilitado) revisa el resultado; un fallo definitivo se explica en lenguaje simple. El resultado llega como notificación persistida en la campanita del header, con el contador de no leídas; la ejecución, los commits de sus nodos y el gasto del juez se guardan en tablas propias. Los agentes pueden ejecutar workflows con la tool `workflow` si su bloque de permisos `workflows` lo permite. Un creador dedicado (entrevista + validación + aprobación del usuario) genera el YAML; el prompt de cada nodo `agent` vive en un toml en `workflows/prompts/`.
+Un workflow se ejecuta con el botón **play** de su tarjeta en el panel de info del agente. Corre en segundo plano, en paralelo con el chat, y nunca abre una sesión ni escribe en `messages`; mientras corre la tarjeta muestra "Ejecutando…" y se puede cancelar. Antes de ejecutar, el backend verifica que cada agente, tool y colección referenciada exista — si falta algo, avisa qué en vez de ejecutar. Los workflows corren con permisos de mínimo privilegio derivados de sus propios nodos. Cada nodo se confirma con su resultado completo: si un nodo falla o la aplicación se detiene, la ejecución se reintenta (3 intentos en total, con espera exponencial) desde el primer nodo sin resultado confirmado. Cuando todos los nodos terminan, un juez (el modelo de decisión, o el modelo de chat si no está habilitado) revisa el resultado; un fallo definitivo se explica en lenguaje simple. El resultado llega como notificación persistida en la campanita del header, con el contador de no leídas; la ejecución, cada nodo (con los tokens, el costo y el tiempo de sus llamadas al LLM y las tools que llamó un nodo agente), los commits de sus nodos y las llamadas del juez se guardan en tablas propias (`workflow_runs` y `workflow_run_steps`). Solo "Revisar con el agente" abre una sesión, una nueva con el resultado. Un creador dedicado (entrevista + validación + aprobación del usuario) genera el YAML; el prompt de cada nodo `agent` vive en un toml en `workflows/prompts/`.
 
 ### Checkpoints y modelo de decisión
 
@@ -182,7 +182,7 @@ Los providers cloud están curados en la app: cada API key se valida en vivo con
 
 ### Base de conocimiento (RAG)
 
-ChromaDB con embeddings de Gemini (`gemini-embedding-2`) vía el proveedor Google. Subí archivos y páginas web — el contenido se extrae, chunking y se indexa para recuperación semántica. Requiere una API key de Google: sin ella, la base de conocimiento queda deshabilitada y el resto de la app funciona normalmente. Memoria de largo plazo: cada turno de conversación se indexa automáticamente y se puede buscar cross-sesión vía `search_memory`.
+ChromaDB con embeddings de Gemini (`gemini-embedding-2`) vía el proveedor Google. Subí archivos y páginas web — el contenido se extrae, se divide en chunks y se indexa para recuperación semántica. El chunking (tamaño de chunk y overlap, en caracteres) se configura por subida desde la interfaz (por defecto: chunk 500, overlap 60). Requiere una API key de Google: sin ella, la base de conocimiento queda deshabilitada y el resto de la app funciona normalmente. Memoria de largo plazo: cada turno de conversación se indexa automáticamente y se puede buscar cross-sesión vía `search_memory`.
 
 ### Telegram
 
@@ -190,7 +190,7 @@ Control remoto del agente. Mandá mensajes, cambiá modelos, creá skills/tools,
 
 ### Tareas programadas
 
-Definí tareas (nombre + prompt + uno o más horarios) desde la UI o Telegram. Cada tarea se puede equipar con tools, skills y parámetros del modelo, y su prompt se puede refinar con el wizard del LLM. Al activar una tarea, el backend crea un sub-agente dedicado con esos permisos y lo ejecuta en el horario definido, notificando vía la UI y Telegram.
+Una tarea programada es un workflow cuyo YAML tiene un bloque `schedule` (hora `HH:MM` + días de la semana). Las tareas se crean con el creador de workflows — desde la Agenda del header (nombre, descripción, horarios y los recursos que va a usar el workflow) o con `/agendar` en Telegram — y corren en el motor de workflows como cualquier ejecución (reintentos, juez, notificaciones). El panel de Agenda también edita horarios, ejecuta tareas con play, las cancela y las elimina (workflow + ejecuciones + notificaciones). El backend revisa cada 20 segundos si hay horarios que coinciden con el minuto actual; se usa la zona horaria del sistema, sin configuración.
 
 ### Uso y facturación
 

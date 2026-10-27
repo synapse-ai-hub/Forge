@@ -32,7 +32,7 @@ Frontend del **<nombre>nombre_proyecto</nombre>**. Aplicación React 19 + TypeSc
 - **Tool calls visibles**: Colapsables por tool con input/output formateado.
 - **Adjuntos**: Arrastrar y soltar archivos; extracción de texto automática.
 - **Creación asistida por LLM**: Páginas standalone para crear skills, tools, agentes y workflows.
-- **Gestión de RAG**: Página para crear colecciones, subir archivos y agregar URLs.
+- **Gestión de RAG**: Página para crear colecciones, subir archivos y agregar URLs, con configuración de chunking (tamaño de chunk y overlap) por subida.
 - **Gauge de contexto**: Indicador de uso de la ventana de contexto en el header.
 - **Tareas programadas**: Panel de agenda para programar ejecuciones.
 - **Métricas, uso y facturación**: Dashboard de métricas, consumo del mes y límites de gasto por proveedor y modelo.
@@ -232,7 +232,7 @@ Dashboard de métricas con filtro de rango de tiempo (`1h`, `6h`, `1d`, `1w`, `1
 Se abren desde los botones **Usage** y **Billing** del header. Usage muestra el consumo del mes (requests, tokens y gasto) por proveedor; Billing el gasto por proveedor y modelo, con filtros, y permite configurar límites de gasto.
 
 ### `SchedulerModal.tsx`
-Panel de tareas programadas (agenda): agregar, editar horario y eliminar tareas. Los permisos de una tarea incluyen los workflows que puede ejecutar.
+Panel de tareas programadas (agenda): agregar tareas (nombre, descripción, horarios y recursos que usará el workflow), guardar (el creador de workflows escribe el YAML con su bloque `schedule`), editar horario, ejecutar con play, cancelar y eliminar tareas (borra workflow, ejecuciones, commits y notificaciones).
 
 ### `SetupScreen.tsx`
 Pantalla inicial de configuración de providers (API keys) que aparece al primer arranque.

@@ -87,7 +87,7 @@ The Forge turns those definitions into autonomous systems.
 - **Memory** — persistent conversation indexing and cross-session retrieval
 - **Multi-provider LLM** — Ollama (local), curated cloud providers (OpenAI-compatible + Google)
 - **MCP integration** — connect external tool servers via the Model Context Protocol (stdio, HTTP or SSE), with an on/off switch per server
-- **Scheduler** — run prompts on a schedule, notify via UI and Telegram
+- **Scheduler** — workflows with a `schedule` block run on a schedule, notify via UI and Telegram
 
 ### You ship
 
@@ -152,7 +152,7 @@ flowchart LR
 
 FastAPI application with REST/SSE routers. The agent framework lives in `backend/agent/`: AgentLoop with native tool calling, tools registry (native + external + MCP), SQLite sessions, per-agent permissions, skills, RAG (ChromaDB) and long-term memory.
 
-**Native tools**: `read`, `write`, `edit`, `glob`, `grep`, `list_dir`, `webfetch`, `websearch`, `shell`, `task` (sub-agent delegation), `skill`, `reference`, `rag`, `search_memory`, `check_email`, `send_email`, `query_model_capabilities`, `help`.
+**Native tools**: `read`, `write`, `edit`, `glob`, `grep`, `list_dir`, `webfetch`, `websearch`, `shell`, `task` (sub-agent delegation), `skill`, `reference`, `rag`, `search_memory`, `check_email`, `send_email`, `query_model_capabilities`.
 
 ### Workflows
 
@@ -182,7 +182,7 @@ Cloud providers are curated in-app: each API key is validated live against its o
 
 ### Knowledge base (RAG)
 
-ChromaDB with Gemini embeddings (`gemini-embedding-2`) via the Google provider. Upload files and web pages — content is extracted, chunked and indexed for semantic retrieval. Requires a Google API key: without it, the knowledge base stays disabled and everything else runs normally. Long-term memory: every conversation turn is automatically indexed and searchable across sessions via `search_memory`.
+ChromaDB with Gemini embeddings (`gemini-embedding-2`) via the Google provider. Upload files and web pages — content is extracted, chunked and indexed for semantic retrieval. Chunking (chunk size and overlap, in characters) is configurable per upload from the UI (defaults: chunk 500, overlap 60). Requires a Google API key: without it, the knowledge base stays disabled and everything else runs normally. Long-term memory: every conversation turn is automatically indexed and searchable across sessions via `search_memory`.
 
 ### Telegram
 
@@ -190,7 +190,7 @@ Remote control for the agent. Send messages, switch models, create skills/tools,
 
 ### Scheduled tasks
 
-Define tasks (name + prompt + one or more schedules) from the UI or Telegram. Each task can be equipped with tools, skills and model parameters, and its prompt can be refined with the LLM wizard. Activating a task creates a dedicated sub-agent with those permissions; the backend runs it on schedule and notifies via the UI and Telegram.
+A scheduled task is a workflow whose YAML has a `schedule` block (time `HH:MM` + weekdays). Tasks are created with the workflow creator — from the header Agenda (name, description, schedules and the resources the workflow will use) or with `/agendar` on Telegram — and run in the workflow engine like any run (retries, judge, notifications). The Agenda panel also edits schedules, runs tasks with play, cancels them and deletes them (workflow + runs + notifications). The backend checks every 20 seconds for schedules matching the current minute; the system timezone is used, with no configuration.
 
 ### Usage and billing
 
