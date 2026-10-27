@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState, type ChangeEvent, type FormEvent } fr
 import { Database, Plus, Trash2, Upload, Link2, FolderOpen, FileText, Globe } from "lucide-react";
 import { configService } from "../services/configService";
 import { API_BASE_URL } from "../config/api";
+import { Collapsible } from "../components/ui/collapsible";
+import { Button } from "../components/ui/button";
 
 const API = API_BASE_URL + "/api";
 
@@ -61,6 +63,32 @@ export function RagInterface() {
   const [processing, setProcessing] = useState(false);
   const [resultMsg, setResultMsg] = useState<string | null>(null);
   const [resultType, setResultType] = useState<"success" | "error" | null>(null);
+
+  // Configuración de chunking (aplica a archivos y URLs).
+  // Los borradores solo toman efecto al presionar "Aplicar".
+  const [chunkDraft, setChunkDraft] = useState("500");
+  const [overlapDraft, setOverlapDraft] = useState("60");
+  const [appliedChunk, setAppliedChunk] = useState(500);
+  const [appliedOverlap, setAppliedOverlap] = useState(60);
+
+  const handleApplyChunking = useCallback(() => {
+    const size = Number(chunkDraft);
+    const ov = Number(overlapDraft);
+    if (!Number.isInteger(size) || size <= 0) {
+      setResultType("error");
+      setResultMsg("El tamaño de chunk debe ser un entero mayor a 0.");
+      return;
+    }
+    if (!Number.isInteger(ov) || ov < 0) {
+      setResultType("error");
+      setResultMsg("El overlap debe ser un entero mayor o igual a 0.");
+      return;
+    }
+    setAppliedChunk(size);
+    setAppliedOverlap(ov);
+    setResultType(null);
+    setResultMsg(null);
+  }, [chunkDraft, overlapDraft]);
 
   /* ---- bloqueo: la fuente de conocimiento necesita la clave de Google Gemini ---- */
   const [ragBlocked, setRagBlocked] = useState<boolean | null>(null);
@@ -284,6 +312,8 @@ export function RagInterface() {
     try {
       const form = new FormData();
       files.forEach((f) => form.append("files", f));
+      form.append("chunk_size", String(appliedChunk));
+      form.append("overlap", String(appliedOverlap));
       const resp = await fetch(`${API}/rag/collections/${encodeURIComponent(selected)}/files`, {
         method: "POST",
         body: form,
@@ -312,7 +342,7 @@ export function RagInterface() {
     } finally {
       setProcessing(false);
     }
-  }, [selected, files, loadCollections, ragBlocked]);
+  }, [selected, files, loadCollections, ragBlocked, appliedChunk, appliedOverlap]);
 
   /* ---- agregar URL ---- */
   const handleAddUrl = useCallback(async () => {
@@ -326,7 +356,7 @@ export function RagInterface() {
       const resp = await fetch(`${API}/rag/collections/${encodeURIComponent(selected)}/urls`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: trimmed }),
+        body: JSON.stringify({ url: trimmed, chunk_size: appliedChunk, overlap: appliedOverlap }),
       });
       const data = await resp.json();
       if (data.status === "success") {
@@ -344,7 +374,7 @@ export function RagInterface() {
     } finally {
       setProcessing(false);
     }
-  }, [selected, url, loadCollections, ragBlocked]);
+  }, [selected, url, loadCollections, ragBlocked, appliedChunk, appliedOverlap]);
 
   /* ---- render ---- */
   return (
@@ -485,6 +515,42 @@ export function RagInterface() {
                   Agregá archivos o páginas web. El contenido se chunkea y se guarda en la colección. Podés ver y eliminar cada fuente abajo.
                 </p>
               </div>
+
+              {/* Configuración de chunking (archivos y páginas web) */}
+              <Collapsible title="Configuración de chunking">
+                <p className="text-[11px] text-app-text-secondary mb-2">
+                  Se aplica a archivos y páginas web al presionar "Aplicar". Sin aplicar, se usan los valores por defecto (500 / 60).
+                </p>
+                <div className="space-y-3">
+                  <div>
+                    <label className="text-xs text-app-text">Chunk</label>
+                    <input
+                      type="number"
+                      min={1}
+                      step={1}
+                      value={chunkDraft}
+                      onChange={(e) => setChunkDraft(e.target.value)}
+                      title="Tamaño de cada fragmento en caracteres. Por defecto 500."
+                      className="w-full rounded-lg border border-app-border bg-white px-2 py-1 text-xs text-app-text focus:outline-none focus:ring-2 focus:ring-app-primary-light"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-app-text">Overlap</label>
+                    <input
+                      type="number"
+                      min={0}
+                      step={1}
+                      value={overlapDraft}
+                      onChange={(e) => setOverlapDraft(e.target.value)}
+                      title="Caracteres que se repiten entre fragmentos consecutivos para no cortar el contexto. Por defecto 60."
+                      className="w-full rounded-lg border border-app-border bg-white px-2 py-1 text-xs text-app-text focus:outline-none focus:ring-2 focus:ring-app-primary-light"
+                    />
+                  </div>
+                  <Button type="button" onClick={handleApplyChunking} variant="gradient" className="w-full">
+                    Aplicar
+                  </Button>
+                </div>
+              </Collapsible>
 
               {resultMsg && (
                 <div
