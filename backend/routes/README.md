@@ -378,16 +378,6 @@ Valida y guarda un workflow como `<nombre>.yaml`. El `name` del YAML debe coinci
 
 **Respuesta:** contrato con `data: {name}`.
 
-#### `POST /api/config/workflows/generate`
-
-Genera un workflow en YAML a partir de una descripción y lo valida antes de devolverlo. No escribe en disco.
-
-Para ejecutar un workflow ver la sección Workflows (`POST /api/workflows/{name}/run`).
-
-**Body (JSON):** `{"description": "..."}`.
-
-**Respuesta:** contrato con `data: {yaml, name}`. Si el YAML generado es inválido, `500` con el YAML en `data`.
-
 ---
 
 ### 4. Context Files (`backend/routes/context_files.py`)
@@ -518,7 +508,7 @@ Elimina una colección y todos sus datos.
 
 Sube archivos a una colección: extrae texto, lo divide en chunks y lo almacena.
 
-**Parámetros (FormData):** `files` (list[File], **requerido**). Máximo 20 archivos por request, 50 MB cada uno.
+**Parámetros (FormData):** `files` (list[File], **requerido**). Máximo 20 archivos por request, 50 MB cada uno. Opcionales: `chunk_size` y `overlap` (enteros, en caracteres; por defecto 500 y 60).
 
 **Respuesta:** contrato con `data: {processed[], errors[]}`.
 
@@ -526,7 +516,7 @@ Sube archivos a una colección: extrae texto, lo divide en chunks y lo almacena.
 
 Agrega una página web a una colección.
 
-**Body (JSON):** `{"url": "https://..."}`.
+**Body (JSON):** `{"url": "https://..."}`. Opcionales: `chunk_size` y `overlap` (enteros, en caracteres; por defecto 500 y 60).
 
 **Respuesta:** contrato con `data: {url, chunks}`.
 

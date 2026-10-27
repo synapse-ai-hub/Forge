@@ -7,7 +7,7 @@ import {
   type FormEvent,
 } from "react";
 import { flushSync } from "react-dom";
-import { Send, Square, Download } from "lucide-react";
+import { Send, Square, Download, Play, ShieldCheck } from "lucide-react";
 import { MessageRow } from "../components/chatBlocks";
 import { CreateModelSelector } from "../components/CreateModelSelector";
 import { ResourceCards } from "../components/ResourceCards";
@@ -19,9 +19,11 @@ import {
 } from "../utils/resourceSelection";
 import type { Message, ContentBlock } from "../App";
 import { saveFileWithPicker, fetchConversationMarkdown } from "../utils/conversationExport";
-import { API_BASE_URL } from "../config/api";
+import { API_BASE_URL, type ApiResponse } from "../config/api";
 import { CreatorHistory } from "../components/CreatorHistory";
-import { newCreatorId, type CreatorConversation } from "../services/creatorHistoryService";
+import { newCreatorId, type CreatorConversation } from
+"../services/creatorHistoryService";
+import { useCreatorVerify, VerifyToastBanner } from "../hooks/useCreatorVerify";
 
 const API = API_BASE_URL + "/api";
 
@@ -31,12 +33,6 @@ function generateId(): string {
     return crypto.randomUUID();
   }
   return `${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
-}
-
-/** Mensaje de la entrevista enviado al backend (/api/create/workflow). */
-interface HistorialMsg {
-  role: "user" | "assistant";
-  content: string;
 }
 
 export function WorkflowInterface() {
@@ -56,7 +52,6 @@ export function WorkflowInterface() {
   const [seleccion, setSeleccion] = useState<ResourceSelection>(EMPTY_SELECTION);
 
   const [messages, setMessages] = useState<Message[]>([]);
-  const historialRef = useRef<HistorialMsg[]>([]);
   /* Conversation of the creator: the history sidebar reopens it later. */
   const creatorIdRef = useRef<string>(newCreatorId());
   const [historyKey, setHistoryKey] = useState(0);
@@ -66,7 +61,12 @@ export function WorkflowInterface() {
   const [resultMsg, setResultMsg] = useState<string | null>(null);
   const [resultType, setResultType] = useState<"success" | "error" | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
-  const [isIterating, setIsIterating] = useState(false);
+  /* Shared verification (decision model verdict) for creator pages. */
+  const { verifying, verifyToast, verificar } = useCreatorVerify("workflow");
+  /* Workflow recién creado para probar */
+  const [createdWorkflowName, setCreatedWorkflowName] = useState<string | null>(null);
+  const [runMsg, setRunMsg] = useState<string | null>(null);
+  const [runLoading, setRunLoading] = useState(false);
 
   /* ---- refs ---- */
   const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -162,7 +162,7 @@ export function WorkflowInterface() {
 
   /* ---- envío al backend (streaming SSE /api/create/workflow) ---- */
   const enviar = useCallback(
-    async (texto: string, iterate: boolean = false) => {
+    async (texto: string) => {
       if (isStreaming) return;
       setInput("");
       setChatError(null);
@@ -187,11 +187,7 @@ export function WorkflowInterface() {
       setIsStreaming(true);
       setResultMsg(null);
       setResultType(null);
-
-      historialRef.current = [
-        ...historialRef.current,
-        { role: "user", content: texto },
-      ];
+      setRunMsg(null);
 
       let accumulatedContent = "";
       let accumulatedReasoning = "";
@@ -218,11 +214,9 @@ export function WorkflowInterface() {
           body: JSON.stringify({
             descripcion,
             name: nombre || null,
-            mensajes: historialRef.current,
             creator_id: creatorIdRef.current,
             model: createModel,
             provider: createProvider,
-            iterate,
             ...selectionToRequest(seleccion),
           }),
           signal: abort.signal,
@@ -390,31 +384,6 @@ export function WorkflowInterface() {
                   break;
                 }
 
-                case "workflow_action": {
-                  const action = event.content?.action;
-                  if (action === "question") {
-                    historialRef.current = [
-                      ...historialRef.current,
-                      { role: "assistant", content: accumulatedContent },
-                    ];
-                    setMessages((prev) =>
-                      prev.map((m) => (m.id === assistantId ? { ...m, isStreaming: false } : m)),
-                    );
-                    setIsStreaming(false);
-                  } else if (action === "creating") {
-                    historialRef.current = [
-                      ...historialRef.current,
-                      { role: "assistant", content: accumulatedContent },
-                    ];
-                  } else if (action === "iterating") {
-                    historialRef.current = [
-                      ...historialRef.current,
-                      { role: "assistant", content: accumulatedContent },
-                    ];
-                  }
-                  break;
-                }
-
                 case "workflow_result_final": {
                   const data = event.content || {};
                   setMessages((prev) =>
@@ -424,6 +393,10 @@ export function WorkflowInterface() {
                   if (data.status === "success") {
                     setResultType("success");
                     setResultMsg(data.message || "Workflow creado exitosamente.");
+                    const itemName = data?.data?.workflow;
+                    if (typeof itemName === "string" && itemName) {
+                      setCreatedWorkflowName(itemName);
+                    }
                   } else {
                     setResultType("error");
                     setResultMsg("Error: " + (data.message || "Error desconocido"));
@@ -471,17 +444,15 @@ export function WorkflowInterface() {
         setHistoryKey((k) => k + 1);
       }
     },
-    [isStreaming, descripcion, nombre, createModel, createProvider, isIterating, seleccion],
+    [isStreaming, descripcion, nombre, createModel, createProvider, seleccion],
   );
 
   /* ---- enviar desde el chat ---- */
   const handleSend = useCallback(() => {
     const text = input.trim();
     if (!text || isStreaming) return;
-    const iterate = isIterating;
-    setIsIterating(false);
-    enviar(text, iterate);
-  }, [input, isStreaming, enviar, isIterating]);
+    enviar(text);
+  }, [input, isStreaming, enviar]);
 
   /* ---- detener streaming ---- */
   const handleCancel = useCallback(() => {
@@ -533,7 +504,6 @@ export function WorkflowInterface() {
   const resetConversation = useCallback((): void => {
     abortRef.current?.abort();
     creatorIdRef.current = newCreatorId();
-    historialRef.current = [];
     setMessages([]);
     setSetupDone(false);
     setNombre("");
@@ -542,8 +512,10 @@ export function WorkflowInterface() {
     setChatError(null);
     setResultMsg(null);
     setResultType(null);
-    setIsIterating(false);
     setSeleccion(EMPTY_SELECTION);
+    setCreatedWorkflowName(null);
+    setRunMsg(null);
+    setRunLoading(false);
     setHistoryKey((k) => k + 1);
   }, []);
 
@@ -556,7 +528,6 @@ export function WorkflowInterface() {
     abortRef.current?.abort();
     const setup = c.setup as Record<string, any>;
     creatorIdRef.current = c.creator_id;
-    historialRef.current = c.historial;
     setNombre(typeof setup.name === "string" ? setup.name : "");
     setDescripcion(typeof setup.descripcion === "string" ? setup.descripcion : "");
     setSeleccion(selectionFromSetup(setup));
@@ -566,9 +537,13 @@ export function WorkflowInterface() {
     setResultMsg(
       answered ? (answered.status === "success" ? answered.message : "Error: " + answered.message) : null,
     );
+    setCreatedWorkflowName(
+      c.result?.status === "success" && c.result.action !== "question" ? c.result.item_name : null,
+    );
+    setRunMsg(null);
+    setRunLoading(false);
     setInput("");
     setChatError(null);
-    setIsIterating(false);
     setSetupDone(true);
     setHistoryKey((k) => k + 1);
   }, []);
@@ -781,19 +756,6 @@ export function WorkflowInterface() {
                         <Download size={14} />
                         Descargar conversación
                       </button>
-                      {resultType === "success" && (
-                        <button
-                          onClick={() => {
-                            setResultMsg(null);
-                            setResultType(null);
-                            setIsIterating(true);
-                            setTimeout(() => scrollToBottom("smooth"), 50);
-                          }}
-                          className="flex items-center gap-1 bg-app-bg-tertiary text-app-text text-sm font-medium px-4 py-2 rounded-lg hover:bg-app-bg-secondary transition-colors border border-app-border"
-                        >
-                          Seguir iterando
-                        </button>
-                      )}
                       <button
                         onClick={() => window.close()}
                         className="bg-gradient-to-r from-app-primary to-app-gradient-secondary text-white text-sm font-medium px-5 py-2 rounded-lg hover:opacity-90 transition-colors"
@@ -802,13 +764,78 @@ export function WorkflowInterface() {
                       </button>
                     </div>
                 </div>
-              ) : (
-                <>
+              ) : null}
+              <>
                   {chatError && (
                     <div className="mb-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-4 py-2.5">
                       {chatError}
                     </div>
                   )}
+
+                  <div className="flex gap-2 mb-2">
+                    <button
+                      type="button"
+                      disabled={!createdWorkflowName || runLoading}
+                      title={createdWorkflowName ? `Probar ${createdWorkflowName}` : "Todavía no hay workflow creado"}
+                      onClick={async () => {
+                        if (!createdWorkflowName) return;
+                        try {
+                          setRunLoading(true);
+                          setRunMsg(null);
+                          const resp = await fetch(`${API}/workflows/${encodeURIComponent(createdWorkflowName)}/run`, {
+                            method: "POST",
+                          });
+                          const json: ApiResponse | null = await resp.json().catch(() => null);
+                          if (resp.ok && json && json.status === "success") {
+                            setRunMsg(json.message || `Workflow «${createdWorkflowName}» en ejecución.`);
+                          } else {
+                            setRunMsg("Error: " + ((json && json.message) || "No se pudo ejecutar el workflow."));
+                          }
+                        } catch (err) {
+                          setRunMsg("Error de conexión: " + (err instanceof Error ? err.message : "Error desconocido"));
+                        } finally {
+                          setRunLoading(false);
+                        }
+                      }}
+                      className="flex items-center gap-1 bg-app-bg-tertiary text-app-text text-sm font-medium px-4 py-2 rounded-lg hover:bg-app-bg-secondary transition-colors border border-app-border disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      <Play size={14} />
+                      {runLoading ? "Ejecutando..." : "Probar"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void verificar(creatorIdRef.current, isStreaming || messages.length === 0)}
+                      disabled={verifying || isStreaming || messages.length === 0}
+                      title="Verificar si el trabajo cumple con lo pedido"
+                      className="flex items-center gap-1 bg-app-bg-tertiary text-app-text text-sm font-medium px-4 py-2 rounded-lg hover:bg-app-bg-secondary transition-colors border border-app-border disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      <ShieldCheck size={14} />
+                      {verifying ? "Verificando..." : "Verificar"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          setDownloadError(null);
+                          const md = await fetchConversationMarkdown(messages, "Conversación - Creador de Workflows");
+                          await saveFileWithPicker(md, "conversacion-workflow", ".md");
+                        } catch (err) {
+                          setDownloadError(err instanceof Error ? err.message : "No se pudo descargar la conversación.");
+                        }
+                      }}
+                      className="flex items-center gap-1 bg-app-bg-tertiary text-app-text text-sm font-medium px-4 py-2 rounded-lg hover:bg-app-bg-secondary transition-colors border border-app-border"
+                    >
+                      <Download size={14} />
+                      Descargar conversación
+                    </button>
+                  </div>
+                  {runMsg && (
+                    <p className="text-sm text-app-text-secondary mb-2">{runMsg}</p>
+                  )}
+                  {downloadError && (
+                    <p className="text-sm text-red-600 mb-2">{downloadError}</p>
+                  )}
+                  <VerifyToastBanner toast={verifyToast} />
 
                   <div className="relative">
                     <textarea
@@ -867,8 +894,7 @@ export function WorkflowInterface() {
                       />
                     )}
                   </div>
-                </>
-              )}
+              </>
             </div>
           </div>
         </div>

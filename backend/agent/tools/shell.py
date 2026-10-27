@@ -7,7 +7,6 @@ import subprocess
 
 from backend.agent.utils.config_dir import workspace_ctx
 from backend.agent.utils.contract import make_error_response, make_success_response, zero_usage
-from backend.agent.utils.error_logger import log_error
 from backend.agent.utils.packages import backend_python_env, install_package, parse_pip_install
 
 logger = logging.getLogger(__name__)
@@ -19,32 +18,39 @@ class ShellMixin:
     def _pip_install(specs: list[str], error: str) -> dict:
         """Run a ``pip install`` request through the controlled installer.
 
-        Returns the same shape as a normal command (``output``/``returncode``)
-        so a ``run`` node of a workflow fails on a non-zero code.
+        A rejected command or a failed install returns an error contract
+        (per the unified contract: failures carry ``status`` ``"error"``
+        with the detail in ``message``), so a ``run`` node of a workflow
+        fails just like with any other failed tool.
 
         Args:
             specs: Packages to install.
             error: Reason the command was rejected, empty when it was accepted.
 
         Returns:
-            Contract dict whose ``data`` holds ``output``, ``returncode``, ``truncated`` and ``workdir``.
+            Contract dict; on success ``data`` holds ``output``,
+            ``returncode`` (0), ``truncated`` and ``workdir``.
         """
         if error:
-            return make_success_response(
-                message="Command rejected.",
-                data={"output": error, "returncode": 1, "truncated": False, "workdir": os.getcwd()},
+            return make_error_response(
+                message=f"Command rejected: {error}",
                 usage=zero_usage(),
             )
         lines: list[str] = []
-        code = 0
+        failed = False
         for spec in specs:
             result = install_package(spec)
             lines.append(str(result.get("message", "")))
             if result.get("status") != "success":
-                code = 1
+                failed = True
+        if failed:
+            return make_error_response(
+                message="\n".join(lines) or "pip install failed.",
+                usage=zero_usage(),
+            )
         return make_success_response(
             message="Command executed.",
-            data={"output": "\n".join(lines), "returncode": code, "truncated": False, "workdir": os.getcwd()},
+            data={"output": "\n".join(lines), "returncode": 0, "truncated": False, "workdir": os.getcwd()},
             usage=zero_usage(),
         )
 
@@ -71,7 +77,9 @@ class ShellMixin:
 
             Returns:
                 dict with ``{status, message, data, usage}``.
-                ``data`` contains ``output``, ``returncode``, and ``truncated``.
+                On success ``data`` contains ``output``, ``returncode`` (0)
+                and ``truncated``. A non-zero exit code returns an error
+                contract with the command output in ``message``.
             """
             # The per-call snapshot (ContextVar) wins over the shared attribute:
             # the attribute can hold the event of an unrelated, earlier chat.
@@ -148,10 +156,6 @@ class ShellMixin:
                 try:
                     result = run_task.result()
                 except subprocess.TimeoutExpired as e:
-                    log_error(
-                        f"run_cmd: command timed out after {timeout}ms",
-                        source="tools.py:shell(timeout)",
-                    )
                     return make_error_response(
                         message=f"run_cmd: command timed out after {timeout}ms. "
                                 "If this command is expected to take longer, retry with a larger timeout.",
@@ -171,6 +175,15 @@ class ShellMixin:
                     tail = output[-MAX_BYTES:]
                     output = f"...output truncated...\n\n{tail}"
 
+                if result.returncode != 0:
+                    return make_error_response(
+                        message=(
+                            f"Command failed with exit code {result.returncode}: "
+                            f"{(output.strip() or '(no output)')[-2000:]}"
+                        ),
+                        usage=zero_usage(),
+                    )
+
                 return make_success_response(
                     message="Command executed.",
                     data={
@@ -183,7 +196,6 @@ class ShellMixin:
                 )
             except Exception as e:
                 logger.exception("Error in run_cmd: %s", e)
-                log_error(str(e), source="tools.py:shell")
                 return make_error_response(
                     message=f"Error executing command: {e}",
                     usage=zero_usage(),

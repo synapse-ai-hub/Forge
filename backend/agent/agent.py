@@ -13,6 +13,7 @@ from google import genai
 from openai import AsyncOpenAI
 
 from backend.agent.utils.error_logger import log_error
+from backend.agent.utils.prompt_loader import find_prompt_file, prompt_searchpath
 from backend.agent.utils import provider_keys
 from backend.agent.tools import Tools
 from backend.agent.utils.spend_handler import calculate_cost, record_spend
@@ -51,7 +52,7 @@ project_root = os.path.dirname(os.path.dirname(current_dir))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-load_dotenv()  
+load_dotenv()
 
 
 class Agent(
@@ -198,7 +199,7 @@ class Agent(
         # Prompts: templates Jinja de prompts/ (ver ``prompt``). Un error de
         # variable faltante o de sintaxis nunca corta el chat (ver ``prompt``).
         self._prompt_env = Environment(
-            loader=FileSystemLoader(f'{current_dir}/prompts'),
+            loader=FileSystemLoader(prompt_searchpath()),
             undefined=StrictUndefined,
             trim_blocks=True,
             lstrip_blocks=True,
@@ -385,9 +386,10 @@ class Agent(
         return text
 
     def prompt(self, prompt_name: str, **context: Any) -> str:
-        """Render a prompt template from the ``prompts/`` directory.
+        """Render a prompt template from the ``prompts/`` tree.
 
-        Reads ``{current_dir}/prompts/{prompt_name}.jinja`` where
+        Reads ``{name}.jinja`` (unique across the scope subfolders of
+        ``prompts/``, e.g. ``router/``, ``creadores/``) where
         ``current_dir`` is the directory of this file (``backend/agent/``)
         and renders it with *context*. If the template has a syntax error or
         uses a variable missing from *context*, the error is logged and the
@@ -409,7 +411,8 @@ class Agent(
             raise FileNotFoundError(f'{current_dir}/prompts/{prompt_name}.jinja') from exc
         except TemplateError as exc:
             log_error(str(exc), source=f'agent.py:prompt({prompt_name})')
-            with open(f'{current_dir}/prompts/{prompt_name}.jinja', 'r', encoding='utf-8') as f:
+            found = find_prompt_file(prompt_name)
+            with open(found, 'r', encoding='utf-8') as f:
                 return f.read()
 
 

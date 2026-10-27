@@ -1,16 +1,11 @@
-"""Shared tool-calling loop for the creation flows (skills and tools).
+"""Shared helpers of the creation flows (skills, tools, agents and workflows).
 
-This module implements the agent tool-calling loop used by the creation
-endpoints in ``backend/routes/create.py``. It is the single source of
-truth for the loop so the same behaviour (streaming events, tool
-execution, message accumulation) is shared between the skill and tool
-creation flows instead of being duplicated inline in the routes.
+This module holds what the creation endpoints share: the resolution of the
+model/provider of a creator turn and the resource context the agent and
+workflow creators see in their prompts (everything the system has plus what
+the user picked in the permission cards of the setup form).
 
-The loop streams LLM events (chunks, reasoning, tool calls), executes
-each requested tool through ``agent.tools._execute_tool`` and appends the
-assistant/tool messages to the provided ``msgs`` list in place.
-
-Imported by ``backend/routes/create.py``.
+Imported by ``backend/routes/create/``.
 """
 
 from __future__ import annotations
@@ -20,9 +15,8 @@ import json
 import logging
 import os
 import sys
-import time
-from datetime import datetime
-from typing import Any, AsyncGenerator, Awaitable, Callable
+from collections.abc import Awaitable, Callable
+from typing import Any, AsyncGenerator
 
 # ---------------------------------------------------------------------------
 # Ensure the project root is in sys.path for absolute imports
@@ -33,12 +27,19 @@ if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
 from backend.agent.loop.constants import LLM_BACKOFF_BASE_SECONDS, MAX_LLM_RETRIES
-from backend.agent.permissions import get_tool_permissions, is_tool_allowed
+from backend.agent.permissions import get_tool_permissions
 from backend.agent.utils import provider_keys
+from backend.agent.utils.error_logger import log_error
 from backend.agent.utils.rate_limit_handler import classify_error_category, get_retry_delay
 from backend.instances import agent
 
 logger = logging.getLogger(__name__)
+
+_DEFAULT_MAX_ITERATIONS = 25
+_DEFAULT_TEMPERATURE = 0.3
+_DEFAULT_TOP_P = 0.8
+_DEFAULT_MAX_TOKENS = 3000
+
 
 async def build_resource_context(
     agentes: list[str] | None = None,
@@ -100,55 +101,6 @@ async def build_resource_context(
         "rag_disponibles": list_collections(),
         "mcp_disponibles": mcp_disponibles,
     }
-
-
-_DEFAULT_MAX_ITERATIONS = 25
-_DEFAULT_TEMPERATURE = 0.3
-_DEFAULT_TOP_P = 0.8
-_DEFAULT_MAX_TOKENS = 3000
-
-_INTERVIEW_TOOLS_PERMS: dict[str, str] = {
-    "read": "allow",
-    "write": "allow",
-    "edit": "allow",
-    "shell": "allow",
-    "list_dir": "allow",
-    "glob": "allow",
-    "grep": "allow",
-    "websearch": "allow",
-    "webfetch": "allow",
-    "query_model_capabilities": "allow",
-}
-"""Native tools enabled during creation interviews (read/explore + web)."""
-
-
-def _llm_retry_plan(exc: Exception, attempt: int) -> tuple[float, str] | None:
-    """Decide whether a failed creator LLM call is retried, like the chat loop.
-
-    Only ``rate_limit`` and ``transient`` errors are retried, up to
-    ``MAX_LLM_RETRIES`` times, with exponential back-off that honors the
-    provider's ``retry_after`` hint. Fatal, budget and too-large errors end
-    the flow.
-
-    Args:
-        exc: Exception raised by the LLM call.
-        attempt: Retries already made for this iteration (0 on the first failure).
-
-    Returns:
-        ``(delay_seconds, notice)`` when the call must be retried, else ``None``.
-    """
-    category = classify_error_category(exc)
-    if category not in ("rate_limit", "transient") or attempt >= MAX_LLM_RETRIES:
-        return None
-    delay = max(
-        LLM_BACKOFF_BASE_SECONDS * (2 ** attempt),
-        get_retry_delay(exc, LLM_BACKOFF_BASE_SECONDS, 60.0),
-    )
-    if category == "rate_limit":
-        notice = f"Rate limit alcanzado, reintentando (intento {attempt + 1} de {MAX_LLM_RETRIES})..."
-    else:
-        notice = "Error transitorio, reintentando..."
-    return delay, notice
 
 
 def _resolve_create_model_provider() -> tuple[str | None, str]:
@@ -233,189 +185,33 @@ def resolve_create_model_provider(
     return _resolve_create_model_provider()
 
 
-async def stream_interview_loop(
-    prompt: str,
-    interview_tool: dict[str, Any],
-    friendly_error: str,
-    model: str | None = None,
-    provider: str | None = None,
-    max_iter: int = _DEFAULT_MAX_ITERATIONS,
-    temperature: float = _DEFAULT_TEMPERATURE,
-    top_p: float = _DEFAULT_TOP_P,
-    max_tokens: int = _DEFAULT_MAX_TOKENS,
-) -> AsyncGenerator[dict[str, Any], None]:
-    """Run the interview phase of a creation flow with real tools enabled.
+def _llm_retry_plan(exc: Exception, attempt: int) -> tuple[float, str] | None:
+    """Decide whether a failed in-memory LLM call is retried, like the chat loop.
 
-    Streams the LLM response with the inline interview tool plus the native
-    tools in ``_INTERVIEW_TOOLS_PERMS`` (read/explore + web). When the model
-    calls one of the native tools it is executed through
-    ``agent.tools._execute_tool`` and the conversation continues so the model
-    can inspect files or search the web before answering. When the model calls
-    the interview tool the loop ends.
+    Only ``rate_limit`` and ``transient`` errors are retried, up to
+    ``MAX_LLM_RETRIES`` times, with exponential back-off that honors the
+    provider's ``retry_after`` hint. Fatal, budget and too-large errors end
+    the flow.
 
     Args:
-        prompt: Fully formatted interview prompt (first user message).
-        interview_tool: Inline tool schema that closes the interview
-            (e.g. ``responder_interview``).
-        friendly_error: User-friendly error message yielded on failure.
-        model: Model identifier sent to the provider. If ``None``,
-            resolved via ``_resolve_create_model_provider``.
-        provider: Provider name. If ``None``, resolved via
-            ``_resolve_create_model_provider``.
-        max_iter: Maximum number of loop iterations.
-        temperature: Sampling temperature.
-        top_p: Nucleus sampling parameter.
-        max_tokens: Maximum output tokens per request.
+        exc: Exception raised by the LLM call.
+        attempt: Retries already made for this iteration (0 on the first failure).
 
-    Yields:
-        SSE event dicts: ``chunk``, ``reasoning``, ``tool_call``,
-        ``tool_result``, ``aborted``, ``error`` and finally
-        ``_interview_args`` with the interview tool arguments (or ``None``
-        if the interview tool was never called; internal event, not for
-        the client).
+    Returns:
+        ``(delay_seconds, notice)`` when the call must be retried, else ``None``.
     """
-    if model is None or provider is None:
-        model, provider = _resolve_create_model_provider()
-
-    interview_name = (interview_tool.get("function") or {}).get("name", "")
-    tools: list[dict[str, Any]] = [interview_tool]
-    try:
-        tools += list(agent.tools.tools_registry(_INTERVIEW_TOOLS_PERMS))
-    except Exception as e:
-        logger.warning("No se pudieron listar tools para la entrevista: %s", e)
-
-    msgs: list[dict[str, Any]] = [{"role": "user", "content": prompt}]
-
-    _iteration = 0
-    llm_attempt = 0
-    while _iteration < max_iter:
-        _iteration += 1
-        collected_content = ""
-        tool_calls = None
-        iter_usage: dict[str, Any] | None = None
-
-        try:
-            async for event in agent.llm_streaming(
-                model=model,
-                provider=provider,
-                messages=msgs,
-                tools=tools,
-                temperature=temperature,
-                top_p=top_p,
-                max_tokens=max_tokens,
-                cleaned_output=True,
-            ):
-                if event["type"] == "chunk":
-                    collected_content += event.get("content", "")
-                    yield {"type": "chunk", "content": event.get("content", "")}
-
-                elif event["type"] == "reasoning":
-                    yield {"type": "reasoning", "content": event.get("content", "")}
-
-                elif event["type"] == "usage":
-                    iter_usage = event.get("content") or {}
-
-                elif event["type"] == "tool_calls_detected":
-                    tool_calls = event["content"]
-                    break
-
-                elif event["type"] == "aborted":
-                    yield {"type": "aborted", "content": "Stream cancelado."}
-                    return
-
-        except Exception as e:
-            logger.exception("Error en streaming interview: %s", e)
-            try:
-                from backend.agent.utils.spend_handler import record_creator_call
-
-                record_creator_call("creator:interview", provider, model, iter_usage)
-            except Exception:
-                pass
-            # The failed attempt never reached the agent's spend record:
-            # count it here (zero tokens when no usage was captured).
-            try:
-                agent._record_spend(provider, model, iter_usage)
-            except Exception:
-                pass
-            plan = _llm_retry_plan(e, llm_attempt)
-            if plan is None:
-                yield {"type": "error", "content": friendly_error}
-                return
-            delay, notice = plan
-            logger.warning("Interview LLM error, retrying in %.0fs: %s", delay, e)
-            yield {"type": "retry", "content": notice}
-            await asyncio.sleep(delay)
-            llm_attempt += 1
-            _iteration -= 1
-            continue
-        llm_attempt = 0
-
-        # Contemplate this interview LLM call (tracked in creators
-        # since it never produces messages rows).
-        try:
-            from backend.agent.utils.spend_handler import record_creator_call
-
-            record_creator_call("creator:interview", provider, model, iter_usage)
-        except Exception:
-            pass
-
-        if not tool_calls:
-            break
-
-        # Interview tool → close the phase and hand the args to the caller.
-        interview_tc = next(
-            (tc for tc in tool_calls if tc.get("name") == interview_name), None
-        )
-        if interview_tc is not None:
-            yield {"type": "_interview_args", "content": interview_tc.get("args", {})}
-            return
-
-        # Native tools → execute and keep interviewing with the results.
-        msgs.append({
-            "role": "assistant",
-            "content": collected_content,
-            "tool_calls": tool_calls,
-        })
-        for tc in tool_calls:
-            tc_id = tc.get("id", "")
-            tc_name = tc.get("name", "")
-            tc_args = tc.get("args", {})
-
-            yield {"type": "tool_call", "content": {"name": tc_name, "args": tc_args}}
-
-            try:
-                if not is_tool_allowed(_INTERVIEW_TOOLS_PERMS, tc_name, tc_args):
-                    result = {"status": "error", "message": f"Permission denied for tool '{tc_name}'."}
-                else:
-                    result = await agent.tools._execute_tool(tc_name, **tc_args)
-            except Exception as e:
-                logger.exception("Tool '%s' failed during interview", tc_name)
-                result = {"status": "error", "message": str(e)}
-
-            if isinstance(result, dict):
-                if result.get("status") == "error":
-                    result_content = result.get("message", "Error desconocido")
-                else:
-                    result_content = result.get("data", json.dumps(result))
-            else:
-                result_content = str(result)
-
-            if not isinstance(result_content, str):
-                result_content = json.dumps(result_content)
-
-            yield {
-                "type": "tool_result",
-                "content": {"name": tc_name, "result": result_content},
-            }
-
-            msgs.append({
-                "role": "tool",
-                "tool_call_id": tc_id,
-                "content": result_content,
-            })
-
-    # Interview tool never called within the iteration budget.
-    yield {"type": "_interview_args", "content": None}
+    category = classify_error_category(exc)
+    if category not in ("rate_limit", "transient") or attempt >= MAX_LLM_RETRIES:
+        return None
+    delay = max(
+        LLM_BACKOFF_BASE_SECONDS * (2 ** attempt),
+        get_retry_delay(exc, LLM_BACKOFF_BASE_SECONDS, 60.0),
+    )
+    if category == "rate_limit":
+        notice = f"Rate limit alcanzado, reintentando (intento {attempt + 1} de {MAX_LLM_RETRIES})..."
+    else:
+        notice = "Error transitorio, reintentando..."
+    return delay, notice
 
 
 async def stream_tool_calling_loop(
@@ -431,13 +227,14 @@ async def stream_tool_calling_loop(
     run_tool: Callable[[str, dict[str, Any]], Awaitable[Any]] | None = None,
     on_usage: Callable[[str | None, str | None, dict[str, Any] | None], None] | None = None,
 ) -> AsyncGenerator[dict[str, Any], None]:
-    """Run the agent tool-calling loop and yield SSE event dicts.
+    """Run an in-memory tool-calling loop and yield SSE event dicts.
 
-    Streams the LLM response with the given ``tools`` and executes every
-    tool call through ``run_tool`` (``agent.tools._execute_tool`` by default).
-    ``msgs`` is mutated in place (assistant message with tool calls + tool
-    result messages are appended) so callers can inspect the full conversation
-    afterwards. Nothing is persisted in ``messages``.
+    Unlike the chat loop, nothing is persisted: ``msgs`` is mutated in place
+    (assistant message with tool calls + tool result messages are appended)
+    so callers can inspect the full conversation afterwards. Used by flows
+    that run outside any session: the workflow-runner agent node (with its
+    own ``run_tool`` and spend tracking) and the workflow YAML generator
+    (no tools).
 
     Args:
         msgs: Mutable conversation list; system and user messages are
@@ -546,7 +343,6 @@ async def stream_tool_calling_loop(
         # Contemplate this LLM call (it never produces messages rows).
         _usage(iter_usage)
 
-        # ── Process tool calls ──────────────────────────────────────────
         if tool_calls:
             assistant_msg: dict[str, Any] = {
                 "role": "assistant",
@@ -565,12 +361,17 @@ async def stream_tool_calling_loop(
                 try:
                     if tc_name not in offered_tools:
                         result = {"status": "error", "message": f"Permission denied for tool '{tc_name}'."}
+                        log_error(
+                            f"Permission denied for tool '{tc_name}'.",
+                            source="create_helpers.py:create(permission)",
+                        )
                     elif run_tool is not None:
                         result = await run_tool(tc_name, tc_args)
                     else:
                         result = await agent.tools._execute_tool(tc_name, **tc_args)
                 except Exception as e:
                     logger.exception("Tool '%s' failed", tc_name)
+                    log_error(str(e), source="create_helpers.py:create")
                     result = {"status": "error", "message": str(e)}
 
                 # Extract the result content
@@ -596,7 +397,7 @@ async def stream_tool_calling_loop(
                     "content": result_content,
                 })
 
-            # Continue loop → next iteration streams the response with tool results
+            # Continue loop — next iteration streams the response with tool results
         else:
-            # No tool calls → finished
+            # No tool calls — finished
             break

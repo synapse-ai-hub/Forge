@@ -4,7 +4,6 @@ import logging
 import time
 
 from backend.agent.utils.contract import make_error_response, make_success_response, zero_usage
-from backend.agent.utils.error_logger import log_error
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +88,6 @@ class RagMixin:
                 )
             except Exception as e:
                 logger.exception("Error in rag: %s", e)
-                log_error(str(e), source="tools.py:rag")
                 return make_error_response(
                     message="Error consultando la colección.",
                     usage=zero_usage(),

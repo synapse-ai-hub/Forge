@@ -43,11 +43,12 @@ from backend.agent.permissions import (
 )
 from backend.agent.utils.error_logger import log_error
 from backend.agent.utils.db import db_transaction, get_connection
+from backend.agent.utils.mcp_helper import is_internal_mcp_tool
 from backend.agent.utils.queries import load_query
 from backend.agent.utils.skill_loader import format_skills_section
 from backend.agent.utils.contract import make_error_response, make_success_response, zero_usage
 from backend.instances import agent
-from backend.agent.utils.config_dir import get_agents_dir
+from backend.agent.utils.config_dir import get_agents_dir, get_config_dir
 
 logger = logging.getLogger(__name__)
 
@@ -109,10 +110,17 @@ def _security_block(tools: Iterable[str], decision: bool = False) -> str:
 def _all_tool_names() -> list[str]:
     """List every tool of the registry (what an unrestricted agent gets).
 
+    Internal tools (context7docs_*) are excluded: they are only granted
+    explicitly to the tool-creator turn, never via wildcard.
+
     Returns:
         The tool names.
     """
-    return [t["function"]["name"] for t in agent.tools.tools_registry({"*": "allow"})]
+    return [
+        t["function"]["name"]
+        for t in agent.tools.tools_registry({"*": "allow"})
+        if not is_internal_mcp_tool(t["function"]["name"])
+    ]
 
 
 def _agent_tool_names(agent_name: str) -> list[str]:
@@ -131,44 +139,6 @@ def _agent_tool_names(agent_name: str) -> list[str]:
     except Exception as exc:
         log_error(str(exc), source="loop_helpers.py:_agent_tool_names")
         return []
-
-
-def format_workflows_section(tool_permissions: dict | None) -> str:
-    """List the workflows an agent may run through the ``workflow`` tool.
-
-    Built from the nested ``workflow`` permission (``workflows:`` block of the
-    agent frontmatter or ``config.yaml``): only the workflows that resolve to
-    ``allow`` are listed, with their description, so the agent knows what it
-    can call. Same idea as the agents filtered by the ``task`` permission.
-
-    Args:
-        tool_permissions: Effective tool permissions of the running agent.
-
-    Returns:
-        One ``- name: description`` line per allowed workflow, or ``""`` when
-        the agent has no workflow permission or none of them exists.
-    """
-    try:
-        perms = (tool_permissions or {}).get("workflow")
-        if not isinstance(perms, dict) or not perms:
-            return ""
-        from backend.agent.permissions import wildcard_match
-        from backend.agent.utils.workflows_helpers import _listar_workflows_locales
-
-        lines: list[str] = []
-        for entry in _listar_workflows_locales():
-            name = entry["name"]
-            allowed = any(
-                isinstance(action, str) and action == "allow" and wildcard_match(key, name)
-                for key, action in perms.items()
-            )
-            if allowed:
-                description = entry.get("description") or "sin descripción"
-                lines.append(f"- {name}: {description}")
-        return "\n".join(lines)
-    except Exception as exc:
-        log_error(str(exc), source="loop_helpers.py:format_workflows_section")
-        return ""
 
 
 def load_context_text() -> str:
@@ -247,12 +217,80 @@ def router_agents(tools: Iterable[str], task_perms: dict | None = None) -> list[
     return agents
 
 
+def _read_agent_md() -> str:
+    """Read the shared ``AGENT.md`` behavior file.
+
+    Returns:
+        The file content, or ``""`` when it does not exist or cannot be read.
+    """
+    agent_md_path = get_agents_dir() / "AGENT.md"
+    if not agent_md_path.is_file():
+        return ""
+    try:
+        with open(agent_md_path, encoding="utf-8") as f:
+            return f.read()
+    except (OSError, UnicodeDecodeError) as exc:
+        logger.warning("Error al leer AGENT.md: %s; no se inyecta Behavior.", exc)
+        log_error(str(exc), source="loop_helpers.py:_read_agent_md")
+        return ""
+
+
+def get_temp_dir() -> str:
+    """Create the shared temporary directory and return its path.
+
+    Returns:
+        The absolute path of the ``temp`` directory inside the config dir.
+    """
+    temp_dir = get_config_dir() / "temp"
+    try:
+        temp_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        logger.warning("No se pudo crear el directorio temporal %s: %s", temp_dir, exc)
+        log_error(str(exc), source="loop_helpers.py:get_temp_dir")
+    return str(temp_dir)
+
+
+def build_subagent_sections(
+    tool_permissions: dict | None = None,
+    skill_permissions: dict | None = None,
+) -> tuple[str, str]:
+    """Resolve the skills and delegable-agents sections for a sub-agent.
+
+    Shared by ``agent_loop.run()`` and the ``task`` tool so a delegated
+    sub-agent always receives the same sections no matter the entry point.
+
+    Args:
+        tool_permissions: Effective tool permissions of the sub-agent.
+        skill_permissions: Skill permissions of the sub-agent.
+
+    Returns:
+        Tuple ``(skills_section, agents_section)``; each is ``""`` when empty.
+    """
+    skills_section = format_skills_section(skill_permissions=skill_permissions)
+    # Only the agents its ``task`` permission allows (none without it).
+    task_perms = (tool_permissions or {}).get("task", {})
+    agents_section = agent.prompt(
+        "agentes_disponibles",
+        agentes=router_agents(("task",) if task_perms else (), task_perms),
+    )
+    return skills_section, agents_section
+
+
 def build_system_prompt(
     agent_name: str | None = None,
     tools: Iterable[str] | None = None,
     task_perms: dict | None = None,
+    skills_section: str = "",
+    agents_section: str = "",
+    temp_dir: str = "",
 ) -> str:
     """Build the system prompt for an agent.
+
+    The assembly lives in Jinja: ``system_prompt.jinja`` for the router
+    (its own body plus every optional section) and ``subagent_prompt.jinja``
+    for sub-agents (their markdown as ``base`` plus the same sections).
+    This function only resolves each piece of content and passes it as a
+    template variable; no string surgery here.
 
     - If *agent_name* is ``None`` (router): ``system_prompt.jinja`` is always the
       base prompt. If ``AGENT.md`` exists in the agents config directory, it is
@@ -271,6 +309,12 @@ def build_system_prompt(
         task_perms: Router only. Nested ``task`` permission; when given,
             the ``## Agentes`` section lists only the agents it allows.
             The section is left out when the router has no ``task`` tool.
+        skills_section: Pre-rendered skills catalog (``## Skills``
+            body without the header). Empty means the section is left out.
+        agents_section: Sub-agents only. Pre-rendered agents block
+            (``agentes_disponibles.jinja`` output, header included). Empty
+            means the section is left out.
+        temp_dir: Temporary directory path. Empty means the section is left out.
 
     Returns:
         The system prompt string.
@@ -284,57 +328,28 @@ def build_system_prompt(
         result = get_agent_prompt(agent_name)
         if result.get("status") == "success":
             base = result.get("data", "") or ""
-            # Context files reach sub-agents too (not only the router).
-            context_text = load_context_text()
-            if context_text:
-                base = "\n\n---\n\n".join(p for p in (base, f"## Contexto\n{context_text}") if p)
             if tools is None:
                 tools = _agent_tool_names(agent_name)
-            mandatory = _mandatory_block(tools)
-            seguridad = _security_block(tools)
-
-            # AGENT.md (comportamiento general) se inyecta antes de MANDATORY
-            behavior_text = ""
-            agent_md_path = get_agents_dir() / "AGENT.md"
-            if agent_md_path.is_file():
-                try:
-                    with open(agent_md_path, encoding="utf-8") as f:
-                        behavior_text = f.read()
-                except (OSError, UnicodeDecodeError) as exc:
-                    logger.warning("Error al leer AGENT.md: %s; no se inyecta Behavior.", exc)
-                    log_error(str(exc), source="loop_helpers.py:build_system_prompt")
-
-            if behavior_text or mandatory:
-                parts = [base] if base else []
-                if behavior_text:
-                    parts.append(f"## Behavior\n{behavior_text}")
-                if mandatory:
-                    parts.append(f"## MANDATORY:\n{mandatory}")
-                if seguridad:
-                    parts.append(f"## Seguridad\n{seguridad}")
-                parts.append(f"## Fecha\n{fecha}")
-                system_prompt = "\n\n---\n\n".join(parts)
-                # print(f'\n\n\n{"#"*80}\nSystem prompt:\n\n{system_prompt}\n{"#"*80}\n\n\n')
-                return system_prompt
-
-            # print(f'\n\n\n{"#"*80}\nSystem prompt:\n\n{base}\n{"#"*80}\n\n\n')
-            if seguridad:
-                return "\n\n---\n\n".join(p for p in (base, f"## Seguridad\n{seguridad}") if p)
-            return base
+            return agent.prompt(
+                "subagent_prompt",
+                base=base,
+                # AGENT.md (comportamiento general) se inyecta antes de MANDATORY.
+                behavior=_read_agent_md(),
+                mandatory=_mandatory_block(tools),
+                seguridad=_security_block(tools),
+                fecha=fecha,
+                skills_section=skills_section,
+                agents_section=agents_section,
+                temp_dir=temp_dir,
+                tools=tools,
+            )
         logger.warning(
             "Agent '%s' no encontrado; usando system prompt del router.", agent_name
         )
 
-# Router: system_prompt.jinja es SIEMPRE la base; AGENT.md se inyecta como ## Behavior.
+    # Router: system_prompt.jinja es SIEMPRE la base; AGENT.md se inyecta como ## Behavior.
     if tools is None:
         tools = _all_tool_names()
-    # The agents section is part of the template (system_prompt.jinja).
-    base_prompt = agent.prompt("system_prompt", tools=tools, agentes=router_agents(tools, task_perms))
-
-    # Concatenate: base (with its agents) + paralelización + context (no .format())
-    parts = []
-    if base_prompt:
-        parts.append(base_prompt)
 
     # Fase 6: el router decide cuándo paralelizar. Llamadas independientes
     # en el mismo bloque corren en paralelo con gather y barrera.
@@ -343,42 +358,77 @@ def build_system_prompt(
     except FileNotFoundError:
         logger.warning("Prompt paralelizacion.md no encontrado; no se inyecta Paralelización.")
         paralelizacion = ""
-    if paralelizacion:
-        parts.append(f"## Paralelización\n{paralelizacion}")
 
-    # Append context files content 
-    context_text = load_context_text()
-    if context_text:
-        parts.append(f"## Contexto\n{context_text}")
+    return agent.prompt(
+        "system_prompt",
+        tools=tools,
+        # The agents section is part of the template (system_prompt.jinja).
+        agentes=router_agents(tools, task_perms),
+        paralelizacion=paralelizacion,
+        # AGENT.md (comportamiento general) se inyecta antes de MANDATORY.
+        behavior=_read_agent_md(),
+        mandatory=_mandatory_block(tools),
+        # Reglas de seguridad al final (después de lo que viene del usuario/admin).
+        # Con el modelo de decisión habilitado las reglas van a él, no al prompt.
+        seguridad=_security_block(tools, decision=agent.decision_ready),
+        fecha=fecha,
+        skills_section=skills_section,
+        temp_dir=temp_dir,
+    )
 
-    # AGENT.md (comportamiento general) se inyecta antes de MANDATORY
-    agent_md_path = get_agents_dir() / "AGENT.md"
-    if agent_md_path.is_file():
+
+def build_user_message(
+    user_message: str,
+    context: str = "",
+    file_contents: list[tuple[str, str]] | None = None,
+    frontier: str = "",
+) -> str:
+    """Render the current user content via ``user_prompt.jinja``.
+
+    Variable per-turn data (context files, attachments, pending frontier)
+    travels in the user message, never in the system prompt. The system
+    prompt keeps only stable instructions. History keeps traveling as the
+    messages array with its roles (see ``build_initial_messages``).
+
+    Args:
+        user_message: Raw current message (router text or delegation prompt).
+        context: Context-files text. Router only; sub-agents stay isolated
+            (pass ``""``).
+        file_contents: Optional list of ``(filename, text)`` attachments,
+            rendered as the ``<inicio_adjuntos>`` block.
+        frontier: Pending-work resume text (``build_resume_message`` output).
+            Empty means the section is left out.
+
+    Returns:
+        The rendered user content. Never raises: on any failure it falls
+        back to the plain message plus attachments.
+    """
+    attachments_section = ""
+    if file_contents:
         try:
-            with open(agent_md_path, encoding="utf-8") as f:
-                behavior_text = f.read()
-            parts.append(f"## Behavior\n{behavior_text}")
-        except (OSError, UnicodeDecodeError) as exc:
-            logger.warning("Error al leer AGENT.md: %s; no se inyecta Behavior.", exc)
-            log_error(str(exc), source="loop_helpers.py:build_system_prompt")
-
-    # Reglas obligatorias inyectadas al final del prompt de todos los agentes
-    mandatory = _mandatory_block(tools)
-    if mandatory:
-        parts.append(f"## MANDATORY:\n{mandatory}")
-
-    # Reglas de seguridad al final (después de lo que viene del usuario/admin).
-    # Con el modelo de decisión habilitado las reglas van a él, no al prompt.
-    seguridad = _security_block(tools, decision=agent.decision_ready)
-    if seguridad:
-        parts.append(f"## Seguridad\n{seguridad}")
-
-    parts.append(f"## Fecha\n{fecha}")
-
-    final_prompt = "\n\n---\n\n".join(parts)
-
-    # print(f'\n\n\n{"#"*80}\nSystem prompt:\n\n{final_prompt}\n{"#"*80}\n\n\n')
-    return final_prompt
+            parts = [f"**Archivo: {fn}**\n{text}" for fn, text in file_contents]
+            attachments_section = (
+                "<inicio_adjuntos>\n" + "\n".join(parts) + "\n<fin_adjuntos>"
+            )
+        except Exception as exc:
+            logger.warning("Error building attachments section: %s", exc)
+            log_error(str(exc), source="loop_helpers.py:build_user_message")
+    try:
+        return agent.prompt(
+            "user_prompt",
+            user_message=user_message,
+            context=context or "",
+            attachments_section=attachments_section,
+            frontier=frontier or "",
+        )
+    except Exception as exc:
+        logger.warning(
+            "Prompt user_prompt.jinja no encontrado o roto; usando mensaje plano."
+        )
+        log_error(str(exc), source="loop_helpers.py:build_user_message")
+        if attachments_section:
+            return f"{user_message}\n\n{attachments_section}"
+        return user_message
 
 
 def build_initial_messages(

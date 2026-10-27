@@ -35,7 +35,7 @@ export interface CreatorConversation {
   /** The form of the first request: descripcion, name, parametros, datos, agentes, ... */
   setup: Record<string, unknown>;
   messages: RestoredMessage[];
-  /** The `[{role, content}]` the creator receives as `mensajes`. */
+  /** The `[{role, content}]` rebuilt from the stored turns (display only). */
   historial: Array<{ role: "user" | "assistant"; content: string }>;
   /** How the last request ended, or null. */
   result: {

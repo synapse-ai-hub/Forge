@@ -9,14 +9,16 @@ import {
   type ReactElement,
 } from "react";
 import { flushSync } from "react-dom";
-import { Send, Square, Plus, Trash2, Download, Play } from "lucide-react";
+import { Send, Square, Plus, Trash2, Download, Play, ShieldCheck } from "lucide-react";
 import { MessageRow } from "../components/chatBlocks";
 import { CreateModelSelector } from "../components/CreateModelSelector";
 import type { Message, ContentBlock } from "../App";
 import { saveFileWithPicker, fetchConversationMarkdown } from "../utils/conversationExport";
-import { API_BASE_URL } from "../config/api";
+import { API_BASE_URL, type ApiResponse } from "../config/api";
 import { CreatorHistory } from "../components/CreatorHistory";
-import { newCreatorId, type CreatorConversation } from "../services/creatorHistoryService";
+import { newCreatorId, type CreatorConversation } from
+"../services/creatorHistoryService";
+import { useCreatorVerify, VerifyToastBanner } from "../hooks/useCreatorVerify";
 
 const API = API_BASE_URL + "/api";
 
@@ -26,12 +28,6 @@ function generateId(): string {
     return crypto.randomUUID();
   }
   return `${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
-}
-
-/** Mensaje de la entrevista enviado al backend (/api/create/tool). */
-interface HistorialMsg {
-  role: "user" | "assistant";
-  content: string;
 }
 
 /** Campo declarado por el usuario en el setup (parámetro o dato externo). */
@@ -64,7 +60,6 @@ export function ToolInterface() {
   const [datosAbierto, setDatosAbierto] = useState(false);
 
   const [messages, setMessages] = useState<Message[]>([]);
-  const historialRef = useRef<HistorialMsg[]>([]);
   /* Conversation of the creator: the history sidebar reopens it later. */
   const creatorIdRef = useRef<string>(newCreatorId());
   const [historyKey, setHistoryKey] = useState(0);
@@ -74,11 +69,12 @@ export function ToolInterface() {
   const [resultMsg, setResultMsg] = useState<string | null>(null);
   const [resultType, setResultType] = useState<"success" | "error" | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
-  const [isIterating, setIsIterating] = useState(false);
+  /* Shared verification (decision model verdict) for creator pages. */
+  const { verifying, verifyToast, verificar } = useCreatorVerify("tool");
   /* Sandbox: tool recién creada para testing */
   const [createdToolName, setCreatedToolName] = useState<string | null>(null);
   const [sandboxOpen, setSandboxOpen] = useState(false);
-  const [sandboxSchema, setSandboxSchema] = useState<Record<string, { type: string; description?: string; default?: unknown }> | null>(null);
+  const [sandboxSchema, setSandboxSchema] = useState<Record<string, { type?: string; description?: string; default?: unknown }> | null>(null);
   const [sandboxRequired, setSandboxRequired] = useState<string[]>([]);
   const [sandboxArgs, setSandboxArgs] = useState<Record<string, string>>({});
   const [sandboxResult, setSandboxResult] = useState<string | null>(null);
@@ -203,7 +199,7 @@ export function ToolInterface() {
 
   /* ---- envío al backend (streaming SSE /api/create/tool) ---- */
   const enviar = useCallback(
-    async (texto: string, iterate: boolean = false) => {
+    async (texto: string) => {
       if (isStreaming) return;
       setInput("");
       setChatError(null);
@@ -228,11 +224,6 @@ export function ToolInterface() {
       setIsStreaming(true);
       setResultMsg(null);
       setResultType(null);
-
-      historialRef.current = [
-        ...historialRef.current,
-        { role: "user", content: texto },
-      ];
 
       let accumulatedContent = "";
       let accumulatedReasoning = "";
@@ -259,13 +250,11 @@ export function ToolInterface() {
           body: JSON.stringify({
             descripcion,
             name: nombre || null,
-            mensajes: historialRef.current,
             creator_id: creatorIdRef.current,
             parametros: parametros.filter((p) => p.name.trim()),
             datos: datos.filter((d) => d.name.trim()),
             model: createModel,
             provider: createProvider,
-            iterate,
           }),
           signal: abort.signal,
         });
@@ -420,31 +409,6 @@ export function ToolInterface() {
                   break;
                 }
 
-                case "tool_action": {
-                  const action = event.content?.action;
-                  if (action === "question") {
-                    historialRef.current = [
-                      ...historialRef.current,
-                      { role: "assistant", content: accumulatedContent },
-                    ];
-                    setMessages((prev) =>
-                      prev.map((m) => (m.id === assistantId ? { ...m, isStreaming: false } : m)),
-                    );
-                    setIsStreaming(false);
-                  } else if (action === "creating") {
-                    historialRef.current = [
-                      ...historialRef.current,
-                      { role: "assistant", content: accumulatedContent },
-                    ];
-                  } else if (action === "iterating") {
-                    historialRef.current = [
-                      ...historialRef.current,
-                      { role: "assistant", content: accumulatedContent },
-                    ];
-                  }
-                  break;
-                }
-
                 case "tool_result_final": {
                   const data = event.content || {};
                   setMessages((prev) =>
@@ -504,17 +468,15 @@ export function ToolInterface() {
         setHistoryKey((k) => k + 1);
       }
     },
-    [isStreaming, descripcion, nombre, parametros, datos, createModel, createProvider, isIterating],
+    [isStreaming, descripcion, nombre, parametros, datos, createModel, createProvider],
   );
 
   /* ---- enviar desde el chat ---- */
   const handleSend = useCallback(() => {
     const text = input.trim();
     if (!text || isStreaming) return;
-    const iterate = isIterating;
-    setIsIterating(false);
-    enviar(text, iterate);
-  }, [input, isStreaming, enviar, isIterating]);
+    enviar(text);
+  }, [input, isStreaming, enviar]);
 
   /* ---- detener streaming ---- */
   const handleCancel = useCallback(() => {
@@ -532,13 +494,13 @@ export function ToolInterface() {
     setTimeout(() => scrollToBottom("smooth"), 50);
     try {
       const res = await fetch(`${API}/agent/tools/${createdToolName}/schema`);
-      const json = await res.json();
+      const json: ApiResponse<{ properties?: Record<string, { default?: unknown }>; required?: string[] }> = await res.json();
       if (json.status === "success" && json.data) {
-        setSandboxSchema(json.data.properties || {});
-        setSandboxRequired(json.data.required || []);
+        setSandboxSchema(json.data?.properties || {});
+        setSandboxRequired(json.data?.required || []);
         // Initialize args with defaults
         const initial: Record<string, string> = {};
-        const props = (json.data.properties || {}) as Record<string, { default?: unknown }>;
+        const props = (json.data?.properties || {}) as Record<string, { default?: unknown }>;
         for (const [k, v] of Object.entries(props)) {
           initial[k] = v.default != null ? String(v.default) : "";
         }
@@ -581,7 +543,7 @@ export function ToolInterface() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(parsed),
       });
-      const json = await res.json();
+      const json: ApiResponse = await res.json();
       if (json.status === "success") {
         setSandboxResult(JSON.stringify(json.data, null, 2));
       } else {
@@ -742,7 +704,6 @@ export function ToolInterface() {
   const resetConversation = useCallback((): void => {
     abortRef.current?.abort();
     creatorIdRef.current = newCreatorId();
-    historialRef.current = [];
     setMessages([]);
     setSetupDone(false);
     setNombre("");
@@ -751,7 +712,6 @@ export function ToolInterface() {
     setChatError(null);
     setResultMsg(null);
     setResultType(null);
-    setIsIterating(false);
     setParametros([]);
     setDatos([]);
     setCreatedToolName(null);
@@ -768,7 +728,6 @@ export function ToolInterface() {
     abortRef.current?.abort();
     const setup = c.setup as Record<string, any>;
     creatorIdRef.current = c.creator_id;
-    historialRef.current = c.historial;
     setNombre(typeof setup.name === "string" ? setup.name : "");
     setDescripcion(typeof setup.descripcion === "string" ? setup.descripcion : "");
     setParametros(Array.isArray(setup.parametros) ? setup.parametros : []);
@@ -785,7 +744,6 @@ export function ToolInterface() {
     );
     setInput("");
     setChatError(null);
-    setIsIterating(false);
     setSetupDone(true);
     setHistoryKey((k) => k + 1);
   }, []);
@@ -1006,25 +964,6 @@ export function ToolInterface() {
                         <Download size={14} />
                         Descargar conversación
                       </button>
-                      {resultType === "success" && (
-                        <button
-                          onClick={() => {
-                            setResultMsg(null);
-                            setResultType(null);
-                            setIsIterating(true);
-                            setCreatedToolName(null);
-                            setSandboxOpen(false);
-                            setSandboxSchema(null);
-                            setSandboxArgs({});
-                            setSandboxResult(null);
-                            setSandboxError(null);
-                            setTimeout(() => scrollToBottom("smooth"), 50);
-                          }}
-                          className="flex items-center gap-1 bg-app-bg-tertiary text-app-text text-sm font-medium px-4 py-2 rounded-lg hover:bg-app-bg-secondary transition-colors border border-app-border"
-                        >
-                          Seguir iterando
-                        </button>
-                      )}
                       {resultType === "success" && createdToolName && (
                         <button
                           onClick={openSandbox}
@@ -1044,7 +983,7 @@ export function ToolInterface() {
 
                     {/* Sandbox panel */}
                     {sandboxOpen && (
-                      <div className="mt-3 rounded-2xl border border-app-border bg-white p-4 sm:p-5">
+                      <div className="mt-3 rounded-2xl border border-app-border bg-white p-4 sm:p-5 text-left">
                         <div className="flex items-center justify-between mb-3">
                           <h3 className="text-sm font-semibold text-app-text">
                             Sandbox — {createdToolName}
@@ -1070,10 +1009,12 @@ export function ToolInterface() {
                           <div className="space-y-2">
                             {Object.entries(sandboxSchema).map(([key, prop]) => (
                               <div key={key}>
-                                <label className="block text-xs font-medium text-app-text mb-0.5">
+                                <label className="block text-xs font-medium text-app-text mb-0.5 text-left">
                                   {key}
-                                  {sandboxRequired.includes(key) && (
+                                  {sandboxRequired.includes(key) ? (
                                     <span className="text-red-500 ml-0.5">*</span>
+                                  ) : (
+                                    <span className="text-app-text-secondary ml-1 font-normal">(opcional)</span>
                                   )}
                                   {prop.description && (
                                     <span className="text-app-text-secondary ml-1">
@@ -1116,13 +1057,56 @@ export function ToolInterface() {
                       </div>
                     )}
                 </div>
-              ) : (
-                <>
+              ) : null}
+              <>
                   {chatError && (
                     <div className="mb-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-4 py-2.5">
                       {chatError}
                     </div>
                   )}
+
+                  <div className="flex gap-2 mb-2">
+                    <button
+                      type="button"
+                      onClick={openSandbox}
+                      disabled={!createdToolName}
+                      title={createdToolName ? `Probar ${createdToolName}` : "Todavía no hay tool creada"}
+                      className="flex items-center gap-1 bg-app-bg-tertiary text-app-text text-sm font-medium px-4 py-2 rounded-lg hover:bg-app-bg-secondary transition-colors border border-app-border disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      <Play size={14} />
+                      Probar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void verificar(creatorIdRef.current, isStreaming || messages.length === 0)}
+                      disabled={verifying || isStreaming || messages.length === 0}
+                      title="Verificar si el trabajo cumple con lo pedido"
+                      className="flex items-center gap-1 bg-app-bg-tertiary text-app-text text-sm font-medium px-4 py-2 rounded-lg hover:bg-app-bg-secondary transition-colors border border-app-border disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      <ShieldCheck size={14} />
+                      {verifying ? "Verificando..." : "Verificar"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          setDownloadError(null);
+                          const md = await fetchConversationMarkdown(messages, "Conversación - Creador de Tools");
+                          await saveFileWithPicker(md, "conversacion-tool", ".md");
+                        } catch (err) {
+                          setDownloadError(err instanceof Error ? err.message : "No se pudo descargar la conversación.");
+                        }
+                      }}
+                      className="flex items-center gap-1 bg-app-bg-tertiary text-app-text text-sm font-medium px-4 py-2 rounded-lg hover:bg-app-bg-secondary transition-colors border border-app-border"
+                    >
+                      <Download size={14} />
+                      Descargar conversación
+                    </button>
+                  </div>
+                  {downloadError && (
+                    <p className="text-sm text-red-600 mb-2">{downloadError}</p>
+                  )}
+                  <VerifyToastBanner toast={verifyToast} />
 
                   <div className="relative">
                     <textarea
@@ -1181,8 +1165,7 @@ export function ToolInterface() {
                       />
                     )}
                   </div>
-                </>
-              )}
+              </>
             </div>
           </div>
         </div>

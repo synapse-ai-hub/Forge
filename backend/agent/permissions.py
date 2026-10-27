@@ -41,14 +41,15 @@ if _project_root not in sys.path:
 from backend.agent.utils.config_dir import get_agents_dir
 from backend.agent.utils.contract import make_error_response, make_success_response
 from backend.agent.utils.error_logger import log_error
+from backend.agent.utils.mcp_helper import is_internal_mcp_tool
 
 logger = logging.getLogger(__name__)
 
-_GROUP_ARG = {"task": "agent_name", "workflow": "name", "rag": "collection"}
+_GROUP_ARG = {"task": "agent_name", "rag": "collection"}
 """Discriminating argument of the tools whose permission is a nested group.
 
 ``tasks: {explorer: allow}`` constrains ``task(agent_name=...)`` and
-``workflows: {nightly: allow}`` constrains ``workflow(name=...)``.
+``rag: {docs: allow}`` constrains ``rag(collection=...)``.
 """
 
 # ---------------------------------------------------------------------------
@@ -179,8 +180,7 @@ def get_tool_permissions(agent_name: str | None) -> dict[str, Any]:
 
     Reads ``agents/<agent_name>.md`` and returns the ``tools`` block
     under ``permissions``, combining it with the ``tasks`` block (as the
-    nested ``task`` permission) and the ``workflows`` block (as the nested
-    ``workflow`` permission) if present.
+    nested ``task`` permission) if present.
 
     Args:
         agent_name: Agent name (without ``.md``). ``None``/empty → empty
@@ -206,9 +206,6 @@ def get_tool_permissions(agent_name: str | None) -> dict[str, Any]:
     tasks_perms = permissions.get("tasks")
     if isinstance(tasks_perms, dict) and tasks_perms:
         tools_perms["task"] = tasks_perms
-    workflows_perms = permissions.get("workflows")
-    if isinstance(workflows_perms, dict) and workflows_perms:
-        tools_perms["workflow"] = workflows_perms
 
     return make_success_response(
         message=f"Tool permissions for agent '{agent_name}'.",
@@ -476,8 +473,8 @@ def is_tool_allowed(
       key (wildcard) and the value is exactly ``"allow"``.
     - **Nested group with exact match** (``{"task": {"explorer": "allow"}}``):
       for the single tool named like the group key (``task``), the first
-      relevant argument (``agent_name`` for ``task``, ``name`` for
-      ``workflow``) must match one of the allowed sub-keys.
+      relevant argument (``agent_name`` for ``task``) must match one of
+      the allowed sub-keys.
     - **Nested group with prefix** (``{"notebooklm": {"*": "allow"}}``):
       tools named ``<group>_<sub>`` are allowed when the group has
       ``"*": "allow"`` or the sub-tool name is explicitly allowed.
@@ -493,6 +490,23 @@ def is_tool_allowed(
         ``True`` only when the call resolves to an explicit ``"allow"``.
     """
     if not tool_perms or not tool_name:
+        return False
+
+    # --- Internal tools (context7docs_*): explicit nested grant only ---
+    # Mirrors the filter_tools gate: a flat "*" never admits them.
+    if is_internal_mcp_tool(tool_name):
+        for key, sub in tool_perms.items():
+            if not isinstance(sub, dict):
+                continue
+            if tool_name != key and not tool_name.startswith(key + "_"):
+                continue
+            if sub.get("*") == "allow":
+                return True
+            sub_tool = tool_name[len(key) + 1:] if tool_name.startswith(key + "_") else tool_name
+            for sub_key, action in sub.items():
+                if isinstance(action, str) and action == "allow" and wildcard_match(sub_key, sub_tool):
+                    return True
+            return False
         return False
 
     # --- Nested permission (group): exact match or prefix ---
@@ -580,6 +594,31 @@ def filter_tools(
         if not name:
             continue
 
+        # --- Internal tools (context7docs_*): explicit nested grant only ---
+        # They never pass via flat "*" or unnamed allow-lists; only a nested
+        # group for their label (e.g. {"context7docs": {"*": "allow"}}) admits
+        # them. That grant is only built for the tool-creator turn.
+        if is_internal_mcp_tool(name):
+            matched_key = None
+            matched_sub: dict[str, Any] | None = None
+            for k, v in nested_perms.items():
+                if name == k or name.startswith(k + "_"):
+                    matched_key = k
+                    matched_sub = v
+                    break
+            if not isinstance(matched_sub, dict) or matched_key is None:
+                logger.debug("Internal tool '%s' denied (no nested grant).", name)
+                continue
+            if matched_sub.get("*") == "allow":
+                filtered.append(tool)
+                continue
+            sub_tool = name[len(matched_key) + 1:] if name.startswith(matched_key + "_") else name
+            for sub_key, action in matched_sub.items():
+                if isinstance(action, str) and action == "allow" and wildcard_match(sub_key, sub_tool):
+                    filtered.append(tool)
+                    break
+            continue
+
         # --- Nested permission (group): match exact name or prefix ---
         # e.g. "task": {explorer: allow}      → matches the "task" tool (exact)
         #      "notebooklm": {"*": "allow"}   → matches every "notebooklm_*" tool
@@ -627,10 +666,13 @@ def filter_tools(
                 continue
 
             # Prefixed tools (MCP group): include only explicitly allowed sub-tools
+            # (wildcard-aware, same semantics as is_tool_allowed).
             sub_tool = name[len(group_key) + 1:]
-            if sub_tool in allowed:
-                filtered.append(tool)
-                logger.debug("Tool '%s' allowed by group '%s'.", name, group_key)
+            for sub_key, action in sub.items():
+                if isinstance(action, str) and action == "allow" and wildcard_match(sub_key, sub_tool):
+                    filtered.append(tool)
+                    logger.debug("Tool '%s' allowed by group '%s'.", name, group_key)
+                    break
             continue
 
         # --- Flat permission (e.g. query: allow) ---

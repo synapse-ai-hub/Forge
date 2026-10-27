@@ -547,6 +547,12 @@ async def test_tool(
             "message": f"Error ejecutando '{tool_name}': {e}",
         }, status_code=500)
 
+    if isinstance(tool_result, dict) and tool_result.get("status") == "error":
+        log_error(
+            f"test_tool: '{tool_name}' devolvió error: {tool_result.get('message', tool_result)}",
+            source="agent_items.py:test_tool",
+        )
+
     return JSONResponse(content={
         "status": "success",
         "data": tool_result,

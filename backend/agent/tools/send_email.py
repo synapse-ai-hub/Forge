@@ -184,7 +184,6 @@ class SendEmailMixin:
                                 with open(real_path, "rb") as fh:
                                     content = fh.read()
                         except Exception as e:
-                            log_error(str(e), source="tools.py:_smtp_send(attachment)")
                             return make_error_response(
                                 message=f"Adjunto {filename!r}: no se pudo leer.",
                                 usage=zero_usage(),
@@ -258,7 +257,6 @@ class SendEmailMixin:
                 )
             except Exception as e:
                 logger.exception("Error in send_email: %s", e)
-                log_error(str(e), source="tools.py:_smtp_send")
                 return make_error_response(
                     message=f"Error enviando email: {e}",
                     usage=zero_usage(),

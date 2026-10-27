@@ -94,7 +94,6 @@ class WebfetchMixin:
                     )
             except Exception as e:
                 logger.exception("Error in webfetch: %s", e)
-                log_error(str(e), source="tools.py:webfetch")
                 return make_error_response(
                     message=f"Error fetching URL: {e}",
                     usage=zero_usage(),

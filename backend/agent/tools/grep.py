@@ -82,7 +82,6 @@ class GrepMixin:
                 )
             except Exception as e:
                 logger.exception("Error in grep: %s", e)
-                log_error(str(e), source="tools.py:grep")
                 return make_error_response(
                     message=f"Error in grep: {e}",
                     usage=zero_usage(),

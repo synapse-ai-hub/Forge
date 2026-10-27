@@ -187,8 +187,7 @@ def _router_tool_permissions(router_perms: dict[str, Any] | None) -> dict[str, A
     ``rag`` permission. Without permissions the guaranteed floor tools
     are used. In both cases the internal RAG collections
     (``_ROUTER_RAG_FLOOR``) are always readable, whatever the stored
-    selection says. Non-dict values and a legacy ``workflows`` key are
-    tolerated (the table never produces them): only dict values are
+    selection says. Non-dict values are tolerated: only dict values are
     applied.
 
     Args:
@@ -214,9 +213,6 @@ def _router_tool_permissions(router_perms: dict[str, Any] | None) -> dict[str, A
         tasks_perms = router_perms.get("tasks")
         if isinstance(tasks_perms, dict) and tasks_perms:
             tool_permissions["task"] = tasks_perms
-        workflows_perms = router_perms.get("workflows")
-        if isinstance(workflows_perms, dict) and workflows_perms:
-            tool_permissions["workflow"] = workflows_perms
         rag_perms = router_perms.get("rag")
         if isinstance(rag_perms, dict):
             tool_permissions["rag"] = rag_perms
@@ -227,6 +223,9 @@ def _router_tool_permissions(router_perms: dict[str, Any] | None) -> dict[str, A
         tool_permissions["rag"] = {**rag_perms, **_ROUTER_RAG_FLOOR}
     else:
         tool_permissions["rag"] = dict(_ROUTER_RAG_FLOOR)
+    # The skill loader is floor too: always available to the router, never
+    # shown in the UI (hidden) and never toggled by the stored selection.
+    tool_permissions["skill"] = "allow"
     return tool_permissions
 
 def _read_param_override(key: str) -> Any:

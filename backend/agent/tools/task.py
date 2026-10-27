@@ -115,12 +115,26 @@ class TaskMixin:
                 )
 
             try:
-                from backend.agent.utils.loop_helpers import build_system_prompt
+                from backend.agent.utils.loop_helpers import (
+                    build_subagent_sections,
+                    build_system_prompt,
+                    get_temp_dir,
+                )
 
-                system_prompt = build_system_prompt(agent_name)
+                # Same sections a sub-agent gets when invoked via loop.run():
+                # its skills, the agents its ``task`` permission allows, and
+                # the shared temp directory.
+                skills_section, agents_section = build_subagent_sections(
+                    tool_perms, skill_perms
+                )
+                system_prompt = build_system_prompt(
+                    agent_name,
+                    skills_section=skills_section,
+                    agents_section=agents_section,
+                    temp_dir=get_temp_dir(),
+                )
                 # print(f'Agente: {agent_name}\n\nPrompt:\n{system_prompt}')
             except Exception as exc:
-                log_error(str(exc), source="tools.py:task(system_prompt)")
                 return make_error_response(
                     message=f"No se pudo preparar el agente '{agent_name}'. Revisá su definición e intentá de nuevo.",
                     usage=zero_usage(),
@@ -146,11 +160,16 @@ class TaskMixin:
                 event_queue = snapshot.get(
                     "subagent_event_queue", getattr(self, "_subagent_event_queue", None)
                 )
+                # Attachments of the current turn travel with the delegation
+                # prompt: the sub-agent receives them in its user message
+                # without the router having to paste them.
+                parent_files = snapshot.get("file_contents")
             else:
                 parent_id = getattr(self, "_current_session_id", None)
                 depth = getattr(self, "_current_depth", 0)
                 stream_cancel_event = getattr(self, "_stream_cancel_event", None)
                 event_queue = getattr(self, "_subagent_event_queue", None)
+                parent_files = None
 
             child_id = (
                 f"{parent_id}:{agent_name}:{uuid.uuid4().hex[:8]}"
@@ -193,6 +212,7 @@ class TaskMixin:
                     parent_model=parent_model,
                     parent_provider=parent_provider,
                     stream_cancel_event=stream_cancel_event,
+                    file_contents=parent_files,
                 ):
                     # Keep consuming after [DONE]: the loop still runs its
                     # closing steps (e.g. freeing the sub-agent's model).
@@ -227,9 +247,10 @@ class TaskMixin:
                             final_text += payload.get("content", "")
             except Exception as exc:
                 logger.exception("Error en sub-agente '%s': %s", agent_name, exc)
-                log_error(str(exc), source="tools.py:task")
-                final_text = "Ocurrió un error al ejecutar el sub-agente."
-                state = "error"
+                return make_error_response(
+                    message=f"Error en sub-agente '{agent_name}': {exc}",
+                    usage=zero_usage(),
+                )
 
             # 4. Return the result wrapped in XML (consumed by the parent as tool result)
 
