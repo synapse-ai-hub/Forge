@@ -74,7 +74,7 @@ export function ToolInterface() {
   /* Sandbox: tool recién creada para testing */
   const [createdToolName, setCreatedToolName] = useState<string | null>(null);
   const [sandboxOpen, setSandboxOpen] = useState(false);
-  const [sandboxSchema, setSandboxSchema] = useState<Record<string, { type: string; description?: string; default?: unknown }> | null>(null);
+  const [sandboxSchema, setSandboxSchema] = useState<Record<string, { type?: string; description?: string; default?: unknown }> | null>(null);
   const [sandboxRequired, setSandboxRequired] = useState<string[]>([]);
   const [sandboxArgs, setSandboxArgs] = useState<Record<string, string>>({});
   const [sandboxResult, setSandboxResult] = useState<string | null>(null);

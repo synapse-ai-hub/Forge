@@ -32,6 +32,10 @@ interface ProcessedItem {
   error?: string;
 }
 
+/** Valores por defecto de chunking (en caracteres). */
+const DEFAULT_CHUNK_SIZE = 500;
+const DEFAULT_OVERLAP = 60;
+
 export function RagInterface() {
   /* ---- state ---- */
   const [collections, setCollections] = useState<Collection[]>([]);
@@ -66,10 +70,10 @@ export function RagInterface() {
 
   // Configuración de chunking (aplica a archivos y URLs).
   // Los borradores solo toman efecto al presionar "Aplicar".
-  const [chunkDraft, setChunkDraft] = useState("500");
-  const [overlapDraft, setOverlapDraft] = useState("60");
-  const [appliedChunk, setAppliedChunk] = useState(500);
-  const [appliedOverlap, setAppliedOverlap] = useState(60);
+  const [chunkDraft, setChunkDraft] = useState(String(DEFAULT_CHUNK_SIZE));
+  const [overlapDraft, setOverlapDraft] = useState(String(DEFAULT_OVERLAP));
+  const [appliedChunk, setAppliedChunk] = useState(DEFAULT_CHUNK_SIZE);
+  const [appliedOverlap, setAppliedOverlap] = useState(DEFAULT_OVERLAP);
 
   const handleApplyChunking = useCallback(() => {
     const size = Number(chunkDraft);
@@ -519,7 +523,7 @@ export function RagInterface() {
               {/* Configuración de chunking (archivos y páginas web) */}
               <Collapsible title="Configuración de chunking">
                 <p className="text-[11px] text-app-text-secondary mb-2">
-                  Se aplica a archivos y páginas web al presionar "Aplicar". Sin aplicar, se usan los valores por defecto (500 / 60).
+                  Se aplica a archivos y páginas web al presionar "Aplicar". Sin aplicar, se usan los valores por defecto ({DEFAULT_CHUNK_SIZE} / {DEFAULT_OVERLAP}).
                 </p>
                 <div className="space-y-3">
                   <div>
