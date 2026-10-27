@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" role="img" aria-label="Hand-drawn diagram of the synapseForge pipeline: pip install, init, GUI, template, project ready, three paths (run, launch, docker) and distributable artifacts.">
+  <rect x="0" y="0" width="1280" height="720" fill="#fbfaf6"/>
+  <text x="40" y="34" font-family="'IBM Plex Mono', Consolas, monospace" font-size="14" fill="#5f666e">FROM ZERO TO APP</text>
+  <text x="40" y="82" font-family="Caveat, 'Segoe Print', 'Bradley Hand', cursive" font-weight="600" font-size="46" fill="#1d2126">From pip install to distributable app</text>
+
+  <!-- fila 1 -->
+  <g stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <rect x="40" y="110" width="250" height="120" rx="10" fill="#e8effc" stroke="none"/>
+    <path d="M42,111 Q165,108 288,112 Q292,170 288,228 Q165,232 42,228 Q38,170 41,112 Z" stroke="#2257c8" stroke-width="2.8"/>
+    <path d="M292,170 Q316,170 338,170 M338,170 l-13,-6 M338,170 l-13,6" stroke="#1d2126" stroke-width="2.8"/>
+    <rect x="340" y="110" width="230" height="120" rx="10" fill="#e8effc" stroke="none"/>
+    <path d="M342,111 Q455,108 568,112 Q572,170 568,228 Q455,232 342,228 Q338,170 341,112 Z" stroke="#2257c8" stroke-width="2.8"/>
+    <path d="M572,170 Q596,170 618,170 M618,170 l-13,-6 M618,170 l-13,6" stroke="#1d2126" stroke-width="2.8"/>
+    <rect x="620" y="110" width="280" height="120" rx="10" fill="#f0e9fa" stroke="none"/>
+    <path d="M622,111 Q760,108 898,112 Q902,170 898,228 Q760,232 622,228 Q618,170 621,112 Z" stroke="#6c41ad" stroke-width="2.8"/>
+    <path d="M902,170 Q926,170 948,170 M948,170 l-13,-6 M948,170 l-13,6" stroke="#1d2126" stroke-width="2.8"/>
+    <rect x="950" y="110" width="250" height="120" rx="10" fill="#f0e9fa" stroke="none"/>
+    <path d="M952,111 Q1075,108 1198,112 Q1202,170 1198,228 Q1075,232 952,228 Q948,170 951,112 Z" stroke="#6c41ad" stroke-width="2.8"/>
+    <path d="M1075,232 Q1076,265 1075,298 M1075,298 l-6,-13 M1075,298 l6,-13" stroke="#1d2126" stroke-width="2.8"/>
+  </g>
+  <g font-family="Caveat, 'Segoe Print', 'Bradley Hand', cursive" font-weight="600" font-size="26" fill="#1d2126" text-anchor="middle">
+    <text x="165" y="162"><tspan x="165" dy="0">pip install</tspan><tspan x="165" dy="29">synapseForge</tspan></text>
+    <text x="455" y="162"><tspan x="455" dy="0">synapseForge</tspan><tspan x="455" dy="29">init</tspan></text>
+    <text x="760" y="162"><tspan x="760" dy="0">GUI: name,</tspan><tspan x="760" dy="29">logo, colors</tspan></text>
+    <text x="1075" y="162"><tspan x="1075" dy="0">template +</tspan><tspan x="1075" dy="29">venv + deps</tspan></text>
+  </g>
+  <g font-family="'IBM Plex Mono', Consolas, monospace" font-size="13" fill="#5f666e" text-anchor="middle">
+    <text x="165" y="216">PyPI</text>
+    <text x="455" y="216">Interactive CLI</text>
+    <text x="1075" y="216">generated for you</text>
+  </g>
+
+  <!-- fila 2 (serpentina: proyecto listo -> 3 caminos -> artefactos) -->
+  <g stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <rect x="950" y="300" width="250" height="110" rx="10" fill="#e6f4ea" stroke="none"/>
+    <path d="M952,301 Q1075,298 1198,302 Q1202,355 1198,408 Q1075,412 952,408 Q948,355 951,302 Z" stroke="#217a44" stroke-width="2.8"/>
+    <path d="M948,355 Q900,320 852,272 M852,272 l-2,14 M852,272 l-13,4" stroke="#1d2126" stroke-width="2.8"/>
+    <path d="M948,355 Q900,365 852,378 M852,378 l-1,14 M852,378 l-13,3" stroke="#1d2126" stroke-width="2.8"/>
+    <path d="M948,355 Q900,415 852,488 M852,488 l0,14 M852,488 l-13,2" stroke="#1d2126" stroke-width="2.8"/>
+    <rect x="560" y="230" width="290" height="80" rx="10" fill="#e8effc" stroke="none"/>
+    <path d="M562,231 Q705,228 848,232 Q852,270 848,308 Q705,312 562,308 Q558,270 561,232 Z" stroke="#2257c8" stroke-width="2.8"/>
+    <rect x="560" y="340" width="290" height="80" rx="10" fill="#f0e9fa" stroke="none"/>
+    <path d="M562,341 Q705,338 848,342 Q852,380 848,418 Q705,422 562,418 Q558,380 561,342 Z" stroke="#6c41ad" stroke-width="2.8"/>
+    <rect x="560" y="450" width="290" height="80" rx="10" fill="#e2f3f4" stroke="none"/>
+    <path d="M562,451 Q705,448 848,452 Q852,490 848,528 Q705,532 562,528 Q558,490 561,452 Z" stroke="#0d7a82" stroke-width="2.8"/>
+    <path d="M558,380 Q460,360 362,332 M362,332 l14,1 M362,332 l9,10" stroke="#1d2126" stroke-width="2.8"/>
+    <path d="M558,490 Q460,490 362,490 M362,490 l13,-6 M362,490 l13,6" stroke="#1d2126" stroke-width="2.8"/>
+    <rect x="60" y="280" width="300" height="100" rx="10" fill="#e6f4ea" stroke="none"/>
+    <path d="M62,281 Q210,278 358,282 Q362,330 358,378 Q210,382 62,378 Q58,330 61,282 Z" stroke="#217a44" stroke-width="2.8"/>
+    <rect x="60" y="440" width="300" height="100" rx="10" fill="#e6f4ea" stroke="none"/>
+    <path d="M62,441 Q210,438 358,442 Q362,490 358,538 Q210,542 62,538 Q58,490 61,442 Z" stroke="#217a44" stroke-width="2.8"/>
+  </g>
+  <g font-family="Caveat, 'Segoe Print', 'Bradley Hand', cursive" font-weight="600" font-size="26" fill="#1d2126" text-anchor="middle">
+    <text x="1075" y="347"><tspan x="1075" dy="0">project</tspan><tspan x="1075" dy="29">ready</tspan></text>
+    <text x="705" y="272" font-size="24">synapseForge run</text>
+    <text x="705" y="382" font-size="24">synapseForge launch</text>
+    <text x="705" y="492" font-size="24">docker compose up</text>
+    <text x="210" y="322"><tspan x="210" dy="0">desktop app</tspan><tspan x="210" dy="29">/ portable zip</tspan></text>
+    <text x="210" y="482"><tspan x="210" dy="0">Docker</tspan><tspan x="210" dy="29">container</tspan></text>
+  </g>
+  <g font-family="'IBM Plex Mono', Consolas, monospace" font-size="13" fill="#5f666e" text-anchor="middle">
+    <text x="705" y="298">development servers</text>
+    <text x="705" y="408">desktop app / zip</text>
+    <text x="705" y="518">container</text>
+  </g>
+
+  <text x="40" y="660" font-family="Caveat, 'Segoe Print', 'Bradley Hand', cursive" font-weight="600" font-size="32" fill="#a8610b">One project, three exits: develop, desktop, or Docker.</text>
+</svg>

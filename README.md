@@ -131,18 +131,13 @@ On first launch, configure an API key from any curated cloud provider (all offer
 | `synapseForge run [dir]` | Start development servers |
 | `synapseForge update [dir]` | Update project to latest template (preserves data) |
 
-```mermaid
-flowchart LR
-    A["pip install synapseForge"] --> B["synapseForge init"]
-    B --> C["GUI: name, logo, colors"]
-    C --> D["Template + venv + deps"]
-    D --> E["Project ready"]
-    E --> F["synapseForge run"]
-    E --> G["synapseForge launch"]
-    E --> I["docker compose up"]
-    G --> H["Desktop app / portable zip"]
-    I --> J["Docker container"]
-```
+<p align="center">
+  <a href="assets/pipeline-video-en.html" title="Watch the 60-second hand-drawn walkthrough">
+    <img src="assets/pipeline-hand-drawn-en.svg" alt="Hand-drawn pipeline: from pip install to distributable app" width="100%">
+  </a>
+  <br>
+  <em>Hand-drawn diagram — click to watch the 60-second video version.</em>
+</p>
 
 ---
 

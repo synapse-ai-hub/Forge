@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{TITULO}} (video)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Caveat:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<style>
+:root {
+  --outer: #e7e8e3; --paper: #fbfaf6; --surface: #fff; --ink: #1d2126; --ink-2: #3a4048;
+  --muted: #5f666e; --rule: #d8dcd5; --blue: #2257c8; --orange: #a8610b;
+  --f-sans: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+  --f-hand: "Caveat", "Segoe Print", "Bradley Hand", cursive;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--outer); color: var(--ink); font: 400 16px/1.5 var(--f-sans); }
+main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 40px; }
+header h1 { font: 700 28px/1.15 var(--f-sans); margin: 0 0 4px; }
+header p { margin: 0 0 16px; color: var(--muted); font-size: 14px; }
+.player { background: var(--surface); border: 1px solid var(--rule); border-radius: 12px; overflow: hidden; box-shadow: 0 1px 2px rgba(29,33,38,.06), 0 10px 30px rgba(29,33,38,.08); }
+.stagebox { position: relative; background: var(--paper); border-bottom: 1px solid var(--rule); }
+#vid { display: block; width: 100%; height: auto; }
+#cap { padding: 10px 16px; min-height: 52px; font-size: 16px; color: var(--ink-2); border-bottom: 1px solid var(--rule); background: #fff; }
+.bigplay { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); font: 700 26px/1 var(--f-hand); padding: 14px 26px 16px; border-radius: 999px; border: 2px solid #25282d; background: #25282d; color: var(--paper); box-shadow: 0 6px 24px rgba(0,0,0,.25); cursor: pointer; }
+.bigplay:hover { background: var(--blue); border-color: var(--blue); }
+.bigplay[hidden] { display: none; }
+.vbar { display: flex; align-items: center; gap: 10px 12px; padding: 8px 12px; flex-wrap: wrap; }
+.vbar button, .vbar select, .chapters button { font: 500 13px/1 var(--f-sans); background: var(--surface); color: var(--ink); border: 1px solid var(--rule); border-radius: 7px; padding: 8px 10px; cursor: pointer; }
+#play { min-width: 96px; background: var(--ink); color: var(--paper); border-color: var(--ink); }
+#time { font: 500 12px/1 var(--f-mono); color: var(--muted); min-width: 84px; }
+#seek { flex: 1 1 200px; min-width: 0; accent-color: var(--blue); }
+.chapters { display: flex; flex-wrap: wrap; gap: 5px; list-style: none; margin: 0; padding: 0 12px 12px; }
+.chapters button { font: 500 11.5px/1 var(--f-mono); padding: 7px 9px; }
+.chapters button.cur { background: var(--blue); border-color: var(--blue); color: #fff; }
+:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>synapseForge: de pip install a app distribuible</h1>
+    <p>Video dibujado a mano · 1:00 · Fuente: README.md y CLI del repo (comandos synapseForge)</p>
+  </header>
+  <section class="player" aria-label="synapseForge: de pip install a app distribuible">
+    <div class="stagebox">
+      <svg id="vid" viewBox="0 0 1280 720" role="img" aria-label="Video dibujado a mano de 60 segundos y 5 escenas que muestra el pipeline de synapseForge: instalacion con pip, creacion del proyecto con GUI, generacion del template, tres caminos de salida (run, launch, docker) y los artefactos distribuibles."></svg>
+      <button type="button" class="bigplay" id="big">▶ Reproducir · 1:00</button>
+    </div>
+    <div id="cap" aria-live="polite"></div>
+    <div class="vbar">
+      <button type="button" id="play" aria-pressed="false">Reproducir</button>
+      <span id="time">0:00 / 1:00</span>
+      <label class="sr-only" for="seek">Posición del video</label>
+      <input type="range" id="seek" min="0" max="60" step="0.05" value="0">
+      <label class="sr-only" for="rate">Velocidad</label>
+      <select id="rate"><option value="0.75">0.75×</option><option value="1" selected>1×</option><option value="1.5">1.5×</option><option value="2">2×</option></select>
+    </div>
+    <ol class="chapters" id="chapters" aria-label="Capítulos"></ol>
+  </section>
+</main>
+
+<script>
+(function () {
+  var NS = 'http://www.w3.org/2000/svg';
+  var svg = document.getElementById('vid');
+  var INK = '#1d2126', BLUE = '#2257c8', GREEN = '#217a44', ORANGE = '#a8610b', PURPLE = '#6c41ad', RED = '#c23a2a', TEAL = '#0d7a82';
+  var PALE = { '#2257c8': '#e8effc', '#217a44': '#e6f4ea', '#a8610b': '#fff3dc', '#6c41ad': '#f0e9fa', '#c23a2a': '#fbe9e6', '#0d7a82': '#e2f3f4', '#1d2126': '#ffffff' };
+  var HAND = 'Caveat, "Segoe Print", cursive', MONO = '"IBM Plex Mono", Consolas, monospace', SANS = '"IBM Plex Sans", Arial, sans-serif';
+  var KICKER = 'DE CERO A APP';   // texto chico sobre el título, ej. "FLUJO DE X"
+  var TOTAL = 5;   // cantidad de escenas, para el "n/N" del kicker
+
+  /* ── utilidades de dibujo a mano ─────────────────────── */
+  var seed = 11;
+  function rnd() { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; }
+  function j(a) { return (rnd() - 0.5) * a; }
+  function mk(tag, attrs, parent) {
+    var e = document.createElementNS(NS, tag);
+    for (var k in attrs) e.setAttribute(k, attrs[k]);
+    parent.appendChild(e);
+    return e;
+  }
+  function sub(pts, close) {
+    var out = [], n = pts.length, m = close ? n : n - 1;
+    for (var i = 0; i < m; i++) {
+      var a = pts[i], b = pts[(i + 1) % n];
+      var steps = Math.max(1, Math.round(Math.hypot(b[0] - a[0], b[1] - a[1]) / 110));
+      for (var s = 0; s < steps; s++) out.push([a[0] + (b[0] - a[0]) * s / steps, a[1] + (b[1] - a[1]) * s / steps]);
+    }
+    if (!close) out.push(pts[n - 1]);
+    return out;
+  }
+  function rough(pts, close) {
+    var d = 'M' + (pts[0][0] + j(2)) + ',' + (pts[0][1] + j(2)), n = pts.length, m = close ? n : n - 1;
+    for (var i = 0; i < m; i++) {
+      var a = pts[i], b = pts[(i + 1) % n];
+      d += ' Q' + ((a[0] + b[0]) / 2 + j(4)) + ',' + ((a[1] + b[1]) / 2 + j(4)) + ' ' + (b[0] + j(2)) + ',' + (b[1] + j(2));
+    }
+    return d;
+  }
+  function clamp(v) { return Math.max(0, Math.min(1, v)); }
+
+  /* ── constructor de escenas ──────────────────────────── */
+  // scene(inicio, fin, titulo, subtitulo, build). Los tiempos de los elementos (o.t) son
+  // RELATIVOS al inicio de la escena. Todos aceptan o.dur (duración de la animación).
+  var scenes = [];
+  function scene(s, e, title, caption, build) {
+    var g = mk('g', { opacity: 0 }, svg);
+    var sc = { s: s, e: e, title: title, caption: caption, g: g, items: [] };
+    function item(t, dur, parts) { sc.items.push({ t: t, dur: dur, parts: parts }); }
+    function path(d, c, w) { return mk('path', { d: d, fill: 'none', stroke: c, 'stroke-width': w || 2.5, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }, g); }
+    function text(x, y, str, o) {
+      o = o || {};
+      var size = o.size || 26, lh = size * 1.12, lines = String(str).split('\n');
+      var el = mk('text', { x: x, y: y, 'font-size': size, fill: o.fill || INK, 'text-anchor': o.anchor || 'start', 'font-family': o.font === 'mono' ? MONO : o.font === 'sans' ? SANS : HAND, 'font-weight': o.weight || (o.font ? 400 : 600), opacity: 0 }, g);
+      lines.forEach(function (ln, i) { var ts = mk('tspan', { x: x, dy: i ? lh : 0 }, el); ts.textContent = ln; });
+      return el;
+    }
+    var api = {
+      // text(x, y, str, {size, font:'mono'|'sans'|(hand), fill, anchor, t, dur}); "\n" = salto de línea
+      text: function (x, y, str, o) { o = o || {}; var el = text(x, y, str, o); item(o.t || 0, o.dur || 0.5, [{ el: el, k: 'fade', max: 1, d: 0 }]); },
+      // box(x, y, w, h, label, {c:color, sub:'texto mono chico', size, dash, fill, tc, t})
+      box: function (x, y, w, h, label, o) {
+        o = o || {};
+        var c = o.c || INK, parts = [];
+        parts.push({ el: mk('rect', { x: x, y: y, width: w, height: h, rx: 10, fill: o.fill || PALE[c] || '#fff', opacity: 0 }, g), k: 'fade', max: o.dash ? 0.5 : 0.95, d: 0 });
+        var p = path(rough(sub([[x, y], [x + w, y], [x + w, y + h], [x, y + h]], true), true), c, o.dash ? 2 : 2.8);
+        if (o.dash) { p.setAttribute('stroke-dasharray', '9 7'); parts.push({ el: p, k: 'fade', max: 1, d: 0 }); } else parts.push({ el: p, k: 'draw' });
+        if (label) {
+          var size = o.size || 26, n = String(label).split('\n').length, lh = size * 1.12;
+          var cy = y + h / 2 - (n - 1) * lh / 2 + size * 0.32 - (o.sub ? 9 : 0);
+          parts.push({ el: text(x + w / 2, cy, label, { size: size, anchor: 'middle', fill: o.tc || INK }), k: 'fade', max: 1, d: 0.4 });
+        }
+        if (o.sub) parts.push({ el: text(x + w / 2, y + h - 14, o.sub, { size: 13, font: 'mono', anchor: 'middle', fill: '#5f666e' }), k: 'fade', max: 1, d: 0.5 });
+        item(o.t || 0, o.dur || 0.7, parts);
+      },
+      // diamond(cx, cy, w, h, label, {c, size, t}) — para decisiones
+      diamond: function (cx, cy, w, h, label, o) {
+        o = o || {};
+        var c = o.c || BLUE, pts = [[cx, cy - h / 2], [cx + w / 2, cy], [cx, cy + h / 2], [cx - w / 2, cy]];
+        var parts = [{ el: mk('polygon', { points: pts.map(function (q) { return q.join(','); }).join(' '), fill: PALE[c], opacity: 0 }, g), k: 'fade', max: 0.95, d: 0 }];
+        parts.push({ el: path(rough(pts, true), c, 2.8), k: 'draw' });
+        var lines = label.split('\n').length, size = o.size || 22, lh = size * 1.12;
+        parts.push({ el: text(cx, cy - (lines - 1) * lh / 2 + size * 0.32, label, { size: size, anchor: 'middle' }), k: 'fade', max: 1, d: 0.4 });
+        item(o.t || 0, o.dur || 0.8, parts);
+      },
+      // arrow(x1, y1, x2, y2, {c, label, lx, ly, t}) — recta con punta; label opcional en el medio
+      arrow: function (x1, y1, x2, y2, o) {
+        o = o || {};
+        var a = Math.atan2(y2 - y1, x2 - x1), hl = 14, c = o.c || INK;
+        var d = rough(sub([[x1, y1], [x2, y2]], false), false) +
+          ' M' + (x2 - hl * Math.cos(a - 0.45)) + ',' + (y2 - hl * Math.sin(a - 0.45)) + ' L' + x2 + ',' + y2 + ' L' + (x2 - hl * Math.cos(a + 0.45)) + ',' + (y2 - hl * Math.sin(a + 0.45));
+        var parts = [{ el: path(d, c, 2.8), k: 'draw' }];
+        if (o.label) parts.push({ el: text((x1 + x2) / 2 + (o.lx || 0), (y1 + y2) / 2 + (o.ly || -10), o.label, { size: 24, fill: c, anchor: 'middle' }), k: 'fade', max: 1, d: 0.5 });
+        item(o.t || 0, o.dur || 0.6, parts);
+      },
+      // polyline([[x,y],...], {c, w, t}) — trazo libre (cuerpos, llaves, líneas)
+      polyline: function (pts, o) {
+        o = o || {};
+        item(o.t || 0, o.dur || 0.6, [{ el: path(rough(sub(pts, false), false), o.c || INK, o.w || 2.8), k: 'draw' }]);
+      },
+      // blob(cx, cy, r, {c, t}) — círculo irregular (cabezas, nodos)
+      blob: function (cx, cy, r, o) {
+        o = o || {};
+        var pts = [];
+        for (var i = 0; i < 14; i++) pts.push([cx + r * Math.cos(i / 14 * 6.2832), cy + r * Math.sin(i / 14 * 6.2832)]);
+        item(o.t || 0, o.dur || 0.6, [{ el: path(rough(pts, true), o.c || INK, 2.8), k: 'draw' }]);
+      },
+      // num(cx, cy, n, color, t) — círculo relleno con número
+      num: function (cx, cy, n, c, t) {
+        item(t, 0.5, [
+          { el: mk('circle', { cx: cx, cy: cy, r: 26, fill: c, opacity: 0 }, g), k: 'fade', max: 1, d: 0 },
+          { el: text(cx, cy + 11, String(n), { size: 34, anchor: 'middle', fill: '#fff' }), k: 'fade', max: 1, d: 0.3 }
+        ]);
+      }
+    };
+    // head(n): kicker "KICKER · n/N" + título grande de la escena
+    api.head = function (n) {
+      api.text(60, 34, KICKER + ' · ' + n + '/' + TOTAL, { font: 'mono', size: 14, fill: '#5f666e', t: 0 });
+      api.text(60, 84, title, { size: 48, t: 0.1, dur: 0.6 });
+    };
+    build(api);
+    scenes.push(sc);
+  }
+
+  /* ══ ESCENAS ═══════════════════════════════════════════
+     Reemplazá estos dos ejemplos por las escenas reales.
+     Zona útil: x 40–1240, y 110–680 (título arriba, ~y 84).
+     Cada escena: head(n) + elementos con tiempos relativos. */
+
+  scene(0, 10, '1 · Instalás', 'Todo empieza con un pip install: un comando y tenés la forja en tu máquina.', function (a) {
+    a.head(1);
+    a.box(340, 230, 600, 150, 'pip install synapseForge', { c: BLUE, sub: 'PyPI · un solo comando', t: 0.5 });
+    a.text(340, 460, 'La forja llega a tu máquina', { fill: ORANGE, size: 34, t: 4 });
+  });
+
+  scene(10, 22, '2 · Creás el proyecto', 'synapseForge init abre una GUI: nombre, logo y colores, sin tocar un archivo.', function (a) {
+    a.head(2);
+    a.box(60, 220, 280, 140, 'synapseForge\ninit', { c: BLUE, sub: 'CLI interactiva', t: 0.5 });
+    a.arrow(340, 290, 440, 290, { t: 1.6 });
+    a.box(440, 200, 360, 180, 'GUI: nombre,\nlogo, colores', { c: PURPLE, t: 2.3 });
+    a.arrow(800, 290, 900, 290, { t: 3.6 });
+    a.box(900, 220, 300, 140, 'Proyecto\nnuevo', { c: GREEN, t: 4.3 });
+    a.text(60, 470, 'Sin tocar un archivo', { fill: ORANGE, size: 34, t: 7 });
+  });
+
+  scene(22, 34, '3 · Template listo', 'Se genera el template con entorno virtual y dependencias: proyecto listo para correr.', function (a) {
+    a.head(3);
+    a.box(80, 230, 380, 140, 'Template +\nvenv + deps', { c: PURPLE, sub: 'se genera solo', t: 0.5 });
+    a.arrow(460, 300, 560, 300, { t: 1.8 });
+    a.box(560, 230, 380, 140, 'Proyecto\nlisto', { c: GREEN, t: 2.5 });
+    a.text(80, 470, 'Elegí la modalidad: desarrollo o distribución', { fill: ORANGE, size: 32, t: 5.5 });
+  });
+
+  scene(34, 48, '4 · Tres caminos', 'Corré en desarrollo, construí una app de escritorio o desplegá con Docker.', function (a) {
+    a.head(4);
+    a.diamond(220, 360, 280, 170, '¿Cómo lo\nsaco?', { t: 0.6 });
+    a.arrow(360, 360, 480, 360, { t: 1.8 });
+    a.box(480, 170, 440, 90, 'synapseForge run', { c: BLUE, sub: 'servidores de desarrollo', t: 2.5 });
+    a.box(480, 290, 440, 90, 'synapseForge launch', { c: PURPLE, sub: 'app de escritorio / zip', t: 3.3 });
+    a.box(480, 410, 440, 90, 'docker compose up', { c: TEAL, sub: 'contenedor', t: 4.1 });
+    a.text(480, 580, 'Un proyecto, tres salidas', { fill: ORANGE, size: 34, t: 6.5 });
+  });
+
+  scene(48, 60, '5 · Distribuís', 'Entregás una app autónoma: escritorio, zip portable o contenedor Docker.', function (a) {
+    a.head(5);
+    a.box(140, 220, 440, 150, 'App de escritorio\n/ zip portable', { c: GREEN, t: 0.5 });
+    a.box(700, 220, 440, 150, 'Contenedor\nDocker', { c: GREEN, t: 1.5 });
+    a.text(640, 500, 'Forjá agentes. Distribuí inteligencia.', { fill: ORANGE, size: 38, anchor: 'middle', t: 4 });
+  });
+
+  /* ══ MOTOR: no editar de acá para abajo ════════════════ */
+  var T = scenes[scenes.length - 1].e;
+  scenes.forEach(function (sc) {
+    sc.items.forEach(function (it) {
+      it.parts.forEach(function (p) {
+        if (p.k === 'draw') { p.len = p.el.getTotalLength(); p.el.style.strokeDasharray = p.len; p.el.style.strokeDashoffset = p.len; }
+      });
+    });
+  });
+
+  var capEl = document.getElementById('cap'), lastCap = -1;
+  function render(t) {
+    var cur = -1;
+    scenes.forEach(function (sc, si) {
+      var vis = t >= sc.s && t < sc.e;
+      if (vis) cur = si;
+      sc.g.setAttribute('opacity', vis ? Math.min(1, (t - sc.s) / 0.3, (sc.e - t) / 0.3) : 0);
+      if (!vis) return;
+      var lt = t - sc.s;
+      sc.items.forEach(function (it) {
+        var p = clamp((lt - it.t) / it.dur);
+        it.parts.forEach(function (pt) {
+          if (pt.k === 'draw') pt.el.style.strokeDashoffset = pt.len * (1 - p);
+          else pt.el.setAttribute('opacity', pt.max * clamp((p - pt.d) / (1 - pt.d)));
+        });
+      });
+    });
+    if (cur !== lastCap) {
+      lastCap = cur;
+      capEl.textContent = cur >= 0 ? scenes[cur].caption : '';
+      var btns = document.querySelectorAll('#chapters button');
+      for (var i = 0; i < btns.length; i++) btns[i].classList.toggle('cur', i === cur);
+    }
+  }
+
+  var now = 0, playing = false, last = 0, rate = 1;
+  var $ = function (id) { return document.getElementById(id); };
+  function fmt(s) { s = Math.floor(s); return Math.floor(s / 60) + ':' + ('0' + (s % 60)).slice(-2); }
+  function setT(t) {
+    now = Math.max(0, Math.min(T - 0.001, t));
+    render(now);
+    $('seek').value = now;
+    $('time').textContent = fmt(now) + ' / ' + fmt(T);
+  }
+  function loop(ts) {
+    if (!playing) return;
+    now += (ts - last) / 1000 * rate;
+    last = ts;
+    if (now >= T) { setT(T - 0.001); pause(); $('big').hidden = false; $('big').textContent = '↺ Repetir'; return; }
+    setT(now);
+    requestAnimationFrame(loop);
+  }
+  function play() {
+    if (now >= T - 0.01) now = 0;
+    playing = true; last = performance.now();
+    $('play').textContent = 'Pausar'; $('play').setAttribute('aria-pressed', 'true'); $('big').hidden = true;
+    requestAnimationFrame(loop);
+  }
+  function pause() { playing = false; $('play').textContent = 'Reproducir'; $('play').setAttribute('aria-pressed', 'false'); }
+  function toggle() { playing ? pause() : play(); }
+
+  $('play').onclick = toggle;
+  $('big').onclick = function () { if (now >= T - 0.01) now = 0; play(); };
+  $('seek').oninput = function (e) { $('big').hidden = true; setT(parseFloat(e.target.value)); };
+  $('rate').onchange = function (e) { rate = parseFloat(e.target.value); };
+  scenes.forEach(function (sc) {
+    var li = document.createElement('li'), b = document.createElement('button');
+    b.type = 'button'; b.textContent = sc.title;
+    b.onclick = function () { setT(sc.s + 0.05); $('big').hidden = true; };
+    li.appendChild(b); $('chapters').appendChild(li);
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.target.tagName === 'SELECT' || e.target.tagName === 'INPUT') return;
+    if (e.code === 'Space') { e.preventDefault(); toggle(); }
+    if (e.code === 'ArrowRight') setT(now + 5);
+    if (e.code === 'ArrowLeft') setT(now - 5);
+  });
+  setT(0);
+})();
+</script>
+</body>
+</html>
