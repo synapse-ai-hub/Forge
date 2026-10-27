@@ -12,7 +12,7 @@ from pathlib import Path
 
 from .input_handler import get_user_input
 from .template_handler import extract_template
-from .venv_handler import setup_venv, install_requirements, run_ddl_setup
+from .venv_handler import setup_venv, install_requirements, run_ddl_setup, run_seed_collections
 from .config_handler import save_config
 from .logo_handler import handle_logo
 from .placeholder_handler import replace_all_placeholders
@@ -93,8 +93,9 @@ def run(target_dir: str, config: dict | None = None) -> None:
         replace_all_placeholders(target, config)
 
         # Step 11: Initialize database schema (ddl_setup)
-        print("\n[11/11] Initializing database schema (ddl_setup) ...")
+        print("\n[11/11] Initializing database schema (ddl_setup) and help collection ...")
         run_ddl_setup(target, venv_path)
+        run_seed_collections(target, venv_path)
 
     except Exception as exc:
         print(f"\n  ERROR: Init failed at step — {exc}")
@@ -130,7 +131,11 @@ def _cleanup(target: Path, created_dir: bool) -> None:
 
 
 def _run_npm_install(target: Path) -> None:
-    """Run ``npm install`` in the frontend directory."""
+    """Run ``npm install`` in the frontend directory.
+
+    Args:
+        target: Project root directory.
+    """
     frontend_dir = target / "frontend"
     if not (frontend_dir / "package.json").is_file():
         print("  WARNING: package.json not found, skipping npm install")
@@ -151,7 +156,12 @@ def _run_npm_install(target: Path) -> None:
 
 
 def _run_generate_ico(venv_path: Path, logo_png: Path) -> None:
-    """Generate ``.ico`` from the logo PNG using Pillow (inline)."""
+    """Generate ``.ico`` from the logo PNG using Pillow (inline).
+
+    Args:
+        venv_path: Path to the virtual environment root.
+        logo_png: Logo to convert.
+    """
     if not logo_png.is_file():
         print("  WARNING: logo PNG not found, skipping .ico generation")
         return
@@ -173,7 +183,12 @@ def _run_generate_ico(venv_path: Path, logo_png: Path) -> None:
 
 
 def _resolve_colors(config: dict, logo_png: Path) -> None:
-    """Validate that all 4 color fields exist in config."""
+    """Validate that all 4 color fields exist in config.
+
+    Args:
+        config: User configuration dict.
+        logo_png: Logo the colors come from.
+    """
     keys = ["primary", "secondary", "primary_text", "gradient_secondary"]
     colors = config.setdefault("colors", {})
     missing = [k for k in keys if not colors.get(k)]

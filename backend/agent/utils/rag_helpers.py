@@ -41,6 +41,12 @@ from backend.agent.utils.contract import (
 )
 from backend.agent.utils.error_logger import log_error
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+    from backend.agent.utils.vector_db import VectorDB
+
 # ---------------------------------------------------------------------------
 # Ensure the project root is in sys.path for absolute imports
 # ---------------------------------------------------------------------------
@@ -66,6 +72,14 @@ MAX_RESPONSE_BYTES = 5 * 1024 * 1024
 
 # Dedicated Chroma collection holding one document per conversation turn.
 MEMORY_COLLECTION = "agent_conversations"
+
+# Dedicated Chroma collection holding the internal documentation, one
+# document per section.
+HELP_COLLECTION = "help"
+
+# Internal collections: created at startup, never shown to the user as RAG
+# collections.
+INTERNAL_COLLECTIONS = (MEMORY_COLLECTION, HELP_COLLECTION)
 
 # Turns are usually short, so a turn is a single document. Only when the
 # document exceeds this size is the existing chunking helper applied.
@@ -164,6 +178,9 @@ class _PinnedIPBackend(httpcore.AsyncNetworkBackend):
 
         Args:
             seconds: Seconds to sleep.
+
+        Returns:
+            The result of the backend's sleep (None).
         """
         return await self._backend.sleep(seconds)
 
@@ -224,7 +241,7 @@ def list_collections() -> list[str]:
                 name = entry.get("name")
             else:
                 name = getattr(entry, "name", None)
-            if name:
+            if name and str(name) not in INTERNAL_COLLECTIONS:
                 names.append(str(name))
         return names
     except Exception as exc:
@@ -374,7 +391,11 @@ _EMBED_TRANSIENT_MARKERS = (
 )
 
 
-def _embed_with_retry(embed_func, texts: list[str], max_retries: int = 3) -> list[list[float]]:
+def _embed_with_retry(
+    embed_func: Callable[[list[str]], list[list[float]]],
+    texts: list[str],
+    max_retries: int = 3,
+) -> list[list[float]]:
     """Embed texts with a simple retry for transient (rate-limit) failures.
 
     Args:
@@ -415,7 +436,7 @@ def _embed_with_retry(embed_func, texts: list[str], max_retries: int = 3) -> lis
     raise RuntimeError("Unreachable: embedding retry loop exhausted.")
 
 
-def reindex_collection(db, name: str) -> dict:
+def reindex_collection(db: VectorDB, name: str) -> dict:
     """Reindex a collection with the current embedding model.
 
     Reads every stored chunk (documents + metadatas) from the existing

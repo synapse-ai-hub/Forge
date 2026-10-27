@@ -9,6 +9,7 @@ Structure:
 ├── tools/            # External tools (.py files)
 ├── agents/           # Agent definitions (.md files)
 ├── knowledge/        # Chroma vector store collections
+├── workspace/        # Working folders of the workflows (one per workflow)
 └── config.json       # Main config (MCP, UI prefs, etc.)
 """
 
@@ -18,6 +19,7 @@ import json
 import logging
 import os
 import sys
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
@@ -75,6 +77,11 @@ _CONFIG_FILE = "config.json"
 
 
 def _config_path() -> Path:
+    """Locate the main config file.
+
+    Returns:
+        Path of ``config.json`` in the config directory.
+    """
     return get_config_dir() / _CONFIG_FILE
 
 
@@ -153,27 +160,65 @@ _MCP_CONFIG_FILE = "mcp.json"
 
 
 def _mcp_path() -> Path:
-    """Return the path to ~/.config/synapseForge/mcp.json."""
+    """Locate the MCP config file.
+
+    Returns:
+        Path to ``~/.config/synapseForge/mcp.json``.
+    """
     return get_config_dir() / _MCP_CONFIG_FILE
+
+
+_MCP_CACHE: dict[str, Any] = {"path": None, "mtime": None, "size": None, "servers": []}
+"""Cache of the last ``mcp.json`` read, keyed by path + mtime + size.
+
+``load_mcp_servers`` runs on every MCP tool dispatch, so re-reading and
+re-parsing the file each time is pure overhead. The path is part of the
+key because tests (and multi-instance setups) point the config dir at
+different folders; mtime alone could return another folder's data when
+two files share the same timestamp tick. The cache returns copies, so
+callers can mutate the result without corrupting it.
+"""
 
 
 def load_mcp_servers() -> list[dict[str, Any]]:
     """Load MCP servers from mcp.json (direct array).
+
+    The file is only re-read when its path, mtime or size changed;
+    otherwise a cached copy is returned. A missing or broken file yields
+    ``[]`` (the reason is available via :func:`mcp_config_error`).
 
     Returns:
         List of MCP server config dicts, or empty list if file doesn't exist.
     """
     path = _mcp_path()
     if not path.is_file():
-        logger.info("No mcp.json found at %s, returning empty list", path)
+        _MCP_CACHE["path"] = None
+        _MCP_CACHE["mtime"] = None
+        _MCP_CACHE["size"] = None
+        _MCP_CACHE["servers"] = []
         return []
+
+    try:
+        stat = path.stat()
+        key = (str(path), stat.st_mtime_ns, stat.st_size)
+    except OSError as e:
+        log_error(str(e), source="config_dir.py:load_mcp_servers")
+        return []
+    if (
+        key[0] == _MCP_CACHE["path"]
+        and key[1] == _MCP_CACHE["mtime"]
+        and key[2] == _MCP_CACHE["size"]
+    ):
+        return [dict(s) for s in _MCP_CACHE["servers"]]
 
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
         if isinstance(data, list):
             logger.info("Loaded %d MCP server(s) from mcp.json", len(data))
-            return data
+            _MCP_CACHE["path"], _MCP_CACHE["mtime"], _MCP_CACHE["size"] = key
+            _MCP_CACHE["servers"] = [s for s in data if isinstance(s, dict)]
+            return [dict(s) for s in _MCP_CACHE["servers"]]
         logger.warning("mcp.json must be an array, got %s", type(data).__name__)
         return []
     except (json.JSONDecodeError, OSError) as e:
@@ -223,6 +268,11 @@ def save_mcp_servers(servers: list[dict[str, Any]]) -> bool:
             json.dump(servers, f, indent=2, ensure_ascii=False)
         os.replace(tmp_path, path)
         logger.info("Saved %d MCP server(s) to mcp.json", len(servers))
+        # Invalidate the load cache so the next read sees the new file.
+        _MCP_CACHE["path"] = None
+        _MCP_CACHE["mtime"] = None
+        _MCP_CACHE["size"] = None
+        _MCP_CACHE["servers"] = []
         return True
     except OSError as e:
         log_error(str(e), source="config_dir.py:save_mcp_servers")
@@ -234,34 +284,87 @@ def save_mcp_servers(servers: list[dict[str, Any]]) -> bool:
 # ---------------------------------------------------------------------------
 
 def get_skills_dir() -> Path:
-    """Return the skills directory path."""
+    """Locate the skills directory.
+
+    Returns:
+        Path of the skills directory.
+    """
     return get_config_dir() / "skills"
 
 
 def get_tools_dir() -> Path:
-    """Return the external tools directory path."""
+    """Locate the external tools directory.
+
+    Returns:
+        Path of the tools directory.
+    """
     return get_config_dir() / "tools"
 
 
 def get_agents_dir() -> Path:
-    """Return the agents directory path."""
+    """Locate the agents directory.
+
+    Returns:
+        Path of the agents directory.
+    """
     return get_config_dir() / "agents"
 
 
 def get_workflows_dir() -> Path:
-    """Return the workflows directory path."""
+    """Locate the workflows directory, creating it if needed.
+
+    Returns:
+        Path of the workflows directory.
+    """
     workflows_dir = get_config_dir() / "workflows"
     workflows_dir.mkdir(parents=True, exist_ok=True)
     return workflows_dir
 
 
 def get_workflow_prompts_dir() -> Path:
-    """Return the shared workflow prompts directory path."""
+    """Locate the directory with the prompts (toml) of the workflow agent nodes.
+
+    Returns:
+        Path of the prompts directory, created if needed.
+    """
     prompts_dir = get_workflows_dir() / "prompts"
     prompts_dir.mkdir(parents=True, exist_ok=True)
     return prompts_dir
 
 
 def get_knowledge_dir() -> Path:
-    """Return the knowledge (vector store) directory path."""
+    """Locate the knowledge (vector store) directory.
+
+    Returns:
+        Path of the knowledge directory.
+    """
     return get_config_dir() / "knowledge"
+
+# ---------------------------------------------------------------------------
+# Workspace of the workflows
+# ---------------------------------------------------------------------------
+
+
+workspace_ctx: ContextVar[str | None] = ContextVar("workspace_ctx", default=None)
+"""Working folder of the workflow being run; ``shell`` uses it when no ``workdir`` is given."""
+
+
+def get_workspace_dir(name: str | None = None) -> Path:
+    """Locate the working folder of a workflow, creating it if needed.
+
+    Commands of a workflow (``git clone``, downloads, reports) run here, never
+    in the project root: a clone inside the project triggers the dev server's
+    reload and leaves the repo with files that are not its own.
+
+    Args:
+        name: Workflow name. ``None`` returns the parent folder.
+
+    Returns:
+        Path of the folder.
+    """
+    base = get_config_dir() / "workspace"
+    if name:
+        safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in name).strip(".") or "workflow"
+        base = base / safe
+    base.mkdir(parents=True, exist_ok=True)
+    return base

@@ -4,12 +4,12 @@ import logging
 import os
 
 from backend.agent.utils.contract import make_error_response, make_success_response, zero_usage
-from backend.agent.utils.error_logger import log_error
 
 logger = logging.getLogger(__name__)
 
 
 class WriteMixin:
+    """Native tool ``write``: write a file."""
     async def write(self, file_path: str, content: str) -> dict:
             """Writes content to a file on the local filesystem.
 
@@ -35,7 +35,6 @@ class WriteMixin:
                 )
             except Exception as e:
                 logger.exception("Error in write: %s", e)
-                log_error(str(e), source="tools.py:write")
                 return make_error_response(
                     message=f"Error writing file: {e}",
                     usage=zero_usage(),

@@ -21,10 +21,13 @@ class DecisionMixin:
 
     @property
     def decision_ready(self) -> bool:
-        """True when ``decision`` would make a real call.
+        """Check whether ``decision`` would make a real call.
 
         Same conditions as ``decision``: enabled, provider and model
         selected, API key stored and ``typesafe-sdk`` installed.
+
+        Returns:
+            True when a decision call can be made.
         """
         try:
             provider_id = (self.decision_provider or '').strip().lower()
@@ -159,7 +162,7 @@ class DecisionMixin:
             return validate_response(make_success_response(
                 message='Decision ok.',
                 data={'available': True, 'answers': answers,
-                      'model': getattr(response, 'model', effective_model),
+                      'model': (effective_model or '').strip(),
                       'provider': provider_id},
                 usage={
                     'prompt_tokens': prompt_tokens,

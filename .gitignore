@@ -56,10 +56,14 @@ template/
 # Configuración
 /config/
 ideas.md
+pendientes.md
 
 # DB
 backend/agent/agent_db/*
 !backend/agent/agent_db/queries/
+!backend/agent/agent_db/generate_schema_docs.py
+!backend/agent/agent_db/data_dictionary.md
+!backend/agent/agent_db/schema.dbml
 
 # Test Whisper
 tests/whisper/data/

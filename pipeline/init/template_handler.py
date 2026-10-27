@@ -17,6 +17,9 @@ def extract_template(target: Path) -> None:
     """Download the template zip from GitHub and extract into *target*.
 
     If the download fails, the process exits with an error.
+
+    Args:
+        target: Project directory.
     """
     zip_path = _download_template(target)
     if zip_path is None:
@@ -37,7 +40,14 @@ def extract_template(target: Path) -> None:
 
 
 def _download_template(target: Path) -> Path | None:
-    """Download template.zip from GitHub into *target*."""
+    """Download template.zip from GitHub into *target*.
+
+    Args:
+        target: Directory where the zip is saved.
+
+    Returns:
+        The path of the zip, or None when the download fails.
+    """
     try:
         dest = target / "template.zip"
         print("  Downloading template from GitHub …")
@@ -50,7 +60,12 @@ def _download_template(target: Path) -> Path | None:
 
 
 def _safe_extract(zip_path: Path, target: Path) -> None:
-    """Extract zip, overwriting existing files silently."""
+    """Extract zip, overwriting existing files silently.
+
+    Args:
+        zip_path: Zip file to extract.
+        target: Directory to extract into.
+    """
     try:
         with zipfile.ZipFile(zip_path, "r") as zf:
             zf.extractall(path=target)

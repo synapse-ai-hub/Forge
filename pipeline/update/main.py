@@ -15,11 +15,16 @@ from pathlib import Path
 from ..init.template_handler import extract_template
 from ..init.config_handler import load_config, save_colors
 from ..init.placeholder_handler import replace_all_placeholders
-from ..init.venv_handler import run_ddl_setup
+from ..init.venv_handler import run_ddl_setup, run_seed_collections
 
 
 def _smart_merge(backup_path: str, target_path: str) -> None:
-    """Merge two text files by combining unique lines (backup + new)."""
+    """Merge two text files by combining unique lines (backup + new).
+
+    Args:
+        backup_path: File saved in the backup.
+        target_path: File of the new template; it is rewritten with the merge.
+    """
     try:
         with open(backup_path, "r", encoding="utf-8") as f:
             backup_lines = [line.rstrip("\n") for line in f]
@@ -42,7 +47,11 @@ def _smart_merge(backup_path: str, target_path: str) -> None:
 
 
 def _get_backup_dir() -> Path:
-    """Return ``~/.config/synapseForge/backup/``, creating it if needed."""
+    """Locate the backup directory, creating it if needed.
+
+    Returns:
+        ``~/.config/synapseForge/backup/``.
+    """
     import os
     base = Path(os.getenv("XDG_CONFIG_HOME", Path.home() / ".config"))
     backup = base / "synapseForge" / "backup"
@@ -111,6 +120,9 @@ def run_update(target_dir: str) -> None:
         5. Regenerate derived files (colors.json).
         6. On failure → restore from backup, delete backup.
         7. On success → ask user whether to keep or delete the backup.
+
+    Args:
+        target_dir: Directory of the project to update.
     """
     target = Path(target_dir).resolve()
     backup_dir = _get_backup_dir()
@@ -206,10 +218,11 @@ def run_update(target_dir: str) -> None:
         print("\n[5/6] Regenerating derived files ...")
         save_colors(target, config)
 
-        print("\n[6/6] Initializing/updating database schema (ddl_setup) ...")
+        print("\n[6/6] Initializing/updating database schema (ddl_setup) and help collection ...")
         repo_name = config.get("repo", "synapse")
         venv_path = target / f".{repo_name}"
         run_ddl_setup(target, venv_path)
+        run_seed_collections(target, venv_path)
 
     except Exception as exc:
         # ── Failure: restore from backup ──────────────────────────────

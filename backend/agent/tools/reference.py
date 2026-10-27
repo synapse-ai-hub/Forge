@@ -4,13 +4,13 @@ import logging
 import os
 
 from backend.agent.utils.contract import make_error_response, make_success_response, zero_usage
-from backend.agent.utils.error_logger import log_error
 from backend.agent.utils.skill_loader import find_skill_folder
 
 logger = logging.getLogger(__name__)
 
 
 class ReferenceMixin:
+    """Native tool ``reference``: load a reference file from the directory of a skill."""
     async def reference(self, skill: str, file: str) -> dict:
             """Load a specific reference file from a skill's directory.
 
@@ -51,7 +51,6 @@ class ReferenceMixin:
                             usage=zero_usage(),
                         )
                 except (OSError, ValueError) as e:
-                    log_error(str(e), source="tools.py:reference(containment)")
                     return make_error_response(
                         message=f"Referencia '{file}' inválida en skill '{skill}'.",
                         usage=zero_usage(),
@@ -73,7 +72,6 @@ class ReferenceMixin:
                 )
             except Exception as e:
                 logger.exception("Error in reference: %s", e)
-                log_error(str(e), source="tools.py:reference")
                 return make_error_response(
                     message=f"Error loading reference: {e}",
                     usage=zero_usage(),

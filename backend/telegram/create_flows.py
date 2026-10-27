@@ -364,7 +364,12 @@ class CreateFlowsMixin:
             await self.send_message(chat_id, message)
 
     async def _close_create_window(self, chat_id: int, kind: str) -> None:
-        """Close the create window for a chat (used after the download flow)."""
+        """Close the create window for a chat (used after the download flow).
+
+        Args:
+            chat_id: Telegram chat id.
+            kind: Kind of creator that was open (skill, rag, tool, ...).
+        """
         if kind:
             await self._emit_create_window(chat_id, kind, "close")
 

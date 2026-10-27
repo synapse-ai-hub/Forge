@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 class WebfetchMixin:
+    """Native tool ``webfetch``: fetch a URL and return its content as text."""
     async def webfetch(self, url: str, format: str = "markdown") -> dict:
             """Fetches content from a specified URL.
 
@@ -93,7 +94,6 @@ class WebfetchMixin:
                     )
             except Exception as e:
                 logger.exception("Error in webfetch: %s", e)
-                log_error(str(e), source="tools.py:webfetch")
                 return make_error_response(
                     message=f"Error fetching URL: {e}",
                     usage=zero_usage(),

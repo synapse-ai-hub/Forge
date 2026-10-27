@@ -35,7 +35,7 @@ El módulo **Agent** es el núcleo del asistente conversacional. Implementa un b
 - **Checkpoints de flujo**: Cada tool call despachada se registra en `step_frontier`; si el flujo se corta, el trabajo sin confirmar se retoma en el turno siguiente.
 - **Modelo de decisión opcional**: Un modelo de decisión (System One) valida el cierre de cada paso y la continuidad del trabajo pendiente, y revisa el mensaje del usuario como guardrail de seguridad. Deshabilitado, el flujo no hace ninguna llamada extra.
 - **Reglas de seguridad**: Reglas contra prompt injection, fuga de datos y comandos o SQL peligrosos. Van en el system prompt del router o, con el modelo de decisión habilitado, las evalúa el decisor.
-- **Workflows deterministas**: Flujos en YAML que se ejecutan con un botón play, en segundo plano. Cada ejecución se guarda en su propia tabla, se reintenta hasta 3 veces retomando desde el último nodo confirmado y avisa el resultado con una notificación. Los agentes también pueden ejecutarlos con la tool `workflow`.
+- **Workflows deterministas**: Flujos en YAML que se ejecutan con un botón play, en segundo plano. Cada ejecución se guarda en su propia tabla, se reintenta hasta 3 veces retomando desde el último nodo confirmado y avisa el resultado con una notificación. Las tareas programadas (agenda) son workflows con un bloque `schedule`, creados con el creador de workflows.
 
 ---
 
@@ -112,7 +112,7 @@ Resuelve en tiempo de ejecución:
 - Skills habilitadas (`get_skill_permissions`).
 - Contenido del system prompt (`get_agent_prompt`).
 - Filtrado de herramientas/skills según el agente activo.
-- Permisos del agente principal (router) desde `config.yaml` (ver `config.yaml` más abajo).
+- Permisos del agente principal (router) desde la tabla `router_config` (ver `router_config` más abajo).
 
 ### 7. `utils/contract.py` — Contratos de respuesta
 
@@ -138,7 +138,7 @@ Contiene módulos de soporte genéricos para el funcionamiento del agente:
 - `workflow_loader.py`, `workflow_validator.py`, `workflow_runner.py`, `workflows_helpers.py` — Carga, validación, ejecución y helpers de workflows.
 - `workflow_service.py`, `workflow_db.py`, `workflow_judge.py` — Ejecuciones de workflows (inicio, reintentos, cancelación, reanudación), su persistencia y el juez/explicador con LLM.
 - `notifications_helpers.py` — Notificaciones persistidas de workflows y tareas programadas.
-- `creator_runs.py` — Registro de las corridas de los creadores: envuelve el stream SSE de cada endpoint `/api/create/*` y suma a la corrida el uso de cada llamada que registra `record_creator_call`.
+- `creators.py` — Conversaciones de los creadores: envuelve el stream SSE de cada endpoint `/api/create/*`, guarda en `creators` lo que pasa (mensaje del usuario, texto, tool calls y cómo terminó), registra cada llamada de `record_creator_call` bajo su conversación y reconstruye una conversación para reabrirla desde el historial del creador.
 - `provider_keys.py` — Gestión de API keys (cifrado Fernet en SQLite).
 - `skill_loader.py` — Carga y formateo de skills para el system prompt.
 - `skills_helpers.py` — Helpers de evaluación y creación de skills.
@@ -148,11 +148,15 @@ Contiene módulos de soporte genéricos para el funcionamiento del agente:
 - `rag_helpers.py` — Helpers de RAG (indexación y consulta).
 - `chunking.py` — División de documentos en chunks.
 - `loop_helpers.py` — Helpers del loop (armado del system prompt, historial y ejecución de tools con verificación de permisos).
-- `scheduler_helpers.py` — Helpers de tareas programadas.
+- `scheduler_helpers.py` — Agenda: las tareas programadas son workflows cuyo YAML tiene un bloque `schedule` (`enabled` y una lista de `slots` con `time` y `days`). El loop revisa cada 20 segundos qué horarios coinciden con el minuto actual y arranca el workflow con `source = "schedule"` en el mismo motor; también arma la vista de tareas que usan las rutas y Telegram.
 - `spend_handler.py` — Registro de gasto y límites de presupuesto por proveedor y modelo.
 - `rate_limit_handler.py` — Clasificación de errores de rate limit y mensajes por proveedor.
 - `eda_figure.py` — Figuras de distribución de métricas en memoria (base64).
-- `create_helpers.py` — Helpers de creación vía LLM (skills, tools, agentes).
+- `create_helpers.py` — Helpers de creación vía LLM (skills, tools, agentes, workflows).
+- `approvals.py` — Aprobaciones de comandos shell (crear, esperar y resolver).
+- `prompt_loader.py` — Búsqueda jerárquica de plantillas Jinja en el árbol de `prompts/`.
+- `prompt_check.py` — Verificación de cobertura de prompts por dominio.
+- `seed_collections.py` — Carga inicial de las colecciones internas (`help`, `agent_conversations`) desde `seeds/`.
 - `tools_helpers.py` — Helpers de tools externas.
 - `agent_helpers.py` — Helpers de los endpoints AgentInfo.
 - `subagent_logger.py` — Logging de sub-agentes.
@@ -160,18 +164,18 @@ Contiene módulos de soporte genéricos para el funcionamiento del agente:
 
 ### 9. `prompts/` — Prompts del sistema
 
-Todos los prompts son templates Jinja (`.jinja`) y se cargan con `agent.prompt(nombre, **contexto)`, que renderiza `prompts/<nombre>.jinja` con las variables que se le pasen. Si el template tiene un error de sintaxis o le falta una variable, se registra el error y se devuelve el texto crudo, sin cortar el chat. Los prompts de los sub-agentes no pasan por acá: se toma el texto del `.md` del agente debajo del frontmatter.
+Todos los prompts son templates Jinja (`.jinja`) organizados por dominio (`router/`, `agents/`, `skills/`, `tools/`, `workflows/`, `includes/`) y se cargan con `agent.prompt(nombre, **contexto)`, que busca el template en el árbol (`prompt_loader.py`: primero el subdirectorio del dominio, después la raíz) y lo renderiza con las variables que se le pasen. Si el template tiene un error de sintaxis o le falta una variable, se registra el error y se devuelve el texto crudo, sin cortar el chat. Los prompts de los sub-agentes no pasan por acá: se toma el texto del `.md` del agente debajo del frontmatter.
 
-- `system_prompt.jinja` — Prompt base del router. Solo incluye las secciones de las tools que el router tiene habilitadas (`tools`).
-- `mandatory.jinja` — Reglas `## MANDATORY:` inyectadas al final del system prompt de todos los agentes.
-- `seguridad.jinja` — Reglas de seguridad (prompt injection, fuga de datos, comandos y SQL); las de una tool aparecen solo si el agente la tiene. Sin modelo de decisión se renderiza como `## Seguridad` (reglas e instrucciones) en el system prompt de todos los agentes, después de `MANDATORY`. Con el modelo de decisión habilitado, el router no lo lleva y el decisor recibe las reglas y la pregunta, con el mensaje del usuario como estado.
-- `paralelizacion.jinja` — Instrucciones para emitir llamadas independientes en paralelo.
-- `help.jinja` — Documentación interna para la tool `help`.
-- `title.jinja` — Generación de títulos de sesión.
-- `create_*.jinja`, `iterate_*.jinja`, `interview_*.jinja` — Prompts de creación, iteración y entrevista vía LLM (agent, skill, tool, workflow).
-- `generate_workflow.jinja` — Generación de workflows.
-- `evaluate_skills.jinja`, `explain_skill.jinja`, `craft_prompt.jinja` — Prompts auxiliares.
-- `decision_close.jinja`, `decision_continue.jinja` — Instrucciones de las preguntas del modelo de decisión (cierre de paso y continuidad).
+- `router/system_prompt.jinja` — Prompt base del router. Solo incluye las secciones de las tools que el router tiene habilitadas (`tools`).
+- `includes/mandatory.jinja` — Reglas `## MANDATORY:` inyectadas al final del system prompt de todos los agentes.
+- `includes/seguridad.jinja` — Reglas de seguridad (prompt injection, fuga de datos, comandos y SQL); las de una tool aparecen solo si el agente la tiene. Sin modelo de decisión se renderiza como `## Seguridad` (reglas e instrucciones) en el system prompt de todos los agentes, después de `MANDATORY`. Con el modelo de decisión habilitado, el router no lo lleva y el decisor recibe las reglas y la pregunta, con el mensaje del usuario como estado.
+- `includes/paralelizacion.jinja` — Instrucciones para emitir llamadas independientes en paralelo.
+- `router/title.jinja` — Generación de títulos de sesión.
+- `agents/create_agent.jinja`, `skills/create_skill.jinja`, `tools/create_tool.jinja`, `workflows/create_workflow.jinja` — Prompts de creación vía LLM (agente, skill, tool, workflow).
+- `skills/evaluate_skills.jinja`, `skills/explain_skill.jinja` — Prompts auxiliares. `includes/recursos_creador.jinja` es lo que ven los creadores (todos los agentes, las tools con sus parámetros, las skills y el RAG, y lo que el usuario eligió como obligatorio); `includes/agentes_disponibles.jinja` lista los agentes a los que puede delegar un sub-agente. `workflows/system_agent_node.jinja` y `workflows/user_agent_node.jinja` arman los mensajes de un nodo `agent` de un workflow (el prompt del agente con sus skills, y el prompt del nodo con los resultados de los nodos anteriores).
+- `router/decision_close.jinja`, `router/decision_continue.jinja` — Instrucciones de las preguntas del modelo de decisión (cierre de paso y continuidad).
+
+`prompt_check.py` verifica la cobertura de prompts (qué plantillas existen por dominio y cuáles se referencian). El creador de tools ve además un servidor MCP interno de documentación actualizada (context7, tools `context7docs_*`): lo usa cuando duda sobre una librería, y si la consulta falla usa `websearch`.
 
 Cada template empieza con un comentario Jinja con su nombre, descripción, versión y fecha de actualización; no forma parte del prompt renderizado.
 
@@ -190,15 +194,13 @@ Directorio que contiene el archivo `agent.db` con las tablas:
 - `error_log` — Registro de excepciones del backend (session_id, turn_number, exception, source, created_at).
 - `step_frontier` — Tool calls despachadas del paso en curso (`open` / `done`).
 - `workflows` — Registro de workflows; el nombre es el id y el YAML es la definición.
-- `workflow_runs` — Una fila por ejecución: estado (`running`, `success`, `error`, `cancelled`), intento actual, sesión, resultado y explicación del error.
-- `workflow_run_steps` — Commits por nodo (`open`, `done`, `failed`, `stale`) con el resultado completo, para retomar desde el último nodo confirmado.
-- `workflow_usage` — Gasto de los LLM propios del workflow (juez y explicación de fallos).
-- `notifications` — Notificaciones de workflows y tareas programadas, con FK al workflow o a la tarea y estado de lectura.
+- `workflow_runs` — Como `messages`: la fila de la corrida (`kind` `run`: estado, intento, resultado, explicación del error y la sesión del agente que la llamó, si la llamó uno), una fila por ejecución de nodo (`node`, con `step` y `substep`; un nodo `agent` suma sus llamadas al LLM), una por cada tool que llama un nodo `agent` (`tool`) y una por llamada del motor (`decision`, `judge` con `approved`/`rejected`, `output`, `explain`), cada una con su resultado, modelo, tokens, tiempo y costo. Un workflow o una tarea programada nunca abre una sesión ni escribe en `messages`.
+- `workflow_run_steps` — Commits por nodo (`open`, `done`, `failed`, `stale`) con el resultado completo, para retomar desde el último nodo confirmado. Se borran cuando la corrida termina bien; solo una corrida fallida o cortada los deja.
+- `notifications` — Notificaciones de workflows y tareas programadas, con FK al workflow y estado de lectura. «Revisar con el agente» es lo único que abre una sesión: una nueva, con el resultado.
 - `message_feedback` — Pulgar arriba o abajo del usuario sobre una respuesta, una fila por `(session_id, turn_number)`. Guarda también el modelo y el proveedor que respondió, y se borra con la sesión.
 - `turn_latency` — Latencia de cada turno.
-- `scheduled_tasks` y `task_runs` — Tareas programadas y sus ejecuciones.
-- `spend`, `spend_limits`, `billing`, `external_usage` y `creator_calls` — Gasto y uso por proveedor y modelo, límites de presupuesto y cada llamada al LLM de los creadores.
-- `creator_runs` — Una fila por corrida de un creador (agente, skill, tool o workflow): qué hizo (`question`, `create`, `iterate` o `exists`), el elemento que creó o modificó, el resultado (`success`, `error` o `aborted`), el modelo, la fecha y los tokens y el gasto de todas las llamadas de la corrida. El detalle de cada llamada sigue en `creator_calls`.
+- `spend`, `spend_limits`, `billing` y `external_usage` — Gasto y uso por proveedor y modelo y límites de presupuesto.
+- `creators` — Todo lo que hacen los creadores (agente, skill, tool y workflow), con la forma de `messages`: una conversación (`creator_id`) es una cadena de filas `user`, `assistant`, `tool` y `result` (qué hizo, el elemento que creó o modificó y el resultado), más una fila `call` por cada llamada al LLM con sus tokens y gasto. El historial de cada creador reabre las conversaciones para seguir modificando lo creado.
 
 El esquema se crea de forma idempotente en `ddl_setup.py` (`CREATE TABLE IF NOT EXISTS`).
 
@@ -243,14 +245,14 @@ Flujos deterministas definidos en archivos planos `~/.config/synapseForge/workfl
 
 - `workflow_validator.py` — Valida el esquema: `name`, `retries` (0–10), `on_failure` (`continue` | `abort`) y nodos de tipo `agent`, `tool`, `rag` o `run`. Cada nodo tiene `id` y `step`; el workflow tiene exactamente un nodo `final: true`. Un nodo `run` ejecuta `run` (comando de shell), con `timeout` (1000–300000 ms, 30000 por defecto) y `workdir` opcional confinado al directorio del proyecto.
 - `workflow_loader.py` — `list_workflows` y `load_workflow` con rechazo de nombres con `..` o separadores de ruta.
-- `workflow_runner.py` — `WorkflowRunner.execute_attempt` ejecuta un intento: los pasos en orden, con los nodos del mismo `step` en paralelo con barrera. Cada nodo tiene reintentos con espera exponencial; los de tipo `agent` corren en una sesión hija de la sesión del run, con los permisos de su agente. Un nodo `run` cuyo comando termina con código distinto de cero falla. Las tools se habilitan con permisos mínimos: solo las que el YAML referencia (`task` nunca se habilita; la delegación se hace con nodos `agent`). Cada nodo se confirma en `workflow_run_steps` con su resultado completo.
+- `workflow_runner.py` — `WorkflowRunner.execute_attempt` ejecuta un intento: los pasos en orden, con los nodos del mismo `step` en paralelo con barrera. Cada nodo tiene reintentos con espera exponencial; los de tipo `agent` corren en memoria, sin sesión, con el prompt, los permisos (sin `task`) y los parámetros de su agente; sus llamadas al LLM se suman en la fila del nodo y cada tool que llaman queda como una fila `tool`. Un nodo `run` cuyo comando termina con código distinto de cero falla. Las tools se habilitan con permisos mínimos: solo las que el YAML referencia (`task` nunca se habilita; la delegación se hace con nodos `agent`). Cada nodo se confirma en `workflow_run_steps` con su resultado completo.
 - `workflow_service.py` — `WorkflowService` inicia, cancela y reanuda ejecuciones:
   - Una ejecución es una tarea en segundo plano, en paralelo con el chat, el scheduler y otros workflows. Un mismo workflow no puede correr dos veces a la vez.
-  - Abre una sesión por ejecución, titulada `nombre — dd/mm/aaaa HH:MM`; las ejecuciones iniciadas desde una tool cuelgan de la sesión del agente que las llamó.
+  - No abre ninguna sesión ni escribe en `messages`: todo queda en `workflow_runs` y los commits en `workflow_run_steps`. Las ejecuciones iniciadas desde una tool guardan la sesión del agente que las llamó (`parent_session_id`).
   - Reintenta hasta 3 intentos en total, con espera exponencial (2 s y 4 s). Cada intento retoma desde el primer nodo sin resultado confirmado; un nodo que estaba en vuelo cuenta como fallido y se vuelve a ejecutar.
   - Al arrancar el backend retoma las ejecuciones que quedaron en `running`; las que llamó un agente se cierran como interrumpidas.
   - Al cancelar, la ejecución queda como `cancelled` y no genera notificación.
-- `workflow_judge.py` — Cuando todos los nodos terminan, decide si el workflow terminó bien con los resultados de los nodos: con el modelo de decisión si está listo, o con el modelo de chat si no (un solo prompt, `judge_workflow.jinja`, que según `decision` trae la pregunta o el formato de respuesta y los datos). Si una ejecución falla definitivamente, un LLM redacta una explicación en lenguaje simple (`explain_workflow_error.jinja`); el error técnico va a `error_log`. El gasto de estas llamadas queda en `workflow_usage`.
+- `workflow_judge.py` — Cuando todos los nodos terminan, decide si el workflow terminó bien con los resultados de los nodos: con el modelo de decisión si está listo, o con el modelo de chat si no (un solo prompt, `judge_workflow.jinja`, que según `decision` trae la pregunta o el formato de respuesta y los datos). Si una ejecución falla definitivamente, un LLM redacta una explicación en lenguaje simple (`explain_workflow_error.jinja`); el error técnico va a `error_log`. Cada una de estas llamadas queda como una fila de `workflow_runs`, con su veredicto o texto y su gasto.
 - `workflow_db.py` — Persistencia de ejecuciones, commits por nodo y gasto.
 - `notifications_helpers.py` — Persiste cada notificación y la empuja a la interfaz por el bus de eventos. Solo notifican las ejecuciones lanzadas con play y las tareas programadas.
 - `workflows_helpers.py` — Listado y evaluación de workflows para el creador y `verificar_refs`, que comprueba que existan los agentes, tools y colecciones que el workflow referencia antes de ejecutarlo.
@@ -353,30 +355,25 @@ Este archivo almacena **exclusivamente** la configuración de servidores MCP (Mo
 
 `AGENT.md` (si existe en `~/.config/synapseForge/agents/`) se inyecta como sección `## Behavior` en el system prompt de **todos** los agentes (router y sub-agentes), **antes** de `## MANDATORY:`. No reemplaza el system prompt: `system_prompt.jinja` es siempre la base del router, y cada sub-agente usa su propio `.md`. Sirve para comportamiento general del proyecto (compatibilidad con opencode/claude code).
 
-### 1c. `config.yaml` — Permisos del router
+### 1c. `router_config` — Permisos del router
 
-El agente principal (router) usa `~/.config/synapseForge/config.yaml` para sus permisos (misma lógica que el frontmatter de los agentes):
+El agente principal (router) toma sus permisos de la tabla interna `router_config` de la base de datos del sistema (una sola fila con las selecciones de subagentes, tools, skills y colecciones RAG). Se edita únicamente desde la interfaz: panel lateral, pestaña **Router**, con listas desplegables por dimensión (los servidores MCP aparecen en un contenedor con scroll). Misma lógica que el frontmatter de los agentes:
 
-```yaml
-permissions:
-  tools:
-    read: allow
-  skills:
-    mi_skill: allow
-  tasks:
-    explorador: allow
-  workflows:
-    reporte-diario: allow
-```
+| Dimensión | Qué guarda | Cómo se aplica |
+|-----------|-------------|----------------|
+| `agentes` | Subagentes a los que puede delegar | `tasks: { agente: allow }` (vía `task`) |
+| `tools` | Tools habilitadas | `tools: { tool: allow }` |
+| `skills` | Skills inyectadas al system prompt | `skills: { skill: allow }` |
+| `rag` | Colecciones RAG consultables | `tools: { rag: { coleccion: allow } }` |
 
-Las claves son siempre `tools`, `skills`, `tasks` y `workflows` (plural). Las skills listadas se inyectan en el system prompt del router como `## Skills Disponibles`, igual que en un sub-agente.
+Las skills listadas se inyectan en el system prompt del router como `## Skills Disponibles`, igual que en un sub-agente.
 
-- Si el archivo **no existe** → el router usa las tools base (`task`, `help`, `search_memory`, `read`, `websearch`, `webfetch`) y no tiene skills.
-- Si existe → usa **solo** los permisos explícitos del yaml: no se suma ninguna tool base.
-- `task` solo está disponible si el yaml la lista en `tools` o en `tasks`; `tasks` limita a qué sub-agentes puede delegar.
-- `workflow` solo está disponible si el yaml la lista en `tools` o define `workflows`; `workflows` limita cuáles puede ejecutar. El system prompt agrega la sección `## Workflows Disponibles` con los permitidos.
+- Si no hay nada guardado → el router usa las tools base (`task`, `search_memory`, `read`, `websearch`, `webfetch`) y no tiene skills.
+- Si hay una selección guardada → usa **solo** esos permisos: no se suma ninguna tool base.
+- **Piso fijo**: con o sin selección, el router siempre puede usar `rag` sobre las colecciones internas `help` (documentación del sistema, un documento por sección) y `agent_conversations`. Lo que la selección liste en `rag` se suma a esas dos. Las colecciones internas no son para el usuario: no aparecen en las listas de la interfaz.
+- `task` solo está disponible si la selección incluye la tool `task` o nombra subagentes; `agentes` limita a qué sub-agentes puede delegar.
 
-El system prompt del router incluye solo las secciones de las tools que tiene habilitadas.
+El system prompt del router incluye solo las secciones de las tools que tiene habilitadas. Los cambios se aplican en el siguiente mensaje, sin reiniciar el backend.
 
 ---
 
@@ -485,10 +482,8 @@ Definidas como métodos de la clase `Tools`, un módulo por tool. Incluyen:
 - `check_email`, `send_email` — Correo electrónico (IMAP/SMTP).
 - `shell` — Ejecución de comandos en la terminal.
 - `skill`, `reference` — Carga de skills y archivos de referencia.
-- `help` — Documentación interna del agente.
 - `query_model_capabilities` — Capacidades de un modelo desde el catálogo local.
 - `task` — Delegación a sub-agentes.
-- `workflow` — Ejecución de un workflow guardado; devuelve su resultado como un bloque `<workflow>`. Su permiso es un grupo (`workflows: {nombre: allow}`) que limita el argumento `name`.
 
 ### 2. Tools externas (en `~/.config/synapseForge/tools/`)
 
@@ -579,7 +574,7 @@ Los servidores MCP configurados en `mcp.json` exponen sus herramientas automáti
 
 **Notas:**
 - La base de datos SQLite se crea automáticamente en `backend/agent/agent_db/agent.db` al iniciar el agente.
-- El directorio de configuración `~/.config/synapseForge/` (skills, tools, agents, mcp.json, config.yaml) se crea automáticamente al arrancar.
+- El directorio de configuración `~/.config/synapseForge/` (skills, tools, agents, mcp.json) se crea automáticamente al arrancar.
 - Las variables de entorno se cargan desde `.env` en la raíz del proyecto (ver la tabla siguiente).
 - No requiere servicios externos — SQLite es parte de la stdlib de Python.
 

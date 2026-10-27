@@ -5,21 +5,25 @@ import { API_BASE_URL } from "../config/api";
 /** A finished workflow run or scheduled-task execution. */
 export interface AppNotification {
   id: number;
-  kind: "workflow" | "task";
+  kind: "workflow" | "schedule";
   /** Workflow name or task name. */
   title: string;
   status: "success" | "error";
   /** Plain-language result or explanation for the user. */
   message: string;
   run_id: string | null;
-  session_id: string | null;
   workflow_name: string | null;
-  task_id: string | null;
   read: boolean;
   /** Local time, ISO format. */
   created_at: string;
 }
 
+/**
+ * List the notifications, newest first.
+ *
+ * @returns The notifications, or an empty list when there are none.
+ * @throws Error when the request fails.
+ */
 async function list(): Promise<AppNotification[]> {
   const res = await fetch(`${API_BASE_URL}/api/notifications`);
   if (!res.ok) throw new Error("Error obteniendo las notificaciones");
@@ -33,6 +37,12 @@ async function markAllRead(): Promise<void> {
   if (!res.ok) throw new Error("Error marcando las notificaciones como leídas");
 }
 
+/**
+ * Delete one notification.
+ *
+ * @param id - Id of the notification.
+ * @throws Error when it cannot be deleted.
+ */
 async function remove(id: number): Promise<void> {
   const res = await fetch(`${API_BASE_URL}/api/notifications/${id}`, { method: "DELETE" });
   if (!res.ok) {
@@ -47,6 +57,22 @@ async function clear(): Promise<void> {
   if (!res.ok) throw new Error("Error limpiando las notificaciones");
 }
 
-const notificationService = { list, markAllRead, remove, clear };
+/** Complete output behind a notification (the bell only keeps a short text). */
+async function detail(id: number): Promise<{ notification: AppNotification; output: string }> {
+  const res = await fetch(`${API_BASE_URL}/api/notifications/${id}/detail`);
+  const data = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(data?.message || "No se pudo cargar el resultado.");
+  return { notification: data.notification as AppNotification, output: String(data.output || "") };
+}
+
+/** Open a new conversation that already holds the output ("Revisar con el agente"). */
+async function review(id: number): Promise<string> {
+  const res = await fetch(`${API_BASE_URL}/api/notifications/${id}/review`, { method: "POST" });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(data?.message || "No se pudo abrir la revisión con el agente.");
+  return String(data.session_id);
+}
+
+const notificationService = { list, markAllRead, remove, clear, detail, review };
 
 export default notificationService;

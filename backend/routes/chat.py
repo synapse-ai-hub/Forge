@@ -16,6 +16,11 @@ from typing import Optional
 from fastapi import APIRouter, File, Form, Request, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
+
 # ---------------------------------------------------------------------------
 # Ensure the project root is in sys.path so absolute imports (backend.*)
 # resolve correctly regardless of how the file is invoked.
@@ -102,12 +107,23 @@ async def chat_endpoint(
     stream_id: str | None = Form(None),
     telegram_chat_id: str | None = Form(None),
     files: Optional[list[UploadFile]] = File(None),
-):
+) -> StreamingResponse:
     """Stream a conversation turn via Server-Sent Events.
 
     Accepts the user's message as ``FormData``, optionally with attached
     files, and returns a ``StreamingResponse`` with ``text/event-stream``
     content type.
+
+    Args:
+        request: The request, used to detect when the client disconnects.
+        message: Text the user wrote.
+        session_id: Session of the conversation, or None to start a new one.
+        stream_id: Identifier the client uses to cancel the stream.
+        telegram_chat_id: Telegram chat the turn comes from, when it does.
+        files: Files attached to the message.
+
+    Returns:
+        A StreamingResponse with SSE events.
     """
     # Ensure session_id exists (generate one if not provided)
     if session_id is None or not session_id.strip():
@@ -172,7 +188,12 @@ async def chat_endpoint(
     # Create a cancellation event tied to the client disconnection
     stream_cancel_event = asyncio.Event()
 
-    async def event_stream():
+    async def event_stream() -> AsyncGenerator[str, None]:
+        """Run the agent loop and generate the SSE events of the turn.
+
+        Yields:
+            SSE lines.
+        """
         _t0 = _time.time()
         # # logger.info("[DEBUG_TIEMPO_SSE] event_stream() started — t=%.3f", _t0)
         # Set error context for this request (inside event_stream so set/reset share same async context)

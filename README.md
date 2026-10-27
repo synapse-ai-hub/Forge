@@ -87,7 +87,7 @@ The Forge turns those definitions into autonomous systems.
 - **Memory** — persistent conversation indexing and cross-session retrieval
 - **Multi-provider LLM** — Ollama (local), curated cloud providers (OpenAI-compatible + Google)
 - **MCP integration** — connect external tool servers via the Model Context Protocol (stdio, HTTP or SSE), with an on/off switch per server
-- **Scheduler** — run prompts on a schedule, notify via UI and Telegram
+- **Scheduler** — workflows with a `schedule` block run on a schedule, notify via UI and Telegram
 
 ### You ship
 
@@ -131,18 +131,9 @@ On first launch, configure an API key from any curated cloud provider (all offer
 | `synapseForge run [dir]` | Start development servers |
 | `synapseForge update [dir]` | Update project to latest template (preserves data) |
 
-```mermaid
-flowchart LR
-    A["pip install synapseForge"] --> B["synapseForge init"]
-    B --> C["GUI: name, logo, colors"]
-    C --> D["Template + venv + deps"]
-    D --> E["Project ready"]
-    E --> F["synapseForge run"]
-    E --> G["synapseForge launch"]
-    E --> I["docker compose up"]
-    G --> H["Desktop app / portable zip"]
-    I --> J["Docker container"]
-```
+<p align="center">
+  <img src="https://github.com/synapse-ai-hub/sources/raw/main/videos/pipeline-en.gif" alt="synapseForge pipeline: from pip install to distributable app" width="100%">
+</p>
 
 ---
 
@@ -152,13 +143,13 @@ flowchart LR
 
 FastAPI application with REST/SSE routers. The agent framework lives in `backend/agent/`: AgentLoop with native tool calling, tools registry (native + external + MCP), SQLite sessions, per-agent permissions, skills, RAG (ChromaDB) and long-term memory.
 
-**Native tools**: `read`, `write`, `edit`, `glob`, `grep`, `list_dir`, `webfetch`, `websearch`, `shell`, `task` (sub-agent delegation), `workflow` (run a saved workflow), `skill`, `reference`, `rag`, `search_memory`, `check_email`, `send_email`, `query_model_capabilities`, `help`.
+**Native tools**: `read`, `write`, `edit`, `glob`, `grep`, `list_dir`, `webfetch`, `websearch`, `shell`, `task` (sub-agent delegation), `skill`, `reference`, `rag`, `search_memory`, `check_email`, `send_email`, `query_model_capabilities`.
 
 ### Workflows
 
-Deterministic flows defined as flat YAML files (`~/.config/synapseForge/workflows/<name>.yaml`, one file per workflow). Each workflow is a list of nodes with `id`, `type` (`agent`, `tool`, `rag` or `run`), `step` (integer from 1) and exactly one node with `final: true`. Nodes in the same step run in parallel with a barrier; different steps run sequentially. Agent nodes run in a child session with that agent's own permissions; `run` nodes execute shell commands GitHub-Actions style.
+Deterministic flows defined as flat YAML files (`~/.config/synapseForge/workflows/<name>.yaml`, one file per workflow). Each workflow is a list of nodes with `id`, `type` (`agent`, `tool`, `rag` or `run`), `step` (integer from 1) and exactly one node with `final: true`. Nodes in the same step run in parallel with a barrier; different steps run sequentially. Agent nodes run in memory, without a session, with that agent's own prompt, permissions and parameters; `run` nodes execute shell commands GitHub-Actions style.
 
-A workflow runs from the **play** button of its card in the agent info panel. It runs in the background, in parallel with the chat, and opens a session in the history (`name — date`); while it runs the card shows "Ejecutando…" and can be cancelled. Before running, the backend verifies that every referenced agent, tool and collection exists — if something is missing, it says what instead of executing. Workflows run under least-privilege permissions derived from their own nodes. Every node is committed with its full result: if a node fails or the app stops, the run is retried (3 attempts in total, exponential backoff) from the first node without a confirmed result. When every node completes, a judge (the decision model, or the chat model if it is not enabled) checks the result; a definitive failure is explained in plain language. The result arrives as a persisted notification in the header bell, with the unread count; the run, its node commits and the spend of the judge are stored in their own tables. Agents can run workflows through the `workflow` tool when their `workflows` permission block allows it. A dedicated creator (interview + validation + user approval) generates the YAML; custom prompts can live as loose files in `workflows/prompts/`.
+A workflow runs from the **play** button of its card in the agent info panel. It runs in the background, in parallel with the chat, and never opens a session nor writes in `messages`; while it runs the card shows "Ejecutando…" and can be cancelled. Before running, the backend verifies that every referenced agent, tool and collection exists — if something is missing, it says what instead of executing. Workflows run under least-privilege permissions derived from their own nodes. Every node is committed with its full result: if a node fails or the app stops, the run is retried (3 attempts in total, exponential backoff) from the first node without a confirmed result. When every node completes, a judge (the decision model, or the chat model if it is not enabled) checks the result; a definitive failure is explained in plain language. The result arrives as a persisted notification in the header bell, with the unread count; the run, every node (with the tokens, cost and time of its LLM calls and the tools an agent node called), the node commits and the calls of the judge are stored in their own tables (`workflow_runs` and `workflow_run_steps`). Only "Revisar con el agente" opens a session, a new one with the result. A dedicated creator (interview + validation + user approval) generates the YAML; the prompt of each `agent` node lives in a toml file in `workflows/prompts/`.
 
 ### Checkpoints and decision model
 
@@ -182,7 +173,7 @@ Cloud providers are curated in-app: each API key is validated live against its o
 
 ### Knowledge base (RAG)
 
-ChromaDB with Gemini embeddings (`gemini-embedding-2`) via the Google provider. Upload files and web pages — content is extracted, chunked and indexed for semantic retrieval. Requires a Google API key: without it, the knowledge base stays disabled and everything else runs normally. Long-term memory: every conversation turn is automatically indexed and searchable across sessions via `search_memory`.
+ChromaDB with Gemini embeddings (`gemini-embedding-2`) via the Google provider. Upload files and web pages — content is extracted, chunked and indexed for semantic retrieval. Chunking (chunk size and overlap, in characters) is configurable per upload from the UI (defaults: chunk 500, overlap 60). Requires a Google API key: without it, the knowledge base stays disabled and everything else runs normally. Long-term memory: every conversation turn is automatically indexed and searchable across sessions via `search_memory`.
 
 ### Telegram
 
@@ -190,7 +181,7 @@ Remote control for the agent. Send messages, switch models, create skills/tools,
 
 ### Scheduled tasks
 
-Define tasks (name + prompt + one or more schedules) from the UI or Telegram. Each task can be equipped with tools, skills and model parameters, and its prompt can be refined with the LLM wizard. Activating a task creates a dedicated sub-agent with those permissions; the backend runs it on schedule and notifies via the UI and Telegram.
+A scheduled task is a workflow whose YAML has a `schedule` block (time `HH:MM` + weekdays). Tasks are created with the workflow creator — from the header Agenda (name, description, schedules and the resources the workflow will use) or with `/agendar` on Telegram — and run in the workflow engine like any run (retries, judge, notifications). The Agenda panel also edits schedules, runs tasks with play, cancels them and deletes them (workflow + runs + notifications). The backend checks every 20 seconds for schedules matching the current minute; the system timezone is used, with no configuration.
 
 ### Usage and billing
 
@@ -238,7 +229,6 @@ synapseForge/
 ├─ workflows/         # Deterministic workflows (<name>.yaml)
 ├─ knowledge/         # RAG collections (ChromaDB)
 ├─ mcp.json           # MCP servers
-├─ config.yaml        # Router permissions (optional)
 └─ .secret_key        # Key that encrypts the stored API keys (generated)
 ```
 

@@ -23,13 +23,24 @@ from backend.agent.loop import agent_loop as agent_loop_module
 from backend.agent.session import SessionManager
 from backend.instances import agent
 from backend.routes import feedback as feedback_routes
+from pathlib import Path
+from collections.abc import Iterator
 
 SESSION = "s1"
 
 
 @pytest.fixture()
-def env(tmp_path, monkeypatch):
-    """Isolated DB with one session holding one answered turn."""
+def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[TestClient, str, SessionManager]:
+    """Isolated DB with one session holding one answered turn.
+
+    Args:
+        tmp_path: Temporary directory of the test.
+        monkeypatch: Pytest monkeypatch fixture.
+
+    Returns:
+        ``(client, db_path, session_manager)``: a test client of the feedback router, the path of
+        the temporary database and its session manager.
+    """
     db_path = str(tmp_path / "agent.db")
     sm = SessionManager(db_path)
     sm.create_session(SESSION)
@@ -40,7 +51,12 @@ def env(tmp_path, monkeypatch):
     )
 
     @contextmanager
-    def _db_transaction():
+    def _db_transaction() -> Iterator[sqlite3.Connection]:
+        """Open the temporary database like ``db_transaction`` does.
+
+        Yields:
+            A connection that commits when the block ends.
+        """
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
         try:
@@ -57,7 +73,15 @@ def env(tmp_path, monkeypatch):
     return TestClient(app), db_path, sm
 
 
-def _rows(db_path):
+def _rows(db_path: str) -> list[dict]:
+    """Read every feedback row.
+
+    Args:
+        db_path: Path of the database.
+
+    Returns:
+        One dict per row of ``message_feedback``.
+    """
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
@@ -66,7 +90,12 @@ def _rows(db_path):
         conn.close()
 
 
-def test_save_read_change_and_remove_feedback(env):
+def test_save_read_change_and_remove_feedback(env: tuple[TestClient, str, SessionManager]) -> None:
+    """Save read change and remove feedback.
+
+    Args:
+        env: Test client, path of the temporary database and session manager.
+    """
     client, db_path, _ = env
     assert client.get(f"/api/feedback/{SESSION}").json()["data"] == {}
 
@@ -81,14 +110,24 @@ def test_save_read_change_and_remove_feedback(env):
     assert client.get(f"/api/feedback/{SESSION}").json()["data"] == {}
 
 
-def test_feedback_keeps_the_model_that_answered(env):
+def test_feedback_keeps_the_model_that_answered(env: tuple[TestClient, str, SessionManager]) -> None:
+    """Feedback keeps the model that answered.
+
+    Args:
+        env: Test client, path of the temporary database and session manager.
+    """
     client, db_path, _ = env
     client.put(f"/api/feedback/{SESSION}/1", json={"feedback_type": "down"})
     row = _rows(db_path)[0]
     assert (row["model"], row["provider"], row["feedback_type"]) == ("model-a", "provider-a", "down")
 
 
-def test_invalid_requests_are_rejected_and_save_nothing(env):
+def test_invalid_requests_are_rejected_and_save_nothing(env: tuple[TestClient, str, SessionManager]) -> None:
+    """Invalid requests are rejected and save nothing.
+
+    Args:
+        env: Test client, path of the temporary database and session manager.
+    """
     client, db_path, _ = env
     assert client.put(f"/api/feedback/{SESSION}/1", json={"feedback_type": "meh"}).json()["status"] == "error"
     assert client.put("/api/feedback/nope/1", json={"feedback_type": "up"}).json()["status"] == "error"
@@ -96,7 +135,12 @@ def test_invalid_requests_are_rejected_and_save_nothing(env):
     assert _rows(db_path) == []
 
 
-def test_deleting_the_session_deletes_its_feedback(env):
+def test_deleting_the_session_deletes_its_feedback(env: tuple[TestClient, str, SessionManager]) -> None:
+    """Deleting the session deletes its feedback.
+
+    Args:
+        env: Test client, path of the temporary database and session manager.
+    """
     client, db_path, sm = env
     client.put(f"/api/feedback/{SESSION}/1", json={"feedback_type": "up"})
     assert len(_rows(db_path)) == 1
@@ -104,13 +148,26 @@ def test_deleting_the_session_deletes_its_feedback(env):
     assert _rows(db_path) == []
 
 
-def test_the_loop_announces_the_turn_before_anything_else(env, monkeypatch):
-    """The frontend ties the streamed answer to its feedback with this event."""
+def test_the_loop_announces_the_turn_before_anything_else(
+    env: tuple[TestClient, str, SessionManager],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The frontend ties the streamed answer to its feedback with this event.
+
+    Args:
+        env: Test client, path of the temporary database and session manager.
+        monkeypatch: Pytest monkeypatch fixture.
+    """
     _, _, sm = env
     # run() reaches the database through this module-level handle
     monkeypatch.setattr(agent_loop_module, "session_manager", sm)
 
-    async def first_event():
+    async def first_event() -> str:
+        """Open the stream of a turn and read its first event.
+
+        Returns:
+            The first event of ``AgentLoop.run``.
+        """
         loop = AgentLoop(agent=agent, session_manager=sm)
         gen = loop.run(session_id=SESSION, user_message="otra pregunta")
         try:

@@ -61,6 +61,16 @@ def _make_response(
     message: str,
     status_code: int = 200,
 ) -> JSONResponse:
+    """Build a JSON response with the contract fields.
+
+    Args:
+        status: ``"success"`` or ``"error"``.
+        message: Text for the user.
+        status_code: HTTP status code.
+
+    Returns:
+        The JSON response.
+    """
     return JSONResponse(
         status_code=status_code,
         content={"status": status, "message": message},
@@ -68,11 +78,17 @@ def _make_response(
 
 
 def _is_plain_name(name: str) -> bool:
-    """Return True if name is a single path component.
+    """Check that a name is a single path component.
 
     Rejects separators of both platforms, parent references and drive
     letters: on Windows Path(base) / absolute replaces the base, so a
     check for dot-dot and slash alone lets absolute paths through.
+
+    Args:
+        name: Name to check.
+
+    Returns:
+        True if name is a single path component.
     """
     if not name or name in (".", ".."):
         return False
@@ -82,7 +98,14 @@ def _is_plain_name(name: str) -> bool:
 
 
 def _rmtree(path: Path) -> bool:
-    """Remove a directory tree."""
+    """Remove a directory tree.
+
+    Args:
+        path: Directory to remove.
+
+    Returns:
+        True when it was removed.
+    """
     try:
         shutil.rmtree(str(path))
         return True
@@ -92,7 +115,14 @@ def _rmtree(path: Path) -> bool:
 
 
 def _unlink(path: Path) -> bool:
-    """Remove a single file."""
+    """Remove a single file.
+
+    Args:
+        path: File to remove.
+
+    Returns:
+        True when it was removed.
+    """
     try:
         path.unlink()
         return True
@@ -115,8 +145,10 @@ async def list_knowledge_collections() -> JSONResponse:
     """
     try:
         db = get_vector_db()
+        from backend.agent.utils.rag_helpers import INTERNAL_COLLECTIONS
+
         cols = db.list_collections()
-        names = [c["name"] for c in cols]
+        names = [c["name"] for c in cols if c["name"] not in INTERNAL_COLLECTIONS]
         return JSONResponse(
             status_code=200,
             content={"status": "success", "collections": names},
@@ -140,6 +172,9 @@ async def delete_skill(name: str) -> JSONResponse:
     """Delete a skill by name.
 
     Looks up ``<skills_dir>/<name>/`` and removes it recursively.
+
+    Args:
+        name: Skill name.
 
     Returns:
         A JSONResponse with the operation result.
@@ -169,6 +204,9 @@ async def delete_tool(name: str) -> JSONResponse:
     """Delete an external tool by name.
 
     Looks up ``<tools_dir>/<name>.py`` and removes it.
+
+    Args:
+        name: Tool name.
 
     Returns:
         A JSONResponse with the operation result.
@@ -202,6 +240,9 @@ async def delete_agent(name: str) -> JSONResponse:
 
     Looks up ``<agents_dir>/<name>.md`` and removes it.
 
+    Args:
+        name: Agent name.
+
     Returns:
         A JSONResponse with the operation result.
     """
@@ -228,6 +269,9 @@ async def delete_agent(name: str) -> JSONResponse:
 @router.delete("/mcp/{label:path}")
 async def delete_mcp_server(label: str) -> JSONResponse:
     """Delete an MCP server from mcp.json.
+
+    Args:
+        label: Label of the server in mcp.json.
 
     Returns:
         A JSONResponse with the operation result.
@@ -311,6 +355,9 @@ async def delete_knowledge_collection(collection: str) -> JSONResponse:
     """Delete a vector collection from the knowledge base.
 
     Looks up ``<knowledge_dir>/<collection>/`` and removes it recursively.
+
+    Args:
+        collection: Collection name.
 
     Returns:
         A JSONResponse with the operation result.
@@ -499,6 +546,12 @@ async def test_tool(
             "status": "error",
             "message": f"Error ejecutando '{tool_name}': {e}",
         }, status_code=500)
+
+    if isinstance(tool_result, dict) and tool_result.get("status") == "error":
+        log_error(
+            f"test_tool: '{tool_name}' devolvió error: {tool_result.get('message', tool_result)}",
+            source="agent_items.py:test_tool",
+        )
 
     return JSONResponse(content={
         "status": "success",

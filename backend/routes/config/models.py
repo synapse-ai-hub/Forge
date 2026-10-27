@@ -59,13 +59,13 @@ async def list_models(provider: str | None = None) -> JSONResponse:
     variables).
 
     - ``LOCAL`` → models from the startup cache (Ollama).
-    - any curated cloud provider → models from the startup cache.
+    - any curated cloud provider → models from the catalog.
 
-    No model is selected automatically: the user must pick one and apply it
-    via ``POST /config/models/select``. The response carries ``model: null``
-    until then (a previously persisted selection is still honored).
+    Args:
+        provider: Provider to list, or None for the selected one.
 
-    Returns the list of model IDs/names and the selected model (or null).
+    Returns:
+        A JSONResponse with the models.
     """
     provider = _effective_provider(provider)
 
@@ -129,17 +129,13 @@ async def select_model(data: dict[str, Any]) -> JSONResponse:
          "temperature": 0.7, "top_p": 0.9, "reasoning": true}
 
     ``temperature``, ``top_p``, ``reasoning``, ``budget_tokens`` and
-    ``response_format`` are optional advanced
-    parameters; ``null`` (or omitted) means "default" (the agent's
-    frontmatter value, or the hardcoded fallback). The selection and the
-    parameters are stored in the agent singleton / persisted in SQLite
-    (``config_kv`` keys ``param_temperature``, ``param_top_p``,
-    ``param_reasoning``, ``param_budget_tokens``,
-    ``param_response_format``).
+    ``response_format`` are optional advanced parameters.
 
-    If ``reasoning=true`` is sent for a model that declaratively does not
-    support reasoning (per the provider catalog), the request is rejected
-    with a contract error response.
+    Args:
+        data: Request body.
+
+    Returns:
+        A JSONResponse with the result.
     """
     model = data.get("model", "").strip()
     provider = data.get("provider", "").strip()
@@ -357,18 +353,13 @@ async def select_model(data: dict[str, Any]) -> JSONResponse:
 async def get_model_capabilities(model: str, provider: str) -> JSONResponse:
     """Return reasoning capabilities for a specific model/provider.
 
-    Query params:
-        model: Model name/ID
-        provider: Provider name (LOCAL or any curated cloud provider)
+    Args:
+        model: Model name/ID.
+        provider: Provider name (LOCAL or any curated cloud provider).
 
     Returns:
-        reasoning_supported: boolean
-        reasoning_options: array of {value, label} for the reasoning dropdown
-        reasoning_type: "effort_levels" | "budget_tokens" | "boolean"
-        response_format_supported: boolean (structured output support)
-        temperature_supported: boolean
-        tool_call_supported: boolean
-        found: whether the model exists in the local catalog
+        A JSONResponse with ``reasoning_supported``, ``reasoning_options``
+        (array of ``{value, label}`` for the reasoning dropdown) and ``reasoning_type``.
     """
     if not model or not provider:
         return JSONResponse(

@@ -4,12 +4,12 @@ import logging
 import time
 
 from backend.agent.utils.contract import make_error_response, make_success_response, zero_usage
-from backend.agent.utils.error_logger import log_error
 
 logger = logging.getLogger(__name__)
 
 
 class SearchMemoryMixin:
+    """Native tool ``search_memory``: search the past conversations of the user (long-term memory)."""
     async def search_memory(self, query: str, limit: int = 5) -> dict:
             """Search the user's past conversations (long-term memory).
 
@@ -125,7 +125,6 @@ class SearchMemoryMixin:
                 )
             except Exception as e:
                 logger.exception("Error in search_memory: %s", e)
-                log_error(str(e), source="tools.py:search_memory")
                 return make_error_response(
                     message="Error buscando en conversaciones anteriores.",
                     usage=zero_usage(),

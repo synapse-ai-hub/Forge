@@ -15,13 +15,25 @@ from backend.agent.loop import AgentLoop
 from backend.agent.loop import agent_loop as agent_loop_module
 from backend.agent.loop.constants import MAX_SUBAGENT_DEPTH
 from backend.instances import agent, session_manager
+import pytest
+from typing import Any
 
 
-def test_exit_before_the_title_step_ends_the_stream_without_error(monkeypatch):
+def test_exit_before_the_title_step_ends_the_stream_without_error(monkeypatch: pytest.MonkeyPatch) -> None:
     # log_error writes to the real error_log table; keep this test off agent.db
+    """Exit before the title step ends the stream without error.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+    """
     monkeypatch.setattr(agent_loop_module, "log_error", lambda *_a, **_k: None)
 
-    async def collect():
+    async def collect() -> list[dict[str, Any]]:
+        """Run the loop at the maximum sub-agent depth and collect its events.
+
+        Returns:
+            The events the loop emitted.
+        """
         loop = AgentLoop(agent=agent, session_manager=session_manager)
         return [
             event

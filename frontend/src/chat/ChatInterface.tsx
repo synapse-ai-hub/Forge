@@ -28,6 +28,8 @@ import {
 import LogoImage from "../assets/logo_cliente.png";
 import chatService from "../services/chatService";
 import configService from "../services/configService";
+import approvalService from "../services/approvalService";
+import { ShellApprovalModal, type PendingShellApproval } from "../components/ShellApprovalModal";
 import type { AppNotification } from "../services/notificationService";
 import { Button } from "../components/ui/button";
 import { FileChip, FileWarningBanner, MessageRow } from "../components/chatBlocks";
@@ -127,6 +129,8 @@ interface ChatInterfaceProps {
   onOpenNotifications?: () => void;
   onDeleteNotification?: (id: number) => void;
   onClearNotifications?: () => void;
+  /** Called when a notification is clicked (the app opens its complete output). */
+  onSelectNotification?: (notification: AppNotification) => void;
 }
 
 export interface ChatInterfaceHandle {
@@ -170,6 +174,7 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
       onOpenNotifications,
       onDeleteNotification,
       onClearNotifications,
+      onSelectNotification,
     }: ChatInterfaceProps,
     ref: ForwardedRef<ChatInterfaceHandle>,
   ) {
@@ -192,7 +197,8 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
   const [freshNotificationIds, setFreshNotificationIds] = useState<number[]>([]);
   const unreadCount = notifications.filter((n) => !n.read).length;
 
-  const toggleNotifications = () => {
+  /** Open or close the bell: opening marks the notifications as read and keeps the new ones highlighted. */
+  const toggleNotifications = (): void => {
     if (showNotifications) {
       setShowNotifications(false);
       return;
@@ -212,6 +218,7 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
   /* ---- auto scroll ---- */
   const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
   const [showScrollButton, setShowScrollButton] = useState(false);
+  const [pendingApproval, setPendingApproval] = useState<PendingShellApproval | null>(null);
   const userInteractionRef = useRef(false);
   const wheelUpRef = useRef(false);
   const isProgrammaticScrollRef = useRef(false);
@@ -465,12 +472,18 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
   /* ---- new conversation ---- */
   const handleNewConversation = useCallback(() => {
     chatService.cancelStream();
+    // Deny server-side so the loop wakes up immediately instead of
+    // waiting for the approval timeout.
+    if (pendingApproval) {
+      void approvalService.resolve(pendingApproval.approval_id, false).catch(() => {});
+    }
     setIsStreaming(false);
+    setPendingApproval(null);
     setInput("");
     setFiles([]);
     setFileWarning(null);
     onNewChat();
-  }, [onNewChat, setIsStreaming]);
+  }, [onNewChat, setIsStreaming, pendingApproval]);
 
   /* ---- send message ---- */
   const sendMessage = useCallback(
@@ -525,6 +538,7 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
     // Forzar auto-scroll al enviar mensaje (como ProspectingAgent)
     setAutoScrollEnabled(true);
     setDecisionNotice(null);
+    setPendingApproval(null);
     setIsStreaming(true);
 
     let accumulatedContent = "";
@@ -553,9 +567,40 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
         telegramChatId,
       });
 
+      let retryActive = false;
       for await (const event of eventStream) {
         // console.log(`[DEBUG_TIEMPO_SSE] event received type=${event.type} — t=${performance.now()}, elapsed=${performance.now() - _t0}`);
+        // El aviso de reintento es transitorio: desaparece con cualquier otro evento.
+        if (retryActive && event.type !== "retry") {
+          retryActive = false;
+          setMessages((prev) =>
+            prev.map((m) => (m.id === assistantId ? { ...m, retryNotice: null } : m)),
+          );
+        }
         switch (event.type) {
+          case "retry":
+            retryActive = true;
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === assistantId ? { ...m, retryNotice: String(event.content || "") } : m,
+              ),
+            );
+            break;
+
+          case "approval_required": {
+            const payload =
+              typeof event.content === "object" && event.content !== null
+                ? event.content
+                : {};
+            if (typeof payload.approval_id === "string") {
+              setPendingApproval({
+                approval_id: payload.approval_id,
+                command: typeof payload.command === "string" ? payload.command : "",
+              });
+            }
+            break;
+          }
+
           case "router_status":
           case "reasoning":
             // Normalizar \n en los chunks de reasoning para evitar que se vean en líneas separadas
@@ -673,6 +718,22 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
             const innerEvent: any = payload.event || {};
 
             if (!childId) break;
+
+            // A subagent asking for shell approval: surface the modal at
+            // top level (the nested event never hits "approval_required").
+            if (
+              innerEvent.type === "approval_required" &&
+              typeof innerEvent.content?.approval_id === "string"
+            ) {
+              setPendingApproval({
+                approval_id: innerEvent.content.approval_id,
+                command:
+                  typeof innerEvent.content.command === "string"
+                    ? innerEvent.content.command
+                    : "",
+              });
+              break;
+            }
 
             setMessages((prev) =>
               prev.map((m) => {
@@ -890,7 +951,7 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
       setMessages((prev) => {
         const matched = prev.some((m) => m.id === assistantId);
         // console.log(`[DEBUG_TIEMPO_SSE] finally setMessages — assistantId=${assistantId}, matchFound=${matched}, prevLen=${prev.length}, t=${performance.now()}`);
-        return prev.map((m) => (m.id === assistantId ? { ...m, isStreaming: false } : m));
+        return prev.map((m) => (m.id === assistantId ? { ...m, isStreaming: false, retryNotice: null } : m));
       });
       onSessionEnd?.();
     }
@@ -924,7 +985,14 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
   const handleCancel = useCallback(() => {
     // console.log(`[DEBUG_TIEMPO_SSE] handleCancel called — t=${performance.now()}`);
     chatService.cancelStream();
-  }, []);
+    // Deny server-side so the loop wakes up immediately instead of
+    // waiting for the approval timeout. The loop's wait_approval also
+    // watches the cancel event and cuts the turn.
+    if (pendingApproval) {
+      void approvalService.resolve(pendingApproval.approval_id, false).catch(() => {});
+    }
+    setPendingApproval(null);
+  }, [pendingApproval]);
 
   /* ---- keyboard ---- */
   const handleKeyDown = useCallback(
@@ -1037,11 +1105,8 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
               <Bell size={16} />
               {unreadCount > 0 && (
                 <span
-                  className={`absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full text-[10px] font-semibold leading-4 text-white ${
-                    notifications.some((n) => !n.read && n.status === "error")
-                      ? "bg-red-500"
-                      : "bg-app-primary"
-                  }`}
+                  className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full text-[10px] font-semibold leading-4 text-white"
+                  style={{ backgroundImage: "linear-gradient(to right, #4f46e5, #8b5cf6)" }}
                 >
                   {unreadCount > 9 ? "9+" : unreadCount}
                 </span>
@@ -1083,7 +1148,14 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
                             key={n.id}
                             className={`group flex gap-2.5 px-4 py-3 ${
                               freshNotificationIds.includes(n.id) ? "bg-app-primary/5" : ""
-                            }`}
+                            } ${onSelectNotification ? "cursor-pointer hover:bg-gray-50" : ""}`}
+                            onClick={() => {
+                              if (onSelectNotification) {
+                                onSelectNotification(n);
+                                setShowNotifications(false);
+                              }
+                            }}
+                            title="Ver el resultado completo"
                           >
                             {n.status === "success" ? (
                               <CheckCircle2 size={16} className="shrink-0 mt-0.5 text-green-600" />
@@ -1102,7 +1174,7 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
                                 {n.status === "success" ? "Ejecutado con éxito" : "Falló"}
                               </p>
                               {n.message && (
-                                <p className="text-xs text-app-text-secondary mt-1 line-clamp-3 break-words">
+                                <p className="text-xs text-app-text-secondary mt-1 line-clamp-6 whitespace-pre-line break-words">
                                   {n.message}
                                 </p>
                               )}
@@ -1110,7 +1182,10 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
                             {onDeleteNotification && (
                               <button
                                 type="button"
-                                onClick={() => onDeleteNotification(n.id)}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onDeleteNotification(n.id);
+                                }}
                                 className="shrink-0 self-start rounded p-1 text-app-text-secondary opacity-0 group-hover:opacity-100 hover:bg-red-100 hover:text-app-error transition-all"
                                 aria-label="Eliminar notificación"
                                 title="Eliminar notificación"
@@ -1372,6 +1447,7 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
           </div>
         </div>
       </div>
+      <ShellApprovalModal approval={pendingApproval} onResolved={() => setPendingApproval(null)} />
     </div>
   );
   },

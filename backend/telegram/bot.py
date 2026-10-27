@@ -39,6 +39,11 @@ from backend.telegram.commands.scheduler import SchedulerCommandsMixin
 from backend.telegram.commands.help import HelpCommandsMixin
 from backend.telegram.commands.files import FileCommandsMixin
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from backend.agent.session import SessionManager
+
 logger = logging.getLogger(__name__)
 
 
@@ -63,9 +68,16 @@ class TelegramBot(
     def __init__(
         self,
         token: str,
-        session_manager,
+        session_manager: SessionManager,
         allowed_chat_ids: set[int] | None = None,
     ) -> None:
+        """Create the bot.
+
+        Args:
+            token: Bot token.
+            session_manager: Session manager shared with the web app.
+            allowed_chat_ids: Chats allowed to talk to the bot.
+        """
         self.token = token
         self.session_manager = session_manager
         self.allowed_chat_ids = allowed_chat_ids if allowed_chat_ids is not None else set()
@@ -92,18 +104,30 @@ class TelegramBot(
 
     @property
     def enabled(self) -> bool:
+        """Whether the bot is enabled.
+
+        Returns:
+            True when the bot processes updates.
+        """
         return self._enabled
 
     def set_enabled(self, value: bool) -> None:
+        """Enable or disable the bot.
+
+        Args:
+            value: True to process updates.
+        """
         self._enabled = bool(value)
         logger.info("Telegram enabled=%s", self._enabled)
 
     async def start(self) -> None:
+        """Start the task that polls Telegram for updates."""
         self._running = True
         self._task = asyncio.create_task(self._poll_loop())
         logger.info("Telegram bot polling started (enabled=%s).", self._enabled)
 
     async def stop(self) -> None:
+        """Stop the polling task and close the HTTP client."""
         self._running = False
         if self._task:
             self._task.cancel()

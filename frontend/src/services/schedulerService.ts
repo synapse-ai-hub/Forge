@@ -1,86 +1,63 @@
 import { API_BASE_URL } from "../config/api";
-/** Service for scheduled tasks (agenda): CRUD + execution history. */
+import { selectionToRequest, type ResourceSelection } from "../utils/resourceSelection";
+/** Service for the scheduled tasks (agenda): workflows with a schedule, their runs and their creation. */
 
-
-/** Permission entry: "allow" | "deny". */
-export type PermissionAction = "allow" | "deny";
-
-/**
- * Tool permissions: flat (``read: "allow"``) or grouped
- * (``workflow: { nightly: "allow" }``).
- */
-export type ToolPermissions = Record<string, PermissionAction | Record<string, PermissionAction>>;
-
-/** Schedule slot for additional repetitions. */
+/** Schedule slot: a time of the day and the weekdays it runs. */
 export interface ScheduleSlot {
+  /** Local time in "HH:MM" (24h). */
   time: string;
+  /** Weekdays (0=Sunday ... 6=Saturday). */
   days: number[];
 }
 
-/** Model parameters override for the task's sub-agent. */
-export interface TaskParameters {
-  temperature?: number;
-  top_p?: number;
-  max_tokens?: number;
-  seed?: number;
-  model?: string;
-  reasoning_effort?: string;
-}
-
-/** Task scheduled to run at given local times on specific weekdays. */
+/** Scheduled task: a workflow whose YAML has a `schedule` block. */
 export interface SchedulerTask {
+  /** Name of the workflow (it is also the id of the task). */
   id: string;
-  /** Unique name used as sub-agent identifier. */
   name: string;
-  /** What the agent should do when the task fires. */
+  /** What the task does (the description of the workflow). */
   prompt: string;
-  /** Primary local time in "HH:MM" (24h). */
+  /** Local time of the main slot in "HH:MM" (24h). */
   time: string;
-  /** Primary selected weekdays (0=Sunday ... 6=Saturday). */
+  /** Weekdays of the main slot (0=Sunday ... 6=Saturday). */
   days: number[];
   enabled: boolean;
-  /** Additional schedule slots (time + days pairs). */
+  /** Additional slots. */
   repetitions: ScheduleSlot[] | null;
-  /** Tool permissions override (null = router default). */
-  tool_permissions: ToolPermissions | null;
-  /** Skill permissions override (null = router default). */
-  skill_permissions: Record<string, PermissionAction> | null;
-  /** Model parameters override (null = use defaults). */
-  parameters: TaskParameters | null;
-  last_run_date: string | null;
-  /** Per-slot last-run dates: { "HH:MM_0,1,2": "YYYY-MM-DD" } */
-  slot_runs: Record<string, string> | null;
   created_at: string;
   updated_at: string;
 }
 
-/** A recorded execution of a scheduled task. */
+/** Data to create a scheduled task. */
+export interface NewScheduledTask {
+  name: string;
+  /** What the task has to do. */
+  prompt: string;
+  time: string;
+  days: number[];
+  repetitions: ScheduleSlot[] | null;
+  /** What the user picked in the permission cards: the workflow has to use it. */
+  seleccion: ResourceSelection;
+}
+
+/** An execution of a scheduled task. */
 export interface SchedulerRun {
-  id: number;
+  id: string;
   task_id: string;
   prompt: string | null;
   name: string | null;
-  session_id: string | null;
-  status: "success" | "error";
+  status: "running" | "success" | "error";
   detail: string | null;
   started_at: string;
   finished_at: string | null;
 }
 
-/** Catalog item for permission checkboxes. */
-export interface CatalogItem {
-  name: string;
-  description: string;
-}
-
-/** Permissions catalog returned by /scheduler/permissions/catalog. */
-export interface PermissionsCatalog {
-  tools: CatalogItem[];
-  skills: CatalogItem[];
-  agents: CatalogItem[];
-  workflows: CatalogItem[];
-}
-
+/**
+ * List the scheduled tasks sorted by time.
+ *
+ * @returns The tasks, or an empty list when there are none.
+ * @throws Error when the request fails.
+ */
 async function getTasks(): Promise<SchedulerTask[]> {
   const res = await fetch(`${API_BASE_URL}/api/scheduler/tasks`);
   if (!res.ok) throw new Error("Error obteniendo tareas programadas");
@@ -88,41 +65,85 @@ async function getTasks(): Promise<SchedulerTask[]> {
   return (data.tasks || []) as SchedulerTask[];
 }
 
-async function createTask(payload: {
-  name: string;
-  prompt: string;
-  time: string;
-  days: number[];
-  tool_permissions?: ToolPermissions | null;
-  skill_permissions?: Record<string, PermissionAction> | null;
-  parameters?: TaskParameters | null;
-  repetitions?: ScheduleSlot[] | null;
-}): Promise<{ message: string; task: SchedulerTask }> {
-  const res = await fetch(`${API_BASE_URL}/api/scheduler/tasks`, {
+/**
+ * Create a scheduled task: the workflow creator (an LLM) writes its YAML with the schedule.
+ *
+ * @param task - The task to create.
+ * @param onProgress - Called with the text the creator streams while it works.
+ * @returns The final message of the creator.
+ * @throws Error when the creator fails or the request fails.
+ */
+async function createTask(task: NewScheduledTask, onProgress?: (text: string) => void): Promise<string> {
+  const res = await fetch(`${API_BASE_URL}/api/create/workflow`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({
+      descripcion: task.prompt,
+      name: task.name,
+      ...selectionToRequest(task.seleccion),
+      schedule: {
+        enabled: true,
+        slots: [{ time: task.time, days: task.days }, ...(task.repetitions || [])],
+      },
+    }),
   });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.message || "Error creando la tarea programada");
-  return data;
+  if (!res.ok || !res.body) throw new Error("Error creando la tarea programada");
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let streamed = "";
+  let final: { status: string; message: string } | null = null;
+  let failure: string | null = null;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const events = buffer.split("\n\n");
+    buffer = events.pop() ?? "";
+    for (const event of events) {
+      const line = event.split("\n").find((l) => l.startsWith("data: "));
+      if (!line) continue;
+      let payload: { type?: string; content?: unknown };
+      try {
+        payload = JSON.parse(line.slice(6));
+      } catch {
+        continue;
+      }
+      if (payload.type === "chunk" && typeof payload.content === "string") {
+        streamed += payload.content;
+        onProgress?.(streamed);
+      } else if (payload.type === "workflow_result_final") {
+        const content = payload.content as { status?: string; message?: string };
+        final = { status: content.status ?? "error", message: content.message ?? "" };
+      } else if (payload.type === "error") {
+        failure = String(payload.content ?? "Error creando la tarea programada");
+      }
+    }
+  }
+  if (failure) throw new Error(failure);
+  if (!final) throw new Error("El creador terminó sin crear la tarea.");
+  if (final.status !== "success") throw new Error(final.message || "No se pudo crear la tarea.");
+  return final.message;
 }
 
+/**
+ * Change the schedule of a task.
+ *
+ * @param taskId - Id of the task (the name of its workflow).
+ * @param payload - New main time and days, additional slots or the enabled flag.
+ * @returns The message of the server and the updated task.
+ * @throws Error when the schedule is invalid or the request fails.
+ */
 async function updateTask(
   taskId: string,
   payload: Partial<{
-    name: string;
-    prompt: string;
     time: string;
     days: number[];
     enabled: boolean;
-    tool_permissions: ToolPermissions | null;
-    skill_permissions: Record<string, PermissionAction> | null;
-    parameters: TaskParameters | null;
     repetitions: ScheduleSlot[] | null;
   }>,
 ): Promise<{ message: string; task: SchedulerTask }> {
-  const res = await fetch(`${API_BASE_URL}/api/scheduler/tasks/${taskId}`, {
+  const res = await fetch(`${API_BASE_URL}/api/scheduler/tasks/${encodeURIComponent(taskId)}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -132,8 +153,14 @@ async function updateTask(
   return data;
 }
 
+/**
+ * Delete a task with its workflow, runs and notifications.
+ *
+ * @param taskId - Id of the task (the name of its workflow).
+ * @throws Error when it cannot be deleted.
+ */
 async function deleteTask(taskId: string): Promise<void> {
-  const res = await fetch(`${API_BASE_URL}/api/scheduler/tasks/${taskId}`, {
+  const res = await fetch(`${API_BASE_URL}/api/scheduler/tasks/${encodeURIComponent(taskId)}`, {
     method: "DELETE",
   });
   if (!res.ok) {
@@ -142,40 +169,17 @@ async function deleteTask(taskId: string): Promise<void> {
   }
 }
 
+/**
+ * List the most recent runs started by the scheduler.
+ *
+ * @returns The runs, newest first.
+ * @throws Error when the request fails.
+ */
 async function getRuns(): Promise<SchedulerRun[]> {
   const res = await fetch(`${API_BASE_URL}/api/scheduler/runs`);
   if (!res.ok) throw new Error("Error obteniendo ejecuciones de tareas");
   const data = await res.json();
   return (data.runs || []) as SchedulerRun[];
-}
-
-async function craftPrompt(prompt: string): Promise<string> {
-  const res = await fetch(`${API_BASE_URL}/api/scheduler/craft-prompt`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt }),
-  });
-  const data = await res.json().catch(() => null);
-  if (!res.ok || data?.status === "error") {
-    throw new Error(data?.message || "Error mejorando el prompt");
-  }
-  const refined = data?.data?.prompt;
-  if (typeof refined !== "string" || !refined) {
-    throw new Error("Respuesta inválida del servidor.");
-  }
-  return refined;
-}
-
-async function getPermissionsCatalog(): Promise<PermissionsCatalog> {
-  const res = await fetch(`${API_BASE_URL}/api/scheduler/permissions/catalog`);
-  if (!res.ok) throw new Error("Error obteniendo catálogo de permisos");
-  const data = await res.json();
-  return {
-    tools: data.tools || [],
-    skills: data.skills || [],
-    agents: data.agents || [],
-    workflows: data.workflows || [],
-  };
 }
 
 const schedulerService = {
@@ -184,8 +188,6 @@ const schedulerService = {
   updateTask,
   deleteTask,
   getRuns,
-  craftPrompt,
-  getPermissionsCatalog,
 };
 
 export default schedulerService;

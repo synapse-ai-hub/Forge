@@ -1,433 +1,143 @@
-"""Endpoint POST /api/create/tool — crear tools externas."""
+"""Endpoint to create or modify external tools.
+
+Runs the agent loop with the tool creator system prompt. Every turn of the
+same ``creator_id`` continues the conversation (history persists in the
+``creators`` table): the first turn carries the setup form, follow-ups carry
+only the user message. When the turn creates or modifies the tool file, a
+terminal ``tool_result_final`` event is appended; a turn that only asks
+questions emits none.
+"""
 
 from __future__ import annotations
 
 import logging
-import os
-import sys
-import time as _time
-from typing import Any, AsyncGenerator
+import uuid
 
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
-# ---------------------------------------------------------------------------
-# Ensure project root for absolute imports
-# ---------------------------------------------------------------------------
-_current_dir = os.path.dirname(os.path.abspath(__file__))
-_project_root = os.path.dirname(os.path.dirname(os.path.dirname(_current_dir)))
-if _project_root not in sys.path:
-    sys.path.insert(0, _project_root)
-
-from backend.agent.utils.tools_helpers import _listar_tools_locales
-from backend.agent.utils.create_helpers import (
-    stream_tool_calling_loop,
-    stream_interview_loop,
-    resolve_create_model_provider,
-)
+from backend.agent.creator_session import CreatorSessionManager
+from backend.agent.utils.create_helpers import resolve_create_model_provider
+from backend.agent.utils.creators import is_valid_id
 from backend.instances import agent
-from backend.agent.utils.error_logger import log_error
-from backend.agent.utils.creator_runs import track_creator_run
 from backend.routes.create.common import (
-    _AGENT_TOOLS_PERMS,
-    _FRIENDLY_ERROR_TOOL,
-    _TOOLS_DIR,
-    _formatear_mensajes,
-    _sse,
-    _try_parse_json,
     CreateToolRequest,
+    VerifyCreatorRequest,
+    error_response,
+    prompt_error_stream,
     router,
+    stream_creator_turn,
+    verify_creator_conversation,
 )
 
 logger = logging.getLogger(__name__)
 
+creator_sessions = CreatorSessionManager(kind="tool")
+"""Persistence of the tool creator conversations."""
 
-# Tool schema para la entrevista (idéntico patrón que skills)
-_TOOL_INTERVIEW_TOOL: dict[str, Any] = {
-    "type": "function",
-    "function": {
-        "name": "responder_interview_tool",
-        "description": (
-            "Llamar cuando tengas suficiente información para crear la tool "
-            "o cuando necesites hacer una pregunta al usuario. "
-            "Los parámetros contienen la información estructurada de tu decisión."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "action": {
-                    "type": "string",
-                    "enum": ["question", "create"],
-                    "description": (
-                        "'question' cuando necesitás más información del usuario. "
-                        "'create' cuando ya tenés suficiente para diseñar la tool."
-                    ),
-                },
-                "question": {
-                    "type": "string",
-                    "description": "Tu pregunta para el usuario (solo si action='question').",
-                },
-                "task": {
-                    "type": "string",
-                    "description": (
-                        "Descripción detallada de lo que debe hacer la tool, "
-                        "incluyendo señales de activación y pasos (solo si action='create')."
-                    ),
-                },
-                "name": {
-                    "type": "string",
-                    "description": (
-                        "Nombre exacto del archivo de la tool (sin extensión, "
-                        "snake_case). Si no dio nombre, inferir del contexto "
-                        "(solo si action='create')."
-                    ),
-                },
-                "parametros": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "name": {"type": "string"},
-                            "type": {"type": "string"},
-                            "description": {"type": "string"},
-                            "required": {"type": "boolean"},
-                        },
-                    },
-                    "description": (
-                        "Lista de parámetros que la tool recibe del LLM "
-                        "(solo si action='create')."
-                    ),
-                },
-                "datos": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": (
-                        "Variables de entorno o datos externos que la tool necesita "
-                        "(solo si action='create', opcional)."
-                    ),
-                },
-            },
-            "required": ["action"],
-        },
-    },
-}
+
+def _setup_text(name: str | None, descripcion: str, parametros: list | None, datos: list | None) -> str:
+    """Render the setup form as the head of the first user message.
+
+    Args:
+        name: Tool name suggested by the user.
+        descripcion: What the tool does.
+        parametros: Parameters the LLM passes when invoking it.
+        datos: External data (env vars, secrets, fixed endpoints).
+
+    Returns:
+        The setup block in plain text.
+    """
+    lines = ["Datos del formulario:"]
+    lines.append(f"- Nombre: {name or '(sin nombre, elegilo vos)'}")
+    lines.append(f"- Descripción: {descripcion}")
+    if parametros:
+        lines.append("- Parámetros:")
+        for p in parametros:
+            if isinstance(p, dict):
+                pname = p.get("name", "?")
+                ptype = p.get("type", "?")
+                pdesc = p.get("description", "")
+                lines.append(f"  - {pname} ({ptype}): {pdesc}")
+            else:
+                lines.append(f"  - {p}")
+    else:
+        lines.append("- Parámetros: (no indicados, inferilos)")
+    if datos:
+        lines.append("- Datos externos:")
+        for d in datos:
+            if isinstance(d, dict):
+                lines.append(f"  - {d.get('name', '?')}: {d.get('description', '')}")
+            else:
+                lines.append(f"  - {d}")
+    else:
+        lines.append("- Datos externos: (no indicados)")
+    return "\n".join(lines)
 
 
 @router.post("/tool")
 async def post_create_tool_stream(req: CreateToolRequest):
-    """Streaming endpoint to create an external tool via an LLM interview.
+    """Stream one turn of the tool creator.
 
-    Same contract as ``POST /api/create/skill`` but emits ``tool_action``
-    and ``tool_result`` events instead of ``skill_action`` / ``skill_result``.
+    Args:
+        req: The creation request (message, optional name, setup form,
+            optional creator id and optional model/provider override).
 
     Returns:
-        A StreamingResponse with SSE events.
+        A ``StreamingResponse`` with the loop SSE events plus, when the
+        turn touched the tool file, a terminal ``tool_result_final`` event.
     """
-    logger.info(
-        "POST /api/create/tool — descripcion='%s' name=%s mensajes=%d",
-        req.descripcion, req.name,
-        len(req.mensajes) if req.mensajes else 0,
-    )
-
-    descripcion = req.descripcion.strip()
-    nombre = req.name.strip() if req.name else None
-    mensajes = req.mensajes or []
-    parametros = req.parametros or []
-    datos = req.datos or []
-
+    descripcion = (req.descripcion or "").strip()
     if not descripcion:
-        return StreamingResponse(
-            iter([_sse({"type": "error", "content": "El campo 'descripcion' es obligatorio."})]),
-            media_type="text/event-stream",
-        )
+        return error_response("La descripción es obligatoria.")
+    creator_id = req.creator_id if req.creator_id and is_valid_id(req.creator_id) else str(uuid.uuid4())
+    nombre = (req.name or "").strip() or None
 
-    async def event_stream() -> AsyncGenerator[str, None]:
-        """Generate SSE events for the tool creation flow."""
-        _create_model, _create_provider = resolve_create_model_provider(req.model, req.provider)
+    first_turn = not creator_sessions.has_rows(creator_id)
+    if first_turn:
+        user_message = f"{_setup_text(nombre, descripcion, req.parametros, req.datos)}\n\nMensaje del usuario: {descripcion}"
+        user_setup: dict | None = {
+            "name": nombre,
+            "descripcion": descripcion,
+            "parametros": req.parametros or [],
+            "datos": req.datos or [],
+        }
+    else:
+        user_message = descripcion
+        user_setup = None
 
-        # ════════════════════════════════════════════════════════════════
-        # FASE ITERACIÓN — si iterate=True, modificar creación existente
-        # ════════════════════════════════════════════════════════════════
-        if req.iterate:
-            yield _sse({"type": "tool_action", "content": {"action": "iterating"}})
+    parameters: dict | None = None
+    if req.model or req.provider:
+        model, provider = resolve_create_model_provider(req.model, req.provider)
+        parameters = {"model": model, "provider": provider}
 
-            tool_carpeta = str(_TOOLS_DIR / (nombre or "tool"))
-            try:
-                iter_prompt = agent.prompt(
-                    "iterate_tool",
-                    nombre=nombre or "(inferir)",
-                    carpeta=tool_carpeta,
-                    conversacion=_formatear_mensajes(mensajes),
-                )
-            except FileNotFoundError:
-                logger.exception("Prompt iterate_tool.jinja no encontrado.")
-                yield _sse({"type": "error", "content": _FRIENDLY_ERROR_TOOL})
-                return
-
-            try:
-                tools = list(agent.tools.tools_registry(_AGENT_TOOLS_PERMS))
-            except AttributeError as e:
-                logger.exception("Error obteniendo tools: %s", e)
-                yield _sse({"type": "error", "content": _FRIENDLY_ERROR_TOOL})
-                return
-
-            msgs: list[dict[str, Any]] = [
-                {"role": "system", "content": iter_prompt},
-                {"role": "user", "content": mensajes[-1]["content"] if mensajes else "Modificá la tool."},
-            ]
-
-            async for event in stream_tool_calling_loop(
-                msgs, tools, _FRIENDLY_ERROR_TOOL, model=_create_model, provider=_create_provider
-            ):
-                yield _sse(event)
-                if event["type"] == "error":
-                    return
-
-            yield _sse({"type": "tool_result_final", "content": {
-                "status": "success",
-                "message": f"Tool '{nombre}' modificada exitosamente.",
-                "data": {"exist": "Sí", "tool": nombre, "tool_path": tool_carpeta},
-            }})
-            return
-
-        # ════════════════════════════════════════════════════════════════
-        # FASE 1: EVALUAR — ¿ya existe una tool que cubra esto?
-        # (antes de iterar para no gastar tokens si ya hay una)
-        # ════════════════════════════════════════════════════════════════
-        try:
-            tools_locales = _listar_tools_locales()
-            decision = await _evaluar_si_existe_tool_inline(
-                descripcion, tools_locales, agent, req.model, req.provider
-            )
-
-            if decision and decision.get("exist") == "Sí":
-                tool_name = decision.get("tool")
-                yield _sse({"type": "tool_result", "content": {
-                    "status": "success",
-                    "message": f"Ya existe la tool '{tool_name}' que cubre esta tarea.",
-                    "data": {"exist": "Sí", "tool": tool_name},
-                }})
-                return
-        except Exception as e:
-            logger.exception("Error en evaluación inicial: %s", e)
-            # No es bloqueante: seguimos a la fase de entrevista
-
-        # ════════════════════════════════════════════════════════════════
-        # FASE 2: ENTREVISTA — stream texto + tool responder_interview_tool
-        # ════════════════════════════════════════════════════════════════
-        # Formatear parámetros y datos
-        if parametros:
-            params_lines = []
-            for p in parametros:
-                pname = p.get("name", "?")
-                ptype = p.get("type", "str")
-                pdesc = p.get("description", "")
-                preq = "obligatorio" if p.get("required", True) else "opcional"
-                params_lines.append(f"  - {pname} ({ptype}, {preq}): {pdesc}")
-            parametros_text = "\n".join(params_lines)
-        else:
-            parametros_text = "(No se declararon parámetros. Inferir los necesarios.)"
-
-        datos_text = "\n".join(f"  - {d}" for d in datos) if datos else "(No se declararon datos externos. Inferir si los necesita.)"
-
-        try:
-            prompt = agent.prompt(
-                "interview_tool",
-                descripcion=descripcion,
-                nombre=nombre or "(inferir)",
-                parametros=parametros_text,
-                datos=datos_text,
-                mensajes=_formatear_mensajes(mensajes),
-            )
-        except FileNotFoundError:
-            logger.exception("Prompt interview_tool.jinja no encontrado.")
-            yield _sse({"type": "error", "content": _FRIENDLY_ERROR_TOOL})
-            return
-
-        collected_content = ""
-        tool_calls_data = None
-
-        _create_model, _create_provider = resolve_create_model_provider(req.model, req.provider)
-        async for event in stream_interview_loop(
-            prompt=prompt,
-            interview_tool=_TOOL_INTERVIEW_TOOL,
-            friendly_error=_FRIENDLY_ERROR_TOOL,
-            model=_create_model,
-            provider=_create_provider,
-        ):
-            if event["type"] == "chunk":
-                collected_content += event.get("content", "")
-                yield _sse(event)
-
-            elif event["type"] == "_interview_args":
-                tool_calls_data = event.get("content") or {}
-
-            elif event["type"] == "aborted":
-                yield _sse(event)
-                return
-
-            else:
-                yield _sse(event)
-
-        # ── Fallback: si no hubo tool call, intentar parsear JSON ──
-        if not tool_calls_data:
-            logger.warning("No tool call recibida. Content: %s", collected_content)
-            parsed = _try_parse_json(collected_content)
-            if parsed:
-                tool_calls_data = parsed
-            elif collected_content.strip():
-                return
-            else:
-                yield _sse({"type": "error", "content": "El LLM no devolvió una respuesta válida."})
-                return
-
-        action = tool_calls_data.get("action")
-
-        # ── QUESTION ──
-        if action == "question":
-            question_text = tool_calls_data.get("question", "")
-            yield _sse({"type": "tool_action", "content": {"action": "question", "question": question_text}})
-            return
-
-        # ── CREATE ──
-        if action != "create":
-            logger.warning("Acción desconocida del LLM: %s", action)
-            yield _sse({"type": "error", "content": _FRIENDLY_ERROR_TOOL})
-            return
-
-        task = tool_calls_data.get("task", descripcion)
-        name = nombre or tool_calls_data.get("name")
-        llm_parametros = tool_calls_data.get("parametros") or parametros
-        llm_datos = tool_calls_data.get("datos") or datos
-
-        # ════════════════════════════════════════════════════════════════
-        # FASE 3: CREAR — ejecutar agente con tools (mismo loop que /skill)
-        # ════════════════════════════════════════════════════════════════
-        yield _sse({"type": "tool_action", "content": {"action": "creating"}})
-
-        # Formatear params/datos/conversación para el prompt de generación
-        if llm_parametros:
-            params_lines = []
-            for p in llm_parametros:
-                pname = p.get("name", "?")
-                ptype = p.get("type", "str")
-                pdesc = p.get("description", "")
-                preq = "obligatorio" if p.get("required", True) else "opcional"
-                params_lines.append(f"- {pname} ({ptype}, {preq}): {pdesc}")
-            params_text = "\n".join(params_lines)
-        else:
-            params_text = "(Inferir parámetros según la descripción.)"
-
-        datos_text = "\n".join(f"- {d}" for d in llm_datos) if llm_datos else "(Si la tool necesita credenciales, documentarlas acá.)"
-
-        conversacion = _formatear_mensajes(mensajes) if mensajes else f"**Usuario**: {task}"
-
-        carpeta = str(_TOOLS_DIR / (name or "tool"))
-        try:
-            sys_prompt = agent.prompt(
-                "create_tool",
-                nombre=name or "(inferir del contexto)",
-                descripcion=task,
-                conversacion=conversacion,
-                parametros=params_text,
-                datos=datos_text,
-                carpeta=carpeta,
-            )
-        except FileNotFoundError:
-            logger.exception("Prompt create_tool.jinja no encontrado.")
-            yield _sse({"type": "error", "content": _FRIENDLY_ERROR_TOOL})
-            return
-
-        user_msg = (
-            "Creá la tool. Pasos OBLIGATORIOS en orden: "
-            "1) Escribí el archivo <nombre>.py con write. "
-            "2) Escribí un script de tests en lib/tests/test_<nombre>.py. "
-            "3) Ejecutá los tests con shell y mostrame los resultados. "
-            "4) Iterá si hay errores. "
-            "5) Cuando todo pase, pedime aprobación."
-        )
-
-        # ── 3a. Resolver tools ──
-        try:
-            tools = list(agent.tools.tools_registry(_AGENT_TOOLS_PERMS))
-        except AttributeError as e:
-            logger.exception("Error obteniendo tools: %s", e)
-            yield _sse({"type": "error", "content": _FRIENDLY_ERROR_TOOL})
-            return
-
-        # ── 3b. Loop de tool calling EXACTO ChatInterface (loop.py) ──
-        msgs: list[dict[str, Any]] = [
-            {"role": "system", "content": sys_prompt},
-            {"role": "user", "content": user_msg},
-        ]
-
-        async for event in stream_tool_calling_loop(
-            msgs, tools, _FRIENDLY_ERROR_TOOL, model=_create_model, provider=_create_provider
-        ):
-            yield _sse(event)
-            if event["type"] == "error":
-                return
-
-        # ════════════════════════════════════════════════════════════════
-        # FASE 4: BUSCAR lo que creó el agente
-        # ════════════════════════════════════════════════════════════════
-        if name:
-            tool_path = _TOOLS_DIR / f"{name}.py"
-            if tool_path.is_file():
-                yield _sse({"type": "tool_result_final", "content": {
-                    "status": "success",
-                    "message": f"Tool '{name}' creada exitosamente.",
-                    "data": {"exist": "No", "tool": name, "tool_path": str(tool_path)},
-                }})
-                return
-
-        # Fallback: escanear tools recién creadas
-        tools_actualizadas = _listar_tools_locales()
-        # Comparar contra las que ya existían al inicio de esta request
-        # (re-leer del disco por si la última escritura las cambió)
-        # Recompute "previas": las que NO fueron creadas por este agente.
-        # (el race condition se evita porque tools_locales ya se listó al inicio
-        # pero acá lo volvemos a leer para tener el estado más fresco)
-        tools_locales_reload = _listar_tools_locales()
-        # Las "nuevas" son las que aparecieron desde el inicio
-        # Para simplificar: si no encontramos la pedida por nombre,
-        # igual emitimos un mensaje de éxito si hay archivo nuevo.
-        # Buscar cualquier .py que haya sido creado en los últimos 60 segundos
-        cutoff = _time.time() - 300  # 5 min
-        candidatos = []
-        if _TOOLS_DIR.is_dir():
-            for entry in _TOOLS_DIR.iterdir():
-                if not entry.is_file() or not entry.name.endswith(".py") or entry.name.startswith("_"):
-                    continue
-                try:
-                    mtime = entry.stat().st_mtime
-                    if mtime >= cutoff:
-                        candidatos.append(entry.stem)
-                except Exception:
-                    continue
-        if candidatos:
-            nueva_nombre = candidatos[0]
-            tool_path = _TOOLS_DIR / f"{nueva_nombre}.py"
-            yield _sse({"type": "tool_result_final", "content": {
-                "status": "success",
-                "message": f"Tool '{nueva_nombre}' creada exitosamente.",
-                "data": {"exist": "No", "tool": nueva_nombre, "tool_path": str(tool_path)},
-            }})
-            return
-
-        yield _sse({"type": "tool_result_final", "content": {
-            "status": "error",
-            "message": f"No se pudo verificar la creación de la tool '{name or 'tool'}'.",
-            "data": {"exist": "No", "tool": name or "tool", "tool_path": str(_TOOLS_DIR / f"{name or 'tool'}.py")},
-        }})
+    try:
+        system_prompt = agent.prompt("create_tool")
+    except Exception:
+        logger.exception("Prompt create_tool.jinja no encontrado.")
+        return prompt_error_stream()
 
     return StreamingResponse(
-        track_creator_run("tool", req, event_stream()),
+        stream_creator_turn(
+            kind="tool",
+            creator_id=creator_id,
+            user_message=user_message,
+            system_prompt=system_prompt,
+            session_manager=creator_sessions,
+            user_setup=user_setup,
+            parameters=parameters,
+        ),
         media_type="text/event-stream",
     )
 
 
-# Helper para evaluar inline sin reimportar todo el módulo
-async def _evaluar_si_existe_tool_inline(tarea, tools_locales, agent, model=None, provider=None):
-    """Wrapper sobre el helper compartido."""
-    from backend.agent.utils.tools_helpers import _evaluar_si_existe
-    return await _evaluar_si_existe(tarea, tools_locales, model, provider)
+@router.post("/tool/verify")
+async def post_verify_tool(req: VerifyCreatorRequest):
+    """Verify the tool creator conversation on demand.
+
+    Args:
+        req: The verification request (creator conversation id).
+
+    Returns:
+        ``{"done", "reason"}``: whether the work fulfils the request.
+    """
+    return await verify_creator_conversation("tool", creator_sessions, req.creator_id)

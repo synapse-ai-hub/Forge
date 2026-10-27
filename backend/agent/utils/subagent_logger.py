@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import sys
+from typing import Any
 
 SUBAGENT_LEVEL = 25
 """Numeric level for SUBAGENT (INFO=20, WARNING=30)."""
@@ -22,7 +23,7 @@ SUBAGENT_LEVEL = 25
 logging.addLevelName(SUBAGENT_LEVEL, "SUBAGENT")
 
 
-def _subagent(self: logging.Logger, message: str, *args, **kwargs) -> None:
+def _subagent(self: logging.Logger, message: str, *args: Any, **kwargs: Any) -> None:
     """Log a message with SUBAGENT level.
 
     Args:
@@ -47,6 +48,14 @@ class _SubagentColorFilter(logging.Filter):
     """Add ANSI yellow colour to SUBAGENT level name in the LogRecord."""
 
     def filter(self, record: logging.LogRecord) -> bool:
+        """Color the level name of sub-agent records when the terminal supports it.
+
+        Args:
+            record: The log record.
+
+        Returns:
+            Always True: the record is never dropped.
+        """
         if record.levelno == SUBAGENT_LEVEL and sys.stderr.isatty():
             record.levelname = "\033[33mSUBAGENT\033[0m"
         return True

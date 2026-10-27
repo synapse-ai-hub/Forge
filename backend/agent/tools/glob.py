@@ -5,12 +5,12 @@ import logging
 import os
 
 from backend.agent.utils.contract import make_error_response, make_success_response, zero_usage
-from backend.agent.utils.error_logger import log_error
 
 logger = logging.getLogger(__name__)
 
 
 class GlobMixin:
+    """Native tool ``glob``: fast file pattern matching."""
     async def glob(self, pattern: str, path: str | None = None) -> dict:
             """Fast file pattern matching tool.
 
@@ -56,7 +56,6 @@ class GlobMixin:
                 )
             except Exception as e:
                 logger.exception("Error in glob: %s", e)
-                log_error(str(e), source="tools.py:glob")
                 return make_error_response(
                     message=f"Error in glob: {e}",
                     usage=zero_usage(),

@@ -1,12 +1,8 @@
-"""Database schema setup for the agent (no migrations).
+"""Database schema setup for the agent.
 
 Creates the tables using ``CREATE TABLE IF NOT EXISTS`` so the operation is idempotent and can be
-called once at startup without per-session overhead.
-
-
-NOTE: If columns are added or modified, migrations must be added here
-and executed during update (pipeline/update) so existing user databases
-are updated without data loss.
+called once at startup without per-session overhead. There are no migrations: the database is
+created from scratch with every new build.
 """
 
 from __future__ import annotations
@@ -26,23 +22,20 @@ _DDL_SCRIPTS: tuple[str, ...] = (
     "ddl/error_log.sql",
     "ddl/context_files.sql",
     "ddl/attachments.sql",
-    "ddl/scheduled_tasks.sql",
-    "ddl/task_runs.sql",
     "ddl/model_catalog.sql",
     "ddl/decision_catalog.sql",
     "ddl/billing.sql",
     "ddl/spend.sql",
     "ddl/spend_limits.sql",
     "ddl/external_usage.sql",
-    "ddl/creator_calls.sql",
-    "ddl/creator_runs.sql",
+    "ddl/creators.sql",
     "ddl/step_frontier.sql",
     "ddl/message_feedback.sql",
     "ddl/workflows.sql",
     "ddl/workflow_runs.sql",
     "ddl/workflow_run_steps.sql",
-    "ddl/workflow_usage.sql",
     "ddl/notifications.sql",
+    "ddl/router_config.sql",
 )
 
 
@@ -54,6 +47,9 @@ def setup_database(conn: sqlite3.Connection) -> None:
 
     Args:
         conn: An open ``sqlite3.Connection`` (already configured with PRAGMAs).
+
+    Raises:
+        sqlite3.Error: If a DDL statement fails.
     """
     script = "\n".join(load_query(name) for name in _DDL_SCRIPTS)
     conn.executescript(script)

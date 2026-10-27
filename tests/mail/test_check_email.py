@@ -24,10 +24,22 @@ from backend.agent.tools import Tools
 
 
 def show(label: str, result: dict) -> bool:
-    """Print a tool result summary. Returns True when status is success."""
+    """Print a tool result summary.
+
+    Args:
+        label: Name of the case, used as prefix of every line.
+        result: Result of the ``check_email`` tool.
+
+    Returns:
+        ``True`` when the status of the result is ``success``.
+    """
     print(f"[{label}] status: {result.get('status')}")
     print(f"[{label}] message: {result.get('message')}")
-    data = result.get("data") or []
+    data = result.get("data")
+    if isinstance(data, str):
+        print(f"[{label}] data: {data}")
+        return result.get("status") == "success"
+    data = data or []
     print(f"[{label}] emails: {len(data)}")
     for email in data:
         print(f"[{label}] - {email.get('date_local') or email.get('date')} | {email.get('sender')} | {email.get('subject')}")
@@ -35,7 +47,11 @@ def show(label: str, result: dict) -> bool:
 
 
 def main() -> int:
-    """Instantiate Tools and call check_email (suite or single case)."""
+    """Instantiate Tools and call check_email (suite or single case).
+
+    Returns:
+        ``0`` when every call succeeded, ``1`` otherwise.
+    """
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(
         description="Call the real check_email tool.",

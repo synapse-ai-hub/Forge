@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Plus, History, Settings, Brain, Trash2, Wrench } from "lucide-react";
+import { Plus, History, Settings, Brain, Trash2, Wrench, SlidersHorizontal } from "lucide-react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import EmpresaLogo from "../assets/logo_empresa.png";
@@ -9,8 +9,9 @@ import SessionsTab from "./sessionsTab";
 import ConfigTab from "./configTab";
 import AgentInfoTab from "./agentInfoTab";
 import CreateTab from "./createTab";
+import RouterTab from "./RouterTab";
 
-type SidebarTab = "sessions" | "config" | "agent" | "create";
+type SidebarTab = "sessions" | "config" | "router" | "agent" | "create";
 
 interface SidebarProps {
   activeSessionId: string | null;
@@ -153,6 +154,7 @@ export function Sidebar({
   const menuItems: Array<{ key: SidebarTab; label: string; icon: React.ReactNode; devOnly?: boolean }> = [
     { key: "sessions", label: "Conversaciones", icon: <History size={14} /> },
     { key: "config", label: "Configuración", icon: <Settings size={14} /> },
+    { key: "router", label: "Router", icon: <SlidersHorizontal size={14} /> },
     ...(isDevOnly ? [{ key: "agent" as SidebarTab, label: "Agente", icon: <Brain size={14} /> }] : []),
     ...(isDevOnly ? [{ key: "create" as SidebarTab, label: "Crear", icon: <Wrench size={14} /> }] : []),
   ];
@@ -222,6 +224,14 @@ export function Sidebar({
           style={{ display: tab === "config" ? "flex" : "none" }}
         >
           <ConfigTab verboseMode={verboseMode} onVerboseModeChange={onVerboseModeChange} />
+        </div>
+
+        {/* Router tab */}
+        <div
+          className="flex-1 flex flex-col min-h-0 overflow-y-auto"
+          style={{ display: tab === "router" ? "flex" : "none" }}
+        >
+          <RouterTab />
         </div>
 
         {/* Agent info tab (dev only) */}

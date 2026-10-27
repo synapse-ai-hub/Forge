@@ -1,13 +1,15 @@
 """Workflow runs: start, retry, resume, cancel, judge and notify.
 
 A run is one execution of a workflow, started by the play button (``source``
-``"play"``) or by an agent through the ``workflow`` tool (``"tool"``). Each
+``"play"``), by an agent through the ``workflow`` tool (``"tool"``) or by the
+scheduler (``"schedule"``, a workflow whose YAML has a ``schedule`` block). Each
 run:
 
-1. Creates a session (parent of the child sessions of its agent nodes). A
-   run started with play is a top-level session titled
-   ``<name> — dd/mm/yyyy HH:mm``; a run called by an agent hangs from the
-   caller's session.
+1. Never opens a session nor writes in ``messages``: everything it does (its
+   nodes, the decision model or LLM verdict, the output and the explanation of a
+   failure, with their tokens, cost and time) is a row of ``workflow_runs``, and
+   the commits to resume it go to ``workflow_run_steps``. The result reaches the
+   user as a notification; only "Revisar con el agente" opens a session.
 2. Executes in the background (``asyncio`` task), in parallel with the chat,
    the scheduler and other workflows.
 3. Retries up to :data:`~backend.agent.utils.workflow_db.MAX_ATTEMPTS` times
@@ -17,7 +19,8 @@ run:
    LLM) decides whether the run finished well, receiving the node results.
 5. A run that fails definitively gets a plain-language explanation written
    by an LLM; the technical error goes to ``error_log``.
-6. Runs started with play notify the user (persisted notification + event).
+6. Runs started with play or by the scheduler notify the user (persisted notification +
+   event); the scheduled ones also go to Telegram.
 
 Local time everywhere (``datetime.now()``).
 """
@@ -31,8 +34,13 @@ from typing import Any
 
 from backend.agent.utils import workflow_db
 from backend.agent.utils.error_logger import log_error, reset_error_context, set_error_context
-from backend.agent.utils.notifications_helpers import notify
+from backend.agent.utils.notifications_helpers import notify, notify_telegram
 from backend.agent.utils.workflow_db import MAX_ATTEMPTS
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -40,10 +48,56 @@ _RESULT_NOTIFICATION_LIMIT = 1000
 """Characters of the final answer carried by the success notification."""
 
 
+def _shorten(text: str, limit: int = _RESULT_NOTIFICATION_LIMIT) -> str:
+    """Cut a text to a limit at a line or word boundary, marking the cut.
+
+    Args:
+        text: Text to shorten.
+        limit: Maximum number of characters before the cut mark.
+
+    Returns:
+        The text unchanged when it fits, otherwise its beginning followed by an ellipsis.
+    """
+    text = text.strip()
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    boundary = max(cut.rfind("\n"), cut.rfind(" "))
+    if boundary >= limit // 2:
+        cut = cut[:boundary]
+    return cut.rstrip() + "…"
+
+
+def _workspace_note(name: str) -> str:
+    """Describe the working folder of a workflow when it has files.
+
+    Args:
+        name: Workflow name.
+
+    Returns:
+        A line with the path of the folder, or an empty string when it is empty or unavailable.
+    """
+    try:
+        from backend.agent.utils.config_dir import get_workspace_dir
+
+        folder = get_workspace_dir(name)
+        if any(folder.iterdir()):
+            return f"Carpeta de trabajo: {folder}"
+    except Exception as exc:
+        log_error(str(exc), source="workflow_service.py:workspace_note")
+    return ""
+
+
 class _ActiveRun:
     """Handle of a run executing in this process."""
 
     def __init__(self, name: str, cancel_event: asyncio.Event) -> None:
+        """Create the handle of a run.
+
+        Args:
+            name: Workflow name.
+            cancel_event: Event the run checks to know the user cancelled it.
+        """
         self.name = name
         self.cancel_event = cancel_event
         self.task: asyncio.Task | None = None
@@ -53,6 +107,7 @@ class WorkflowService:
     """Start, track, cancel and resume workflow runs."""
 
     def __init__(self) -> None:
+        """Create the service with no run in memory."""
         self._active: dict[str, _ActiveRun] = {}
 
     # ------------------------------------------------------------------
@@ -60,14 +115,28 @@ class WorkflowService:
     # ------------------------------------------------------------------
 
     def active_run_id(self, name: str) -> str | None:
-        """Return the id of the run of ``name`` executing now, if any."""
+        """Find the run of a workflow that is executing in this process.
+
+        Args:
+            name: Workflow name.
+
+        Returns:
+            The run id, or ``None`` when the workflow is not running.
+        """
         for run_id, active in self._active.items():
             if active.name == name:
                 return run_id
         return None
 
     def is_running(self, name: str) -> bool:
-        """Return whether a run of ``name`` is executing now."""
+        """Check whether a run of a workflow is executing in this process.
+
+        Args:
+            name: Workflow name.
+
+        Returns:
+            ``True`` when a run of that workflow is executing.
+        """
         return self.active_run_id(name) is not None
 
     # ------------------------------------------------------------------
@@ -84,11 +153,11 @@ class WorkflowService:
 
         Args:
             name: Workflow name (the id).
-            source: ``"play"`` or ``"tool"``.
+            source: ``"play"``, ``"tool"`` or ``"schedule"``.
             parent_session_id: Session of the calling agent (tool only).
 
         Returns:
-            ``{"ok": True, "run_id", "session_id", "task"}`` when started, or
+            ``{"ok": True, "run_id", "task"}`` when started, or
             ``{"ok": False, "code", "message"}`` with ``code`` one of
             ``not_found``, ``invalid``, ``missing_refs``, ``conflict`` or
             ``error``. The message is friendly, ready for the user.
@@ -125,96 +194,67 @@ class WorkflowService:
                 "message": f"No se puede ejecutar el workflow «{name}»: {detail} Crealos o revisá el workflow.",
             }
 
-        from backend.instances import session_manager
-
-        run_id = workflow_db.create_run(name, None, parent_session_id, source)
+        run_id = workflow_db.create_run(name, parent_session_id, source)
         if run_id is None:
             return {"ok": False, "code": "error", "message": "No se pudo registrar la ejecución."}
-        session_id = run_id
-        try:
-            created = session_manager.create_session(
-                session_id,
-                metadata={"source": "workflow", "workflow": name, "run_id": run_id},
-                parent_id=parent_session_id,
-            )
-            if created.get("status") != "success":
-                raise RuntimeError(str(created.get("message")))
-            workflow_db.set_run_session(run_id, session_id)
-            session_manager.update_session_title(
-                session_id, f"{name} — {datetime.now().strftime('%d/%m/%Y %H:%M')}"
-            )
-            session_manager.save_message(
-                session_id, "user",
-                content=f"Ejecución del workflow «{name}».",
-                turn_number=1, step=None,
-            )
-        except Exception as exc:
-            log_error(str(exc), source="workflow_service.py:start_run(session)")
-            workflow_db.finish_run(run_id, "error", None, "No se pudo abrir la sesión de la ejecución.")
-            return {"ok": False, "code": "error", "message": "No se pudo abrir la sesión de la ejecución."}
 
-        task = self._launch(run_id, name, workflow, session_id, source, 1)
-        await self._emit_run(run_id, name, "running", 1, session_id)
-        return {"ok": True, "run_id": run_id, "session_id": session_id, "task": task}
+        task = self._launch(run_id, name, workflow, source, 1)
+        await self._emit_run(run_id, name, "running", 1)
+        return {"ok": True, "run_id": run_id, "task": task}
 
     def _launch(
         self,
         run_id: str,
         name: str,
         workflow: dict[str, Any],
-        session_id: str,
         source: str,
         start_attempt: int,
     ) -> asyncio.Task:
-        """Create and register the background task of a run."""
+        """Create and register the background task of a run.
+
+        Args:
+            run_id: Run identifier.
+            name: Workflow name.
+            workflow: Validated workflow data.
+            source: ``"play"``, ``"tool"`` or ``"schedule"``.
+            start_attempt: Attempt the task starts from (1..3).
+
+        Returns:
+            The task that executes the run.
+        """
         active = _ActiveRun(name, asyncio.Event())
         self._active[run_id] = active
         task = asyncio.create_task(
-            self._execute(run_id, name, workflow, session_id, source, active.cancel_event, start_attempt)
+            self._execute(run_id, name, workflow, source, active.cancel_event, start_attempt)
         )
         active.task = task
         return task
-
-    async def run_and_wait(
-        self, name: str, parent_session_id: str | None = None
-    ) -> dict[str, Any]:
-        """Run a workflow on behalf of an agent and wait for its outcome.
-
-        Args:
-            name: Workflow name.
-            parent_session_id: Session of the calling agent.
-
-        Returns:
-            ``{"status": "success" | "error" | "cancelled", "run_id",
-            "session_id", "result", "error_text"}``; start failures come back
-            as ``status="error"`` with the friendly message in ``error_text``.
-        """
-        started = await self.start_run(name, source="tool", parent_session_id=parent_session_id)
-        if not started.get("ok"):
-            return {
-                "status": "error", "run_id": None, "session_id": None,
-                "result": "", "error_text": started.get("message", ""),
-            }
-        try:
-            # Shielded: the cancellation of the caller must not look like a
-            # backend shutdown to the run (which would leave it "running").
-            return await asyncio.shield(started["task"])
-        except asyncio.CancelledError:
-            await self.cancel(started["run_id"])
-            raise
 
     # ------------------------------------------------------------------
     # Cancel / shutdown / resume
     # ------------------------------------------------------------------
 
     async def cancel(self, run_id: str) -> bool:
-        """Cancel a running run (it is persisted as ``cancelled``).
+        """Cancel a run (it is persisted as ``cancelled``).
+
+        A run that is not executing in this process but is still ``running`` in the
+        database (the backend restarted) is closed as cancelled so the UI stops
+        waiting for it.
+
+        Args:
+            run_id: Run identifier.
 
         Returns:
-            ``True`` when the run was executing and the cancellation was sent.
+            ``True`` when the run was cancelled, ``False`` when there is nothing to cancel.
         """
         active = self._active.get(run_id)
         if active is None or active.task is None:
+            # Not executing in this process (the backend restarted while the
+            # run was open): close the orphan row so the UI stops waiting.
+            run = workflow_db.get_run(run_id)
+            if run and run.get("status") == "running":
+                await self._finalize_cancelled(run_id, run["workflow_name"])
+                return True
             return False
         active.cancel_event.set()
         active.task.cancel()
@@ -249,7 +289,6 @@ class WorkflowService:
             if run_id in self._active:
                 continue
             name = run["workflow_name"]
-            session_id = run.get("session_id") or run_id
             source = run.get("source") or "play"
             try:
                 workflow_db.fail_open_steps(run_id, "Interrumpido por el cierre del backend.")
@@ -257,7 +296,7 @@ class WorkflowService:
                 attempt = int(run.get("attempt") or 1)
                 if loaded.get("status") != "success":
                     await self._finalize_error(
-                        run_id, name, session_id, source, {},
+                        run_id, name, source, {},
                         [{"node": "-", "type": "workflow", "error": str(loaded.get("message"))}],
                         attempt,
                     )
@@ -266,7 +305,7 @@ class WorkflowService:
                     # The agent that was waiting for the result is gone; its own
                     # frontier brings the pending call back and it can ask again.
                     await self._finalize_error(
-                        run_id, name, session_id, source, loaded["data"],
+                        run_id, name, source, loaded["data"],
                         [{"node": "-", "type": "workflow",
                           "error": "La ejecución se interrumpió porque el backend se cerró."}],
                         attempt,
@@ -275,17 +314,55 @@ class WorkflowService:
                     continue
                 if attempt >= MAX_ATTEMPTS:
                     await self._finalize_error(
-                        run_id, name, session_id, source, loaded["data"],
+                        run_id, name, source, loaded["data"],
                         [{"node": "-", "type": "workflow",
                           "error": "La ejecución se interrumpió y ya no quedaban intentos."}],
                         attempt,
                     )
                     continue
-                self._launch(run_id, name, loaded["data"], session_id, source, attempt + 1)
+                self._launch(run_id, name, loaded["data"], source, attempt + 1)
                 resumed += 1
             except Exception as exc:
                 log_error(str(exc), source="workflow_service.py:resume_interrupted")
         return resumed
+
+    # ------------------------------------------------------------------
+    # Notification
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    async def _notify_finished(
+        source: str,
+        name: str,
+        status: str,
+        message: str,
+        run_id: str,
+        description: str,
+    ) -> None:
+        """Notify the user that a run ended (not the runs called by an agent).
+
+        A played run notifies as ``workflow``. A scheduled run notifies as
+        ``schedule`` and is also sent to Telegram.
+
+        Args:
+            source: ``"play"``, ``"tool"`` or ``"schedule"``.
+            name: Workflow name.
+            status: ``"success"`` or ``"error"``.
+            message: Short text of the result or the explanation of the failure.
+            run_id: Run identifier.
+            description: Description of the workflow (what the task does).
+        """
+        if source not in ("play", "schedule"):
+            return
+        await notify(
+            kind="workflow" if source == "play" else "schedule",
+            workflow_name=name, title=name, status=status, message=message,
+            run_id=run_id,
+        )
+        if source == "schedule":
+            await notify_telegram(
+                status, description, message, datetime.now().strftime("%d/%m/%Y %H:%M")
+            )
 
     # ------------------------------------------------------------------
     # Execution
@@ -296,28 +373,39 @@ class WorkflowService:
         run_id: str,
         name: str,
         workflow: dict[str, Any],
-        session_id: str,
         source: str,
         cancel_event: asyncio.Event,
         start_attempt: int,
     ) -> dict[str, Any]:
-        """Task body: attempts, judge and finalization of a run."""
-        token = set_error_context(session_id=session_id, turn_number=1)
+        """Run the task body: attempts, output, judge and finalization of a run.
+
+        Args:
+            run_id: Run identifier.
+            name: Workflow name.
+            workflow: Validated workflow data.
+            source: ``"play"`` or ``"tool"``.
+            cancel_event: Set when the user cancels the run.
+            start_attempt: Attempt the run starts from (1..3).
+
+        Returns:
+            The outcome ``{status, run_id, result, error_text}``.
+        """
+        token = set_error_context(turn_number=1)
         try:
             return await self._attempts(
-                run_id, name, workflow, session_id, source, cancel_event, start_attempt
+                run_id, name, workflow, source, cancel_event, start_attempt
             )
         except asyncio.CancelledError:
             if not cancel_event.is_set():
                 # Backend shutdown: leave the run as "running" so the next
                 # start resumes it from the last committed node.
                 raise
-            return await self._finalize_cancelled(run_id, name, session_id)
+            return await self._finalize_cancelled(run_id, name)
         except Exception as exc:
             log_error(str(exc), source="workflow_service.py:_execute")
             attempt = (workflow_db.get_run(run_id) or {}).get("attempt") or 1
             return await self._finalize_error(
-                run_id, name, session_id, source, workflow,
+                run_id, name, source, workflow,
                 [{"node": "-", "type": "workflow", "error": str(exc)}], int(attempt),
             )
         finally:
@@ -332,24 +420,37 @@ class WorkflowService:
         run_id: str,
         name: str,
         workflow: dict[str, Any],
-        session_id: str,
         source: str,
         cancel_event: asyncio.Event,
         start_attempt: int,
     ) -> dict[str, Any]:
-        """Run attempts with exponential backoff until success or exhaustion."""
-        from backend.agent.utils.workflow_judge import explain_failure, judge_run
-        from backend.agent.utils.workflow_runner import WorkflowRunner
-        from backend.instances import agent, session_manager
+        """Run attempts with exponential backoff until success or exhaustion.
 
-        runner = WorkflowRunner(agent=agent, session_manager=session_manager)
+        When every node completes, the output of the run is generated and judged.
+
+        Args:
+            run_id: Run identifier.
+            name: Workflow name.
+            workflow: Validated workflow data.
+            source: ``"play"`` or ``"tool"``.
+            cancel_event: Set when the user cancels the run.
+            start_attempt: Attempt the run starts from (1..3).
+
+        Returns:
+            The outcome ``{status, run_id, result, error_text}``.
+        """
+        from backend.agent.utils.workflow_judge import explain_failure, generate_output, judge_run
+        from backend.agent.utils.workflow_runner import WorkflowRunner
+        from backend.instances import agent
+
+        runner = WorkflowRunner(agent=agent)
         outcome: dict[str, Any] = {"status": "error", "failures": [], "results": {}, "final_text": ""}
         attempt = start_attempt
         while attempt <= MAX_ATTEMPTS:
             workflow_db.set_run_attempt(run_id, attempt)
             if attempt > 1:
-                await self._emit_run(run_id, name, "running", attempt, session_id)
-            outcome = await runner.execute_attempt(run_id, session_id, workflow, attempt, cancel_event)
+                await self._emit_run(run_id, name, "running", attempt)
+            outcome = await runner.execute_attempt(run_id, workflow, attempt, cancel_event)
             if outcome["status"] != "error":
                 break
             for failure in outcome["failures"]:
@@ -366,31 +467,47 @@ class WorkflowService:
             attempt += 1
 
         if outcome["status"] == "cancelled":
-            return await self._finalize_cancelled(run_id, name, session_id)
+            return await self._finalize_cancelled(run_id, name)
 
         if outcome["status"] == "success":
+            # The output of the run is generated from the results of every node;
+            # if it cannot be, the result of the final node is kept.
+            generated = await generate_output(
+                agent, name, run_id, str(workflow.get("description", "")),
+                workflow.get("nodes", []), outcome["results"],
+            )
+            if generated:
+                outcome = {**outcome, "final_text": generated}
             ok, reason = await judge_run(
                 agent, name, run_id, str(workflow.get("description", "")),
                 workflow.get("nodes", []), outcome["results"], outcome["final_text"],
             )
             if ok:
                 return await self._finalize_success(
-                    run_id, name, session_id, source, workflow, outcome["final_text"]
+                    run_id, name, source, workflow, outcome["final_text"]
                 )
             return await self._finalize_error(
-                run_id, name, session_id, source, workflow,
+                run_id, name, source, workflow,
                 [{"node": "-", "type": "juez", "error": reason}],
                 attempt, explanation=reason,
             )
 
         return await self._finalize_error(
-            run_id, name, session_id, source, workflow, outcome["failures"], attempt,
+            run_id, name, source, workflow, outcome["failures"], attempt,
             explainer=explain_failure,
         )
 
     @staticmethod
     async def _backoff(cancel_event: asyncio.Event, seconds: float) -> bool:
-        """Wait ``seconds`` between attempts; ``True`` when cancelled meanwhile."""
+        """Wait between attempts.
+
+        Args:
+            cancel_event: Set when the user cancels the run.
+            seconds: Seconds to wait.
+
+        Returns:
+            ``True`` when the run was cancelled meanwhile.
+        """
         try:
             await asyncio.wait_for(cancel_event.wait(), timeout=seconds)
             return True
@@ -401,63 +518,64 @@ class WorkflowService:
     # Finalization
     # ------------------------------------------------------------------
 
-    def _save_final_message(
-        self, session_id: str, workflow: dict[str, Any], content: str, status: str
-    ) -> None:
-        """Store the closing message of a run in its session."""
-        try:
-            from backend.instances import session_manager
-
-            steps = [n.get("step", 1) for n in workflow.get("nodes", []) if isinstance(n, dict)]
-            session_manager.save_message(
-                session_id, "assistant", content=content,
-                turn_number=1, step=max(steps) if steps else 1,
-                status=status, message="" if status == "success" else content,
-            )
-        except Exception as exc:
-            log_error(str(exc), source="workflow_service.py:save_final")
-
     async def _finalize_success(
         self,
         run_id: str,
         name: str,
-        session_id: str,
         source: str,
         workflow: dict[str, Any],
         final_text: str,
     ) -> dict[str, Any]:
-        """Close a run as successful and notify."""
+        """Close a run as successful and notify.
+
+        Args:
+            run_id: Run identifier.
+            name: Workflow name.
+            source: ``"play"``, ``"tool"`` or ``"schedule"`` (the ``"tool"`` runs do not notify).
+            workflow: Workflow data.
+            final_text: Output of the run.
+
+        Returns:
+            The outcome ``{status, run_id, result, error_text}``.
+        """
         answer = final_text.strip() or "Workflow completado sin respuesta final."
-        self._save_final_message(session_id, workflow, answer, "success")
+        note = _workspace_note(name)
         workflow_db.finish_run(run_id, "success", answer, None)
-        if source == "play":
-            await notify(
-                kind="workflow", workflow_name=name, title=name, status="success",
-                message=answer[:_RESULT_NOTIFICATION_LIMIT], run_id=run_id,
-                session_id=session_id,
-            )
-        await self._emit_run(run_id, name, "success", None, session_id)
-        return {"status": "success", "run_id": run_id, "session_id": session_id,
-                "result": answer, "error_text": ""}
+        workflow_db.delete_run_steps(run_id)
+        summary = _shorten(answer)
+        await self._notify_finished(
+            source, name, "success", f"{note}\n\n{summary}" if note else summary,
+            run_id, str(workflow.get("description", "")),
+        )
+        await self._emit_run(run_id, name, "success", None)
+        return {"status": "success", "run_id": run_id, "result": answer, "error_text": ""}
 
     async def _finalize_error(
         self,
         run_id: str,
         name: str,
-        session_id: str,
         source: str,
         workflow: dict[str, Any],
         failures: list[dict[str, str]],
         attempts: int,
         explanation: str | None = None,
-        explainer=None,
+        explainer: Callable[..., Awaitable[str]] | None = None,
     ) -> dict[str, Any]:
         """Close a run as failed: explain it in plain language and notify.
 
         Args:
+            run_id: Run identifier.
+            name: Workflow name.
+            source: ``"play"``, ``"tool"`` or ``"schedule"`` (the ``"tool"`` runs do not notify).
+            workflow: Workflow data.
+            failures: One dict per failed node with ``node``, ``type`` and ``error``.
+            attempts: Attempts the run consumed.
             explanation: Ready-made user text (judge reason); skips the LLM.
-            explainer: ``explain_failure`` coroutine function; when ``None``
-                (and no explanation) the generic text is used.
+            explainer: Coroutine function that explains the failure with the LLM;
+                ``explain_failure`` when ``None`` (used only without ``explanation``).
+
+        Returns:
+            The outcome ``{status, run_id, result, error_text}``.
         """
         from backend.agent.utils.workflow_judge import GENERIC_FAILURE_TEXT, explain_failure
 
@@ -474,30 +592,37 @@ class WorkflowService:
             text = await (explainer or explain_failure)(
                 agent, name, run_id, str(workflow.get("description", "")), failures, attempts,
             ) or GENERIC_FAILURE_TEXT
-        self._save_final_message(session_id, workflow, text, "error")
         workflow_db.finish_run(run_id, "error", None, text)
-        if source == "play":
-            await notify(
-                kind="workflow", workflow_name=name, title=name, status="error",
-                message=text, run_id=run_id, session_id=session_id,
-            )
-        await self._emit_run(run_id, name, "error", None, session_id)
-        return {"status": "error", "run_id": run_id, "session_id": session_id,
-                "result": "", "error_text": text}
+        await self._notify_finished(
+            source, name, "error", text, run_id, str(workflow.get("description", "")),
+        )
+        await self._emit_run(run_id, name, "error", None)
+        return {"status": "error", "run_id": run_id, "result": "", "error_text": text}
 
-    async def _finalize_cancelled(self, run_id: str, name: str, session_id: str) -> dict[str, Any]:
-        """Close a run cancelled by the user (persisted as ``cancelled``)."""
+    async def _finalize_cancelled(self, run_id: str, name: str) -> dict[str, Any]:
+        """Close a run cancelled by the user (persisted as ``cancelled``).
+
+        Args:
+            run_id: Run identifier.
+            name: Workflow name.
+
+        Returns:
+            The outcome ``{status, run_id, result, error_text}``.
+        """
         workflow_db.fail_open_steps(run_id, "Cancelado por el usuario.")
-        self._save_final_message(session_id, {}, "Ejecución cancelada por el usuario.", "error")
         workflow_db.finish_run(run_id, "cancelled", None, None)
-        await self._emit_run(run_id, name, "cancelled", None, session_id)
-        return {"status": "cancelled", "run_id": run_id, "session_id": session_id,
-                "result": "", "error_text": ""}
+        await self._emit_run(run_id, name, "cancelled", None)
+        return {"status": "cancelled", "run_id": run_id, "result": "", "error_text": ""}
 
-    async def _emit_run(
-        self, run_id: str, name: str, status: str, attempt: int | None, session_id: str | None
-    ) -> None:
-        """Tell the web UI that a run changed state."""
+    async def _emit_run(self, run_id: str, name: str, status: str, attempt: int | None) -> None:
+        """Tell the web UI that a run changed state.
+
+        Args:
+            run_id: Run identifier.
+            name: Workflow name.
+            status: New status of the run.
+            attempt: Current attempt, when it is running.
+        """
         try:
             from backend.event_bus import event_bus
 
@@ -505,7 +630,7 @@ class WorkflowService:
                 "type": "workflow_run",
                 "content": {
                     "run_id": run_id, "workflow": name, "status": status,
-                    "attempt": attempt, "session_id": session_id,
+                    "attempt": attempt,
                 },
             })
         except Exception as exc:

@@ -9,6 +9,7 @@ import os
 import sys
 import time
 import asyncio
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Dict
@@ -16,7 +17,9 @@ from typing import Dict
 
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
@@ -30,6 +33,7 @@ if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
 from backend.agent.utils.config_dir import ensure_config_dir
+from backend.agent.utils.packages import restore_missing
 from backend.instances import agent, session_manager
 from backend.routes import config as config_module
 from backend.agent.utils.error_logger import log_error
@@ -150,6 +154,13 @@ except ImportError as e:
     notifications_router = None
     logging.warning("backend.routes.notifications could not be imported.")
 
+try:
+    from backend.routes.approvals import router as approvals_router
+except ImportError as e:
+    log_error(str(e), source="main.py:approvals_import")
+    approvals_router = None
+    logging.warning("backend.routes.approvals could not be imported.")
+
 # ---------------------------------------------------------------------------
 # Logging configuration
 # ---------------------------------------------------------------------------
@@ -201,8 +212,15 @@ async def _heartbeat_watchdog() -> None:
 # FastAPI application
 # ---------------------------------------------------------------------------
 @asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Application lifespan: startup and shutdown hooks."""
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Run the startup and shutdown hooks of the application.
+
+    Args:
+        app: The FastAPI application.
+
+    Yields:
+        Control to the application while it serves requests.
+    """
     logger.info("Starting <nombre>nombre_proyecto</nombre> API ...")
 
     # Ensure config directory exists (~/.config/synapseForge/)
@@ -212,6 +230,19 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         log_error(str(exc), source="main.py:lifespan(config_dir)")
         logger.warning("Failed to initialize config directory: %s", exc)
+
+    # Libraries the tools installed (tools/lib/requirements.txt) that this
+    # machine or container lacks: reinstalled in the background.
+    async def _restore_tool_packages() -> None:
+        """Reinstall the libraries of the tools that this machine or container lacks."""
+        try:
+            restored = await asyncio.to_thread(restore_missing)
+            if restored:
+                logger.info("Tool libraries restored: %s", ", ".join(restored))
+        except Exception as exc:
+            log_error(str(exc), source="main.py:lifespan(tool_packages)")
+
+    asyncio.create_task(_restore_tool_packages())
 
     # Load persisted config (model, provider, context window) from SQLite BEFORE serving requests
     try:
@@ -283,6 +314,16 @@ async def lifespan(app: FastAPI):
 
     logger.info("<nombre>nombre_proyecto</nombre> API started successfully.")
 
+    # Internal help collection, shipped already vectorized: it needs no API
+    # key, so it is loaded before the key check below.
+    try:
+        from backend.agent.utils.seed_collections import seed_help_collection
+
+        await asyncio.to_thread(seed_help_collection)
+    except Exception as exc:
+        log_error(str(exc), source="main.py:lifespan(help_seed)")
+        logger.warning("Failed to seed the help collection: %s", exc)
+
     # Pre-create the RAG vector DB (Gemini Embedding 2) once at startup,
     # only if the Gemini key is configured. It is shared and never
     # killed, so the first use of RAG does not pay the init cost.
@@ -291,7 +332,13 @@ async def lifespan(app: FastAPI):
         from backend.agent.utils.vector_db import get_vector_db
 
         if provider_keys.get_key("GOOGLE"):
-            await asyncio.to_thread(get_vector_db)
+            vector_db = await asyncio.to_thread(get_vector_db)
+            # Internal collections (conversation memory, help) exist from
+            # the first start; they are never listed in the UI.
+            from backend.agent.utils.rag_helpers import INTERNAL_COLLECTIONS
+
+            for internal in INTERNAL_COLLECTIONS:
+                await asyncio.to_thread(vector_db.get_or_create_collection, internal)
             logger.info("RAG vector DB initialized at startup.")
         else:
             logger.warning(
@@ -333,6 +380,24 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+@app.exception_handler(RequestValidationError)
+async def _validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    """Persist 422 validation failures in error_log and keep FastAPI's default response.
+
+    Args:
+        request: The request that failed validation.
+        exc: The validation error.
+
+    Returns:
+        The default 422 JSON response.
+    """
+    log_error(
+        f"422 {request.method} {request.url.path}: {exc.errors()}",
+        source="main.py:request_validation",
+    )
+    return JSONResponse(status_code=422, content={"detail": jsonable_encoder(exc.errors())})
+
 
 # ---------------------------------------------------------------------------
 # CORS middleware
@@ -400,6 +465,9 @@ if workflows_router is not None:
 if notifications_router is not None:
     app.include_router(notifications_router, prefix="/api")
 
+if approvals_router is not None:
+    app.include_router(approvals_router, prefix="/api")
+
 
 # ---------------------------------------------------------------------------
 # Health endpoint
@@ -423,7 +491,11 @@ def health_check() -> Dict[str, object]:
 # ---------------------------------------------------------------------------
 @app.post("/api/shutdown")
 async def shutdown() -> Dict[str, str]:
-    """Shutdown the server gracefully. Only works when running as a desktop app."""
+    """Shut down the server gracefully. Only works when running as a desktop app.
+
+    Returns:
+        A status dict.
+    """
     import os
     import signal
     import sys
@@ -431,7 +503,8 @@ async def shutdown() -> Dict[str, str]:
     logger.info("Shutdown requested via /api/shutdown")
 
     # Give the response time to be sent before killing the process
-    async def _delayed_shutdown():
+    async def _delayed_shutdown() -> None:
+        """Stop the process after the response was sent."""
         await asyncio.sleep(0.5)
         if sys.platform == "win32":
             os.kill(os.getpid(), signal.CTRL_BREAK_EVENT)
@@ -447,7 +520,11 @@ async def shutdown() -> Dict[str, str]:
 # ---------------------------------------------------------------------------
 @app.post("/api/heartbeat")
 async def heartbeat() -> Dict[str, str]:
-    """Receive heartbeat from frontend. Updates last-seen timestamp."""
+    """Receive the heartbeat from the frontend and update the last-seen timestamp.
+
+    Returns:
+        A status dict.
+    """
     global _last_heartbeat
     _last_heartbeat = time.time()
     return {"status": "ok"}
@@ -472,13 +549,23 @@ if os.path.isdir(_frontend_dist):
 
     @app.get("/")
     async def serve_index() -> FileResponse:
-        """Serve the SPA entry point (index.html)."""
+        """Serve the SPA entry point (index.html).
+
+        Returns:
+            The index file.
+        """
         return FileResponse(os.path.join(_frontend_dist, "index.html"))
 
     @app.api_route("/{path:path}", methods=["GET"])
     async def serve_spa(path: str) -> FileResponse:
-        """Catch-all: sirve archivos reales del dist (skill.html, docs.html, ...)
-        o el index.html (SPA routing)."""
+        """Serve the real files of dist (skill.html, docs.html, ...) or index.html (SPA routing).
+
+        Args:
+            path: Requested path.
+
+        Returns:
+            The requested file, or index.html when it does not exist.
+        """
         if path.startswith("api/") or path in (
             "health",
             "openapi.json",

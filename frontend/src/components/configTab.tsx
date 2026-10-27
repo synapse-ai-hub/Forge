@@ -1074,7 +1074,7 @@ export function ConfigTab({ verboseMode, onVerboseModeChange }: ConfigTabProps) 
                 setKeyProvider(e.target.value);
                 setKeysError(null);
               }}
-              className="flex-1 rounded-lg border border-app-border bg-white px-2 py-1.5 text-xs text-app-text focus:outline-none focus:ring-2 focus:ring-app-primary-light"
+              className="flex-1 min-w-0 truncate rounded-lg border border-app-border bg-white px-2 py-1.5 text-xs text-app-text focus:outline-none focus:ring-2 focus:ring-app-primary-light"
             >
               {keyOptions.map((o) => (
                 <option key={o.provider} value={o.provider}>
@@ -1082,7 +1082,7 @@ export function ConfigTab({ verboseMode, onVerboseModeChange }: ConfigTabProps) 
                 </option>
               ))}
             </select>
-            <div className="flex items-center gap-2 ml-2">
+            <div className="flex items-center gap-2 ml-2 shrink-0">
               <span
                 className={`w-2 h-2 rounded-full ${
                   isKeyConfigured(keyProvider) ? "bg-green-500" : "bg-app-bg-tertiary"

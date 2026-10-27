@@ -13,6 +13,7 @@ class PollingMixin:
     """Polling loop: fetches updates and hands each one to the dispatcher."""
 
     async def _poll_loop(self) -> None:
+        """Poll Telegram while the bot runs, skipping the updates queued while it was disabled."""
         was_enabled = False  # force a sync when the bot becomes enabled (startup or re-enable)
         while self._running:
             if not self._enabled:
@@ -62,6 +63,11 @@ class PollingMixin:
             logger.warning("Failed to skip queued Telegram updates: %s", exc)
 
     async def _get_updates(self) -> list[dict]:
+        """Fetch the new updates from Telegram.
+
+        Returns:
+            The updates, or an empty list when Telegram does not answer ok.
+        """
         url = _TELEGRAM_API.format(token=self.token) + "/getUpdates"
         resp = await self._client.post(url, json={"timeout": 0, "offset": self._offset})
         data = resp.json()

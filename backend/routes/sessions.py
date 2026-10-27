@@ -46,6 +46,9 @@ router = APIRouter(tags=["sessions"])
 def _fetch_attachments(session_id: str) -> dict[int, list[dict]]:
     """Fetch attachment file names and sizes grouped by turn_number for a session.
 
+    Args:
+        session_id: Session identifier.
+
     Returns:
         Dict mapping turn_number -> list of {"name": str, "size": int} dicts.
     """
@@ -68,7 +71,7 @@ def _fetch_attachments(session_id: str) -> dict[int, list[dict]]:
 
 
 @router.get("/sessions/titles")
-async def list_titles():
+async def list_titles() -> dict:
     """Return all existing session titles.
 
     Returns:
@@ -92,7 +95,7 @@ async def list_titles():
 
 
 @router.get("/sessions")
-async def list_sessions():
+async def list_sessions() -> dict:
     """Return all chat sessions ordered by most recent activity.
 
     Returns:
@@ -229,7 +232,7 @@ def _build_blocks(messages: list[dict]) -> list[dict] | None:
 
 
 @router.get("/sessions/{session_id}")
-async def get_session(session_id: str):
+async def get_session(session_id: str) -> dict:
     """Return the full message history of a session.
 
     Messages are grouped by turn. Each **assistant turn** is collapsed
@@ -335,7 +338,7 @@ async def get_session(session_id: str):
 
 
 @router.delete("/sessions/{session_id}")
-async def delete_session(session_id: str):
+async def delete_session(session_id: str) -> dict:
     """Delete a session and all its messages.
 
     Args:

@@ -77,12 +77,27 @@ class ExportRequest(BaseModel):
 # Markdown rendering helpers (mirror of conversationExport.ts)
 # ---------------------------------------------------------------------------
 def _escape_code_block(text: str) -> str:
-    """Escape triple backticks so they are safe inside a fenced code block."""
+    """Escape triple backticks so they are safe inside a fenced code block.
+
+    Args:
+        text: Text to escape.
+
+    Returns:
+        The escaped text.
+    """
     return text.replace("```", "\\`\\`\\`")
 
 
 def _render_block(block: ContentBlock, index: int) -> str:
-    """Render a single content block to Markdown."""
+    """Render a single content block to Markdown.
+
+    Args:
+        block: The content block (text, reasoning or tool call).
+        index: Position of the block inside its message.
+
+    Returns:
+        The Markdown text of the block.
+    """
     if block.type == "reasoning":
         content = (block.content or "").strip()
         if not content:
@@ -120,7 +135,14 @@ def _render_block(block: ContentBlock, index: int) -> str:
 
 
 def _render_subagent_events(events: dict[str, Any] | None) -> str:
-    """Render sub-agent events (for the ``task`` tool) to Markdown."""
+    """Render sub-agent events (for the ``task`` tool) to Markdown.
+
+    Args:
+        events: Events of the sub-agent, or None.
+
+    Returns:
+        The Markdown text, or an empty string when there are no events.
+    """
     if not events:
         return ""
     out = ""
@@ -171,7 +193,15 @@ def _render_subagent_events(events: dict[str, Any] | None) -> str:
 
 
 def _render_message(msg: Message, index: int) -> str:
-    """Render a single message to Markdown."""
+    """Render a single message to Markdown.
+
+    Args:
+        msg: The message.
+        index: Position of the message in the conversation.
+
+    Returns:
+        The Markdown text of the message.
+    """
     role = "Usuario" if msg.type == "user" else "Asistente"
     out = f"---\n\n## Mensaje {index + 1}: {role}\n\n"
 
@@ -227,7 +257,15 @@ def _render_message(msg: Message, index: int) -> str:
 
 
 def conversation_to_markdown(messages: list[Message], title: str = "Conversación") -> str:
-    """Convert a list of messages to a Markdown string (mirror of the frontend)."""
+    """Convert a list of messages to a Markdown string (mirror of the frontend).
+
+    Args:
+        messages: Messages of the conversation.
+        title: Title of the document.
+
+    Returns:
+        The Markdown document.
+    """
     now = datetime.now().isoformat()
     md = f"# {title}\n\n"
     md += f"> Exportado el: {now}\n\n"

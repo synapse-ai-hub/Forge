@@ -26,7 +26,11 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 from backend.agent.agent import Agent
-from backend.agent.loop import _ROUTER_TOOLS, _load_router_permissions
+from backend.agent.loop import (
+    _ROUTER_TOOLS,
+    _load_router_permissions,
+    _router_tool_permissions,
+)
 from backend.agent.utils.config_dir import get_config_dir
 from backend.agent.utils.loop_helpers import build_system_prompt
 from backend.agent.utils.skill_loader import format_skills_section
@@ -35,8 +39,8 @@ from backend.agent.utils.skill_loader import format_skills_section
 def build_parent_tools(agent: Agent) -> list[dict[str, Any]]:
     """Rebuild the parent-agent tools array, verbatim as loop.py does.
 
-    The parent agent is the router: if ``config.yaml`` defines router
-    permissions they are used exclusively, otherwise the guaranteed
+    The parent agent is the router: if the ``router_config`` table
+    defines a selection it is used exclusively, otherwise the guaranteed
     floor applies. The array is resolved through the real
     ``tools_registry`` — the same array the LLM receives for native
     function calling. Real code, no mocks.
@@ -47,25 +51,7 @@ def build_parent_tools(agent: Agent) -> list[dict[str, Any]]:
     Returns:
         List of tool schemas in API format.
     """
-    router_perms = _load_router_permissions()
-    if router_perms is not None:
-        # config.yaml defines permissions — use them exclusively.
-        tool_permissions: dict[str, Any] = {}
-        for name, action in (router_perms.get("tools") or {}).items():
-            tool_permissions[name] = action
-        tasks_perms = router_perms.get("tasks")
-        if isinstance(tasks_perms, dict) and tasks_perms:
-            tool_permissions["task"] = tasks_perms
-    else:
-        # No config.yaml — use the guaranteed floor.
-        tool_permissions = {
-            "task": "allow",
-            "help": "allow",
-            "search_memory": "allow",
-            "read": "allow",
-            "websearch": "allow",
-            "webfetch": "allow",
-        }
+    tool_permissions = _router_tool_permissions(_load_router_permissions())
     try:
         return list(agent.tools.tools_registry(tool_permissions))
     except AttributeError:

@@ -1,13 +1,12 @@
-"""
-Script para hacer push rápido con rebase automático.
+"""Quick push with automatic rebase.
 
-Uso:
-    python .commands/commands/quick_push.py -m "mensaje del commit" -b main
+Usage:
+    python .commands/commands/quick_push.py -m "commit message" -b main
     python .commands/commands/quick_push.py -m "fix bug" -b develop
-    
-Parámetros:
-    -m : Mensaje del commit (requerido)
-    -b : Rama a la que hacer push (opcional, default: main)
+
+Parameters:
+    -m: Commit message (required).
+    -b: Branch to push to (optional, default: main).
 """
 import sys
 import subprocess
@@ -15,15 +14,14 @@ import argparse
 
 
 def run_command(command: str, description: str) -> bool:
-    """
-    Ejecuta un comando git y maneja errores.
-    
+    """Run a git command and handle errors.
+
     Args:
-        command: Comando a ejecutar
-        description: Descripción para mostrar
-        
+        command: Command to run.
+        description: Description to show.
+
     Returns:
-        True si exitoso, False si falla
+        True if it succeeded, False if it fails.
     """
     print(f"→ {description}...")
     
@@ -46,8 +44,12 @@ def run_command(command: str, description: str) -> bool:
         return False
 
 
-def main():
-    """Función principal"""
+def main() -> bool:
+    """Parse the arguments, commit, rebase and push.
+
+    Returns:
+        True if the push succeeded, False otherwise.
+    """
     parser = argparse.ArgumentParser(
         description='Push rápido con rebase automático',
         formatter_class=argparse.RawDescriptionHelpFormatter,

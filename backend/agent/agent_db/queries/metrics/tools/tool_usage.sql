@@ -1,7 +1,15 @@
--- Tool usage: call count and average execution time per tool name.
--- {TIME_CLAUSE} : filter on messages.created_at.
+-- Tool usage: call count and average execution time per tool name. It counts the tool calls of the
+-- agents (messages) and, in the workflows (workflow_runs), the nodes that run a tool (run is shell)
+-- and the tools an agent node called.
+-- {TIME_CLAUSE} : filter on created_at.
 SELECT tool_name, COUNT(*) AS cnt, AVG(total_time) AS avg_time
-FROM messages
-WHERE tool_name IS NOT NULL AND tool_name != '' {TIME_CLAUSE}
+FROM (
+    SELECT tool_name, total_time, created_at FROM messages
+    WHERE tool_name IS NOT NULL AND tool_name != ''
+    UNION ALL
+    SELECT tool_name, total_time, started_at AS created_at FROM workflow_runs
+    WHERE kind IN ('node', 'tool') AND tool_name IS NOT NULL
+)
+WHERE 1=1 {TIME_CLAUSE}
 GROUP BY tool_name
 ORDER BY cnt DESC;

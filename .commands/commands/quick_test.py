@@ -1,21 +1,20 @@
-"""
-Script para correr tests E2E rapidamente.
+"""Run the E2E tests quickly.
 
-Uso:
-    python .commands/commands/quick_test.py              # Todos los escenarios
-    python .commands/commands/quick_test.py rag          # Solo escenarios con "rag" en el nombre
-    python .commands/commands/quick_test.py scheduler    # Solo escenarios con "scheduler"
+Usage:
+    python .commands/commands/quick_test.py              # All the scenarios
+    python .commands/commands/quick_test.py rag          # Only scenarios with "rag" in the name
+    python .commands/commands/quick_test.py scheduler    # Only scenarios with "scheduler"
 
-Parametros:
-    scenario : Substring para filtrar escenarios (opcional, default: todos)
-    --url    : Backend base URL (opcional, default: http://127.0.0.1:8000)
+Parameters:
+    scenario: Substring to filter the scenarios (optional, default: all).
+    --url: Backend base URL (optional, default: http://127.0.0.1:8000).
 """
 import sys
 import subprocess
 import argparse
 
 
-def main():
+def main() -> None:
     """Funcion principal"""
     parser = argparse.ArgumentParser(
         description="Correr tests E2E del proyecto",

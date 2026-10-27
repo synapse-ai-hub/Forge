@@ -1,8 +1,8 @@
-"""Workflow runs: execution, retry/resume, cancel, notifications and permissions.
+"""Workflow runs: execution, retry/resume, cancel and notifications.
 
-Runs the real ``WorkflowService``/``WorkflowRunner``, the real routes' helpers
-and the real ``execute_tool`` against an isolated SQLite database and an
-isolated workflows folder in a temp directory, so the user's ``agent.db`` and
+Runs the real ``WorkflowService``/``WorkflowRunner`` and the real routes'
+helpers against an isolated SQLite database and an isolated workflows folder
+in a temp directory, so the user's ``agent.db`` and
 ``~/.config/synapseForge/workflows`` are never touched. Nodes are ``run``
 nodes (shell commands), so no LLM is needed: without a selected model the
 judge and the failure explainer take their fallback paths.
@@ -21,18 +21,31 @@ import backend.agent.utils.error_logger as error_logger
 import backend.agent.utils.workflow_loader as loader
 import backend.agent.utils.workflow_service as service_module
 import backend.agent.utils.workflows_helpers as helpers
-from backend.agent.permissions import filter_tools, get_tool_permissions, is_tool_allowed
 from backend.agent.utils import notifications_helpers, workflow_db
-from backend.agent.utils.loop_helpers import _tool_call_ctx, execute_tool
 from backend.agent.utils.workflow_service import WorkflowService
-from backend.instances import agent, session_manager
+from backend.instances import session_manager
+from pathlib import Path
+from collections.abc import Awaitable, Callable, Coroutine, Iterator, AsyncIterator
+from typing import Any
 
 PY = sys.executable.replace("\\", "/")
 
+WorkflowEnv = tuple[WorkflowService, Callable[[str, str], None], Callable[..., list[dict]], Path]
+"""Fixture ``env``: service, workflow writer, database query function and temporary directory."""
+
 
 @pytest.fixture()
-def env(tmp_path, monkeypatch):
-    """Isolated DB and workflows folder; returns ``(service, helpers)``."""
+def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[WorkflowEnv]:
+    """Isolate the database and the workflows folder.
+
+    Args:
+        tmp_path: Temporary directory of the test.
+        monkeypatch: Pytest monkeypatch fixture.
+
+    Yields:
+        ``(service, write, query, tmp_path)``: the workflow service, a function that writes a
+        workflow YAML, a function that queries the temporary database, and the directory.
+    """
     db_file = str(tmp_path / "agent.db")
     wf_dir = tmp_path / "workflows"
     wf_dir.mkdir()
@@ -50,9 +63,24 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(service_module, "workflow_service", svc)
 
     def write(name: str, text: str) -> None:
+        """Write a workflow YAML in the temporary workflows folder.
+
+        Args:
+            name: Workflow name.
+            text: YAML text.
+        """
         (wf_dir / f"{name}.yaml").write_text(text, encoding="utf-8")
 
     def query(sql: str, args: tuple = ()) -> list[dict]:
+        """Run a query on the temporary database.
+
+        Args:
+            sql: SQL to run.
+            args: Query parameters.
+
+        Returns:
+            One dict per row.
+        """
         conn = sqlite3.connect(db_file)
         conn.row_factory = sqlite3.Row
         try:
@@ -70,11 +98,25 @@ def env(tmp_path, monkeypatch):
         error_logger._conn = None
 
 
-def _run(coro):
+def _run(coro: Coroutine[Any, Any, Any]) -> Any:
+    """Run a coroutine to completion.
+
+    Args:
+        coro: Coroutine to run.
+
+    Returns:
+        Its result.
+    """
     return asyncio.run(coro)
 
 
-def _simple_flow(write, name: str = "ok-flow") -> None:
+def _simple_flow(write: Callable[[str, str], None], name: str = "ok-flow") -> None:
+    """Write a workflow with two parallel nodes and a final one.
+
+    Args:
+        write: Function that writes a workflow YAML.
+        name: Workflow name.
+    """
     write(name, f"""
 name: {name}
 description: dos nodos en paralelo y uno final
@@ -85,11 +127,21 @@ nodes:
 """)
 
 
-def test_success_persists_run_steps_session_and_notification(env):
+def test_success_persists_run_and_notification_without_a_session(env: WorkflowEnv) -> None:
+    """Success persists the run and its notification, and never opens a session nor writes in messages.
+
+    Args:
+        env: Workflow service, workflow writer, database query function and temporary directory.
+    """
     svc, write, query, _ = env
     _simple_flow(write)
 
-    async def go():
+    async def go() -> tuple[dict, dict]:
+        """Start ``ok-flow`` and wait for it.
+
+        Returns:
+            ``(started, outcome)``.
+        """
         started = await svc.start_run("ok-flow")
         assert started["ok"], started
         return started, await started["task"]
@@ -98,14 +150,22 @@ def test_success_persists_run_steps_session_and_notification(env):
     assert outcome["status"] == "success"
     assert "FIN" in outcome["result"]
 
-    run = query("select * from workflow_runs where id=?", (started["run_id"],))[0]
+    run = query("select * from workflow_runs where run_id=? and kind='run'", (started["run_id"],))[0]
     assert run["status"] == "success" and run["attempt"] == 1 and run["source"] == "play"
-    steps = query("select node_id,state from workflow_run_steps where run_id=? order by id", (started["run_id"],))
-    assert {(s["node_id"], s["state"]) for s in steps} == {("a", "done"), ("b", "done"), ("fin", "done")}
+    # What ended well is deleted: a finished run keeps no node commits.
+    assert query("select node_id,state from workflow_run_steps where run_id=?", (started["run_id"],)) == []
+    # Every node keeps its own row in workflow_runs, with the substep of its position inside the step.
+    nodes = query(
+        "select node_id,step,substep,status from workflow_runs where run_id=? and kind='node' order by id",
+        (started["run_id"],),
+    )
+    assert sorted((n["node_id"], n["step"], n["substep"], n["status"]) for n in nodes) == [
+        ("a", 1, 0, "success"), ("b", 1, 1, "success"), ("fin", 2, 0, "success"),
+    ]
     assert query("select name from workflows") == [{"name": "ok-flow"}]
 
-    session = query("select title,parent_id from sessions where session_id=?", (started["run_id"],))[0]
-    assert session["parent_id"] is None and session["title"].startswith("ok-flow — ")
+    assert query("select session_id from sessions") == [], "a run never opens a session"
+    assert query("select id from messages") == [], "a run never writes in messages"
 
     notifications = notifications_helpers.list_notifications()
     assert len(notifications) == 1
@@ -113,7 +173,12 @@ def test_success_persists_run_steps_session_and_notification(env):
     assert notifications[0]["workflow_name"] == "ok-flow" and notifications[0]["run_id"] == started["run_id"]
 
 
-def test_failing_node_retries_resuming_from_the_failed_node(env):
+def test_failing_node_retries_resuming_from_the_failed_node(env: WorkflowEnv) -> None:
+    """Failing node retries resuming from the failed node.
+
+    Args:
+        env: Workflow service, workflow writer, database query function and temporary directory.
+    """
     svc, write, query, tmp = env
     marker = (tmp / "marker.txt").as_posix()
     counter = (tmp / "counter.txt").as_posix()
@@ -133,7 +198,12 @@ nodes:
   run: '"{PY}" -c "import os,sys; p=r\\"{marker}\\"; ok=os.path.exists(p); open(p,\\"w\\").write(\\"1\\"); sys.exit(0 if ok else 3)"'
 """)
 
-    async def go():
+    async def go() -> tuple[dict, dict]:
+        """Start ``retry-flow`` and wait for it.
+
+        Returns:
+            ``(started, outcome)``.
+        """
         started = await svc.start_run("retry-flow")
         return started, await started["task"]
 
@@ -144,10 +214,15 @@ nodes:
     assert [(s["node_id"], s["state"], s["attempt"]) for s in steps] == [
         ("a", "done", 1), ("b", "failed", 1), ("b", "done", 2),
     ]
-    assert query("select attempt from workflow_runs where id=?", (started["run_id"],))[0]["attempt"] == 2
+    assert query("select attempt from workflow_runs where run_id=? and kind='run'", (started["run_id"],))[0]["attempt"] == 2
 
 
-def test_definitive_failure_uses_three_attempts_logs_and_notifies(env):
+def test_definitive_failure_uses_three_attempts_logs_and_notifies(env: WorkflowEnv) -> None:
+    """Definitive failure uses three attempts logs and notifies.
+
+    Args:
+        env: Workflow service, workflow writer, database query function and temporary directory.
+    """
     svc, write, query, _ = env
     write("fail-flow", f"""
 name: fail-flow
@@ -161,14 +236,19 @@ nodes:
   run: '"{PY}" -c "import sys; sys.exit(5)"'
 """)
 
-    async def go():
+    async def go() -> tuple[dict, dict]:
+        """Start ``fail-flow`` and wait for it.
+
+        Returns:
+            ``(started, outcome)``.
+        """
         started = await svc.start_run("fail-flow")
         return started, await started["task"]
 
     started, outcome = _run(go())
     assert outcome["status"] == "error"
     assert outcome["error_text"], "the user gets an explanation (generic when no LLM is available)"
-    run = query("select * from workflow_runs where id=?", (started["run_id"],))[0]
+    run = query("select * from workflow_runs where run_id=? and kind='run'", (started["run_id"],))[0]
     assert run["status"] == "error" and run["attempt"] == 3 and run["error_text"]
     assert [s["state"] for s in query("select state from workflow_run_steps where run_id=? order by id", (started["run_id"],))] == ["failed"] * 3
     logged = query("select exception from error_log where source like 'workflow_service%'")
@@ -177,7 +257,12 @@ nodes:
     assert notification["status"] == "error" and notification["message"] == outcome["error_text"]
 
 
-def test_cancel_is_persisted_without_notification_and_blocks_a_second_play(env):
+def test_cancel_is_persisted_without_notification_and_blocks_a_second_play(env: WorkflowEnv) -> None:
+    """Cancel is persisted without notification and blocks a second play.
+
+    Args:
+        env: Workflow service, workflow writer, database query function and temporary directory.
+    """
     svc, write, query, _ = env
     write("slow-flow", f"""
 name: slow-flow
@@ -192,7 +277,12 @@ nodes:
   run: '"{PY}" -c "import time; time.sleep(40)"'
 """)
 
-    async def go():
+    async def go() -> tuple[dict, dict, dict]:
+        """Start ``slow-flow`` twice, cancel the first run and wait for it.
+
+        Returns:
+            ``(started, second, outcome)``.
+        """
         started = await svc.start_run("slow-flow")
         second = await svc.start_run("slow-flow")
         await asyncio.sleep(1.5)
@@ -202,11 +292,16 @@ nodes:
     started, second, outcome = _run(go())
     assert second["ok"] is False and second["code"] == "conflict"
     assert outcome["status"] == "cancelled"
-    assert query("select status from workflow_runs where id=?", (started["run_id"],))[0]["status"] == "cancelled"
+    assert query("select status from workflow_runs where run_id=? and kind='run'", (started["run_id"],))[0]["status"] == "cancelled"
     assert notifications_helpers.list_notifications() == []
 
 
-def test_missing_reference_does_not_create_a_run(env):
+def test_missing_reference_does_not_create_a_run(env: WorkflowEnv) -> None:
+    """Missing reference does not create a run.
+
+    Args:
+        env: Workflow service, workflow writer, database query function and temporary directory.
+    """
     svc, write, query, _ = env
     write("broken", """
 name: broken
@@ -220,17 +315,25 @@ nodes:
     assert query("select * from workflow_runs") == []
 
 
-def test_interrupted_run_resumes_from_the_last_committed_node(env):
+def test_interrupted_run_resumes_from_the_last_committed_node(env: WorkflowEnv) -> None:
+    """Interrupted run resumes from the last committed node.
+
+    Args:
+        env: Workflow service, workflow writer, database query function and temporary directory.
+    """
     svc, write, query, _ = env
     _simple_flow(write)
-    run_id = workflow_db.create_run("ok-flow", None, None, "play")
-    session_manager.create_session(run_id, metadata={"source": "workflow"})
-    workflow_db.set_run_session(run_id, run_id)
+    run_id = workflow_db.create_run("ok-flow", None, "play")
     first = workflow_db.open_step(run_id, 1, 1, 0, "a", "run", {})
     workflow_db.commit_step(first, '"A"')
     workflow_db.open_step(run_id, 1, 1, 1, "b", "run", {})  # in flight when the backend died
 
-    async def go():
+    async def go() -> int:
+        """Resume the interrupted runs and wait until none is active.
+
+        Returns:
+            What ``resume_interrupted`` returned.
+        """
         resumed = await svc.resume_interrupted()
         for _ in range(100):
             if not svc._active:
@@ -239,7 +342,7 @@ def test_interrupted_run_resumes_from_the_last_committed_node(env):
         return resumed
 
     assert _run(go()) == 1
-    run = query("select status,attempt from workflow_runs where id=?", (run_id,))[0]
+    run = query("select status,attempt from workflow_runs where run_id=? and kind='run'", (run_id,))[0]
     assert run["status"] == "success" and run["attempt"] == 2
     steps = query("select node_id,state,attempt from workflow_run_steps where run_id=? order by id", (run_id,))
     assert [(s["node_id"], s["state"], s["attempt"]) for s in steps] == [
@@ -247,46 +350,12 @@ def test_interrupted_run_resumes_from_the_last_committed_node(env):
     ]
 
 
-def test_workflow_tool_respects_permissions_and_hangs_from_the_caller(env):
-    svc, write, query, _ = env
-    _simple_flow(write)
-    _simple_flow(write, "other-flow")
+def test_notifications_read_delete_and_clear(env: WorkflowEnv) -> None:
+    """Notifications read delete and clear.
 
-    async def go():
-        session_manager.create_session("caller-1")
-        token = _tool_call_ctx.set({
-            "parent_session_id": "caller-1",
-            "tool_permissions": {"workflow": {"ok-flow": "allow"}},
-        })
-        try:
-            allowed = await execute_tool(agent, {"name": "workflow", "args": {"name": "ok-flow"}})
-            denied = await execute_tool(agent, {"name": "workflow", "args": {"name": "other-flow"}})
-        finally:
-            _tool_call_ctx.reset(token)
-        return allowed, denied
-
-    allowed, denied = _run(go())
-    assert allowed["status"] == "success" and "<workflow id=" in allowed["data"]
-    assert denied["status"] == "error" and "Permission denied" in denied["message"]
-    child = query("select parent_id from sessions where parent_id='caller-1'")
-    assert len(child) == 1, "the run session hangs from the caller session"
-    assert notifications_helpers.list_notifications() == [], "runs called by an agent do not notify"
-
-
-def test_workflows_permission_block_and_enum():
-    perms = {"workflow": {"nightly": "allow", "other": "deny"}, "read": "allow"}
-    assert is_tool_allowed(perms, "workflow", {"name": "nightly"}) is True
-    assert is_tool_allowed(perms, "workflow", {"name": "other"}) is False
-    assert is_tool_allowed(perms, "workflow", {"name": "missing"}) is False
-
-    registry = agent.tools.tools_registry(perms)
-    tool = next(t for t in registry if t["function"]["name"] == "workflow")
-    assert tool["function"]["parameters"]["properties"]["name"]["enum"] == ["nightly"]
-    assert filter_tools(agent.tools._tools_registry, {"read": "allow"}) != []
-    assert all(t["function"]["name"] != "workflow" for t in filter_tools(agent.tools._tools_registry, {"read": "allow"}))
-
-
-def test_notifications_read_delete_and_clear(env):
+    Args:
+        env: Workflow service, workflow writer, database query function and temporary directory.
+    """
     _, _, _, _ = env
     workflow_db.ensure_workflow("wf")
     first = notifications_helpers.add_notification(
@@ -303,32 +372,28 @@ def test_notifications_read_delete_and_clear(env):
     assert notifications_helpers.list_notifications() == []
 
 
-def test_notification_requires_exactly_one_origin(env):
+def test_notification_requires_exactly_one_origin(env: WorkflowEnv) -> None:
+    """Notification requires exactly one origin.
+
+    Args:
+        env: Workflow service, workflow writer, database query function and temporary directory.
+    """
     _, _, _, _ = env
     assert notifications_helpers.add_notification("workflow", "x", "success", "m") is None
     assert notifications_helpers.add_notification(
-        "workflow", "x", "success", "m", workflow_name="wf", task_id="t") is None
+        "workflow", "x", "success", "m", workflow_name="not-registered") is None
 
 
-def test_agent_frontmatter_workflows_block_becomes_the_workflow_permission(tmp_path, monkeypatch):
-    import backend.agent.permissions as permissions
+def test_delete_workflow_removes_file_runs_commits_and_notifications(
+    env: WorkflowEnv,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Delete workflow removes file runs commits and notifications.
 
-    agents_dir = tmp_path / "agents"
-    agents_dir.mkdir()
-    (agents_dir / "ops.md").write_text(
-        "---\nname: ops\ndescription: d\npermissions:\n  tools:\n    read: allow\n"
-        "  workflows:\n    nightly: allow\n---\nbody\n",
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(permissions, "get_agents_dir", lambda: agents_dir)
-    result = get_tool_permissions("ops")
-    assert result["status"] == "success"
-    import json
-
-    assert json.loads(result["data"]) == {"read": "allow", "workflow": {"nightly": "allow"}}
-
-
-def test_delete_workflow_removes_file_runs_commits_and_notifications(env, monkeypatch):
+    Args:
+        env: Workflow service, workflow writer, database query function and temporary directory.
+        monkeypatch: Pytest monkeypatch fixture.
+    """
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
@@ -340,13 +405,14 @@ def test_delete_workflow_removes_file_runs_commits_and_notifications(env, monkey
     _simple_flow(write, "borrable")
     _simple_flow(write, "queda")
 
-    async def go():
+    async def go() -> None:
+        """Run the ``borrable`` and ``queda`` workflows to completion."""
         for name in ("borrable", "queda"):
             started = await svc.start_run(name)
             await started["task"]
 
     _run(go())
-    assert len(query("select 1 from workflow_runs")) == 2
+    assert len(query("select 1 from workflow_runs where kind='run'")) == 2
 
     app = FastAPI()
     app.include_router(routes.router, prefix="/api")
@@ -358,12 +424,12 @@ def test_delete_workflow_removes_file_runs_commits_and_notifications(env, monkey
     assert response.status_code == 200
     assert not (tmp / "workflows" / "borrable.yaml").exists()
     for table, column in (("workflows", "name"), ("workflow_runs", "workflow_name"),
-                          ("notifications", "workflow_name"), ("workflow_usage", "workflow_name")):
+                          ("notifications", "workflow_name")):
         assert query(f"select 1 from {table} where {column}=?", ("borrable",)) == []
-    assert query("select 1 from workflow_run_steps where run_id in (select id from workflow_runs where workflow_name='borrable')") == []
+    assert query("select 1 from workflow_run_steps where run_id in (select run_id from workflow_runs where workflow_name='borrable')") == []
     # The other workflow keeps everything.
     assert (tmp / "workflows" / "queda.yaml").exists()
-    assert len(query("select 1 from workflow_runs where workflow_name='queda'")) == 1
+    assert len(query("select 1 from workflow_runs where workflow_name='queda' and kind='run'")) == 1
     assert len(query("select 1 from notifications where workflow_name='queda'")) == 1
-    assert len(query("select 1 from workflow_run_steps")) == 3
+    assert query("select 1 from workflow_run_steps") == []  # a run that ended well keeps no commits
 

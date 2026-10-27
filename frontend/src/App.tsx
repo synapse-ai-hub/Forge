@@ -25,6 +25,7 @@ import configService from "./services/configService";
 import telegramService from "./services/telegramService";
 import chatService from "./services/chatService";
 import notificationService, { type AppNotification } from "./services/notificationService";
+import { NotificationModal } from "./components/NotificationModal";
 import { API_BASE_URL } from "./config/api";
 
 export type { ContentBlock };
@@ -63,6 +64,8 @@ export interface Message {
   turn?: number;
   /** User message the guardrail blocked (rendered in red). */
   blocked?: boolean;
+  /** Transient "retrying…" notice while streaming; never part of the answer. */
+  retryNotice?: string | null;
 }
 
 /** Generate a unique ID with safe fallback when crypto is unavailable. */
@@ -74,9 +77,11 @@ function generateId(): string {
 }
 
 /** Map backend session messages to the frontend Message shape. */
-function mapSessionMessages(raw: SessionMessage[]): Message[] {
+function mapSessionMessages(raw: SessionMessage[], sessionId: string): Message[] {
   return raw.map((m) => ({
-    id: m.id,
+    // El backend numera las respuestas `turn-N` en cada sesión; sin el id de
+    // sesión React reutiliza las burbujas (y el estado de sus tools) al cambiar.
+    id: `${sessionId}:${m.id}`,
     type: m.type,
     turn: m.turn_number ?? undefined,
     content: m.type === "user" ? m.content : "",
@@ -302,7 +307,7 @@ const handleTelegramToggle = useCallback((val: boolean) => {
     try {
       const data = await sessionService.getSession(id);
       setCurrentSessionId(id);
-      setMessages([WELCOME_MESSAGE, ...mapSessionMessages(data.messages)]);
+      setMessages([WELCOME_MESSAGE, ...mapSessionMessages(data.messages, id)]);
       setIsStreaming(false);
       // Restore the context-window gauge from the saved session data
       const ctx = data.context;
@@ -332,10 +337,47 @@ const handleTelegramToggle = useCallback((val: boolean) => {
     setShowSidebarMenu((prev) => !prev);
   }, []);
 
+  /* Clicking a notification opens a window with its complete output. */
+  const [openedNotification, setOpenedNotification] = useState<AppNotification | null>(null);
+  /**
+   * Open the window with the complete output of a notification.
+   *
+   * @param n - Notification the user clicked.
+   */
+  const handleSelectNotification = useCallback((n: AppNotification): void => {
+    setOpenedNotification(n);
+  }, []);
+  /** Close the window of the notification. */
+  const handleCloseNotification = useCallback((): void => setOpenedNotification(null), []);
+  /* "Revisar con el agente": the new conversation (with the output) shows up in the sidebar. */
+  /**
+   * Show the conversation created by "Revisar con el agente" in the sidebar and open it.
+   *
+   * @param sessionId - Session created with the output as context.
+   */
+  const handleReviewed = useCallback(
+    (sessionId: string): void => {
+      setRefreshTrigger((t) => t + 1);
+      handleSelectSession(sessionId);
+    },
+    [handleSelectSession]
+  );
+
   // Listen to backend events (SSE) so Telegram messages/commands run the
   // exact same chat flow as if the user had typed in the web UI.
   useEffect(() => {
     const es = new EventSource(`${API_BASE_URL}/api/events`);
+    let connectedBefore = false;
+    es.onopen = () => {
+      // The events emitted while the connection was down (a backend restart)
+      // are lost: on reconnect, ask for the current state instead.
+      if (connectedBefore) {
+        notificationService.list().then(setNotifications).catch(() => {});
+        window.dispatchEvent(new CustomEvent("workflow-run"));
+        setRefreshTrigger((t) => t + 1);
+      }
+      connectedBefore = true;
+    };
     es.onmessage = (ev) => {
       let data: any;
       try {
@@ -380,18 +422,14 @@ const handleTelegramToggle = useCallback((val: boolean) => {
         window.dispatchEvent(new CustomEvent("model-changed"));
       } else if (data.type === "notification") {
         // A workflow run or a scheduled task finished: persisted by the
-        // backend. Add it to the bell and refresh the sidebar so the session
-        // of the execution shows up.
+        // backend. Add it to the bell (a run never opens a session).
         const incoming = data.content as AppNotification;
         setNotifications((prev) =>
           prev.some((n) => n.id === incoming.id) ? prev : [incoming, ...prev]
         );
-        setRefreshTrigger((t) => t + 1);
       } else if (data.type === "workflow_run") {
-        // A workflow run changed state: tell the workflow cards and refresh
-        // the sidebar (the run session appears when it starts).
+        // A workflow run changed state: tell the workflow cards.
         window.dispatchEvent(new CustomEvent("workflow-run", { detail: data.content }));
-        setRefreshTrigger((t) => t + 1);
       } else if (data.type === "telegram_create") {
         // Telegram as remote control ("or"): open/close the same create window
         // (skill.html / rag.html / tool.html) the user would open from the web UI.
@@ -471,8 +509,15 @@ const handleTelegramToggle = useCallback((val: boolean) => {
           onOpenNotifications={handleOpenNotifications}
           onDeleteNotification={handleDeleteNotification}
           onClearNotifications={handleClearNotifications}
+          onSelectNotification={handleSelectNotification}
         />
       </div>
+
+      <NotificationModal
+        notification={openedNotification}
+        onClose={handleCloseNotification}
+        onReviewed={handleReviewed}
+      />
 
       <HistoryModal
         open={showHistory}

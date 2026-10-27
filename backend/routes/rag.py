@@ -22,7 +22,7 @@ import time
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, File, UploadFile
+from fastapi import APIRouter, File, Form, UploadFile
 from pydantic import BaseModel
 
 # ---------------------------------------------------------------------------
@@ -41,6 +41,7 @@ from backend.agent.utils.contract import (
     zero_usage,
 )
 from backend.agent.utils.rag_helpers import (
+    INTERNAL_COLLECTIONS,
     MAX_BYTES,
     MAX_FILES,
     fetch_url_content,
@@ -71,13 +72,71 @@ class AddUrlRequest(BaseModel):
     """Request to add a web page to a collection."""
 
     url: str
+    # Any: se validan manualmente en _resolve_chunking para devolver
+    # errores en español dentro del contrato (en vez del 422 de Pydantic).
+    chunk_size: Any = None
+    overlap: Any = None
+
+
+DEFAULT_CHUNK_SIZE = 500
+DEFAULT_OVERLAP = 60
+
+
+def _parse_chunk_int(value: Any, default: int, name: str) -> int | str:
+    """Parse one chunking param, accepting int or numeric string.
+
+    Args:
+        value: Raw value (None = default).
+        default: Default when ``value`` is None.
+        name: ``"chunk"`` or ``"overlap"`` (used in the error message).
+
+    Returns:
+        Parsed int, or an error message (str) in Spanish if invalid.
+    """
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        pass  # falls through to the integer error below
+    elif isinstance(value, int):
+        return value
+    elif isinstance(value, str):
+        try:
+            return int(value.strip())
+        except (ValueError, AttributeError):
+            pass
+    if name == "chunk":
+        return "El tamaño de chunk debe ser un entero mayor a 0."
+    return "El overlap debe ser un entero mayor o igual a 0."
+
+
+def _resolve_chunking(chunk_size: Any, overlap: Any) -> tuple[int, int] | str:
+    """Resolve and validate chunking params, falling back to defaults.
+
+    Args:
+        chunk_size: Desired chunk size in chars (None = default).
+        overlap: Desired overlap in chars (None = default).
+
+    Returns:
+        ``(chunk_size, overlap)`` tuple, or an error message (str) if invalid.
+    """
+    size = _parse_chunk_int(chunk_size, DEFAULT_CHUNK_SIZE, "chunk")
+    if isinstance(size, str):
+        return size
+    if size <= 0:
+        return "El tamaño de chunk debe ser un entero mayor a 0."
+    ov = _parse_chunk_int(overlap, DEFAULT_OVERLAP, "overlap")
+    if isinstance(ov, str):
+        return ov
+    if ov < 0:
+        return "El overlap debe ser un entero mayor o igual a 0."
+    return (size, ov)
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────
 
 
 @router.post("/collections")
-async def create_collection(req: CreateCollectionRequest):
+async def create_collection(req: CreateCollectionRequest) -> dict:
     """Create a new vector collection.
 
     Args:
@@ -115,22 +174,20 @@ async def create_collection(req: CreateCollectionRequest):
 
 
 @router.get("/collections")
-async def list_collections():
+async def list_collections() -> dict:
     """List all available collections.
 
     Returns:
         Contract with the list of collections (name, metadata, count).
-        Excludes internal collections like agent_conversations.
+        Excludes internal collections (agent_conversations, help).
     """
     try:
-        from backend.agent.utils.rag_helpers import MEMORY_COLLECTION
-
         db = get_vector_db()
         collections = db.list_collections()
         result = []
         for c in collections:
             # Skip internal collections
-            if c["name"] == MEMORY_COLLECTION:
+            if c["name"] in INTERNAL_COLLECTIONS:
                 continue
             try:
                 info = db.get_collection_info(c["name"])
@@ -150,7 +207,7 @@ async def list_collections():
 
 
 @router.get("/collections/embedding-compatibility")
-async def get_embedding_compatibility():
+async def get_embedding_compatibility() -> dict:
     """Classify collections by embedding-model compatibility.
 
     Collections created with an older embedding model hold vectors
@@ -177,7 +234,7 @@ async def get_embedding_compatibility():
 
 
 @router.post("/collections/{name}/reindex")
-async def reindex_collection_endpoint(name: str):
+async def reindex_collection_endpoint(name: str) -> dict:
     """Reindex a collection with the current embedding model.
 
     Reads every stored chunk, embeds everything up front (an embedding
@@ -219,7 +276,7 @@ async def reindex_collection_endpoint(name: str):
 
 
 @router.delete("/collections/{name}")
-async def delete_collection(name: str):
+async def delete_collection(name: str) -> dict:
     """Delete a collection and all its data.
 
     Args:
@@ -253,13 +310,162 @@ async def delete_collection(name: str):
         return make_error_response(message="No se pudo eliminar la colección.")
 
 
+def _source_of(meta: dict[str, Any] | None) -> tuple[str, str]:
+    """Find the source a chunk came from.
+
+    Files carry ``filename`` and web pages ``url``. Chunks with neither
+    (collections created by other means) are grouped under ``("other", "")``.
+
+    Args:
+        meta: Metadata of the chunk.
+
+    Returns:
+        The ``(kind, name)`` of the source.
+    """
+    meta = meta or {}
+    if meta.get("url"):
+        return "url", str(meta["url"])
+    if meta.get("filename"):
+        return "file", str(meta["filename"])
+    return "other", ""
+
+
+def _list_sources_sync(db: VectorDB, name: str) -> list[dict[str, Any]]:
+    """Group the chunks of a collection by source (blocking).
+
+    Args:
+        db: The vector database.
+        name: Collection name.
+
+    Returns:
+        One dict per source with its kind, name and number of chunks.
+    """
+    data = db.get_collection(name).get(include=["metadatas"])
+    counts: dict[tuple[str, str], int] = {}
+    for meta in data.get("metadatas") or []:
+        key = _source_of(meta)
+        counts[key] = counts.get(key, 0) + 1
+    return [
+        {"kind": kind, "name": source, "chunks": chunks}
+        for (kind, source), chunks in sorted(counts.items(), key=lambda item: (item[0][0], item[0][1].lower()))
+    ]
+
+
+def _delete_source_sync(db: VectorDB, name: str, kind: str, source: str) -> int:
+    """Delete every chunk of one source (blocking).
+
+    Args:
+        db: The vector database.
+        name: Collection name.
+        kind: Kind of the source (file, url or other).
+        source: Name of the source.
+
+    Returns:
+        The number of deleted chunks.
+    """
+    data = db.get_collection(name).get(include=["metadatas"])
+    ids = [
+        chunk_id
+        for chunk_id, meta in zip(data.get("ids") or [], data.get("metadatas") or [])
+        if _source_of(meta) == (kind, source)
+    ]
+    if ids:
+        db.delete_documents(name, ids)
+    return len(ids)
+
+
+@router.get("/collections/{name}/sources")
+async def list_sources(name: str) -> dict:
+    """List the sources (files and web pages) of a collection.
+
+    Args:
+        name: Collection name.
+
+    Returns:
+        Contract with ``sources``: ``[{kind, name, chunks}]``.
+    """
+    try:
+        error = validar_nombre_coleccion(name)
+        if error:
+            return make_error_response(message=error)
+        if name in INTERNAL_COLLECTIONS:
+            return make_error_response(message="Las colecciones internas no se administran desde acá.")
+
+        db = get_vector_db()
+        try:
+            db.get_collection(name)
+        except ValueError:
+            return make_error_response(message=f"La colección '{name}' no existe.")
+
+        sources = await asyncio.to_thread(_list_sources_sync, db, name)
+        return validate_response(
+            make_success_response(
+                message=f"{len(sources)} fuente(s) en '{name}'.",
+                data={"sources": sources},
+                usage=zero_usage(),
+            )
+        )
+    except Exception:
+        logger.exception("Error listando fuentes de la colección")
+        return make_error_response(message="No se pudieron listar las fuentes.")
+
+
+@router.delete("/collections/{name}/sources")
+async def delete_source(name: str, kind: str, source: str = "") -> dict:
+    """Delete one source (all its chunks) from a collection.
+
+    Args:
+        name: Collection name.
+        kind: ``file``, ``url`` or ``other`` (as returned by the listing).
+        source: File name or URL of the source (empty for ``other``).
+
+    Returns:
+        Contract with the number of deleted chunks.
+    """
+    try:
+        error = validar_nombre_coleccion(name)
+        if error:
+            return make_error_response(message=error)
+        if name in INTERNAL_COLLECTIONS:
+            return make_error_response(message="Las colecciones internas no se administran desde acá.")
+        if kind not in ("file", "url", "other"):
+            return make_error_response(message="Tipo de fuente inválido.")
+
+        db = get_vector_db()
+        try:
+            db.get_collection(name)
+        except ValueError:
+            return make_error_response(message=f"La colección '{name}' no existe.")
+
+        deleted = await asyncio.to_thread(_delete_source_sync, db, name, kind, source)
+        if deleted == 0:
+            return make_error_response(message="La fuente no existe en la colección.")
+        return validate_response(
+            make_success_response(
+                message=f"Fuente eliminada de '{name}' ({deleted} chunks).",
+                data={"deleted": deleted},
+                usage=zero_usage(),
+            )
+        )
+    except Exception:
+        logger.exception("Error eliminando fuente de la colección")
+        return make_error_response(message="No se pudo eliminar la fuente.")
+
+
 @router.post("/collections/{name}/files")
-async def upload_files(name: str, files: list[UploadFile] = File(...)):
+async def upload_files(
+    name: str,
+    files: list[UploadFile] = File(...),
+    chunk_size: str | None = Form(None),
+    overlap: str | None = Form(None),
+) -> dict:
     """Upload files to a collection: extract text, chunk and store.
 
     Args:
         name: Target collection name.
         files: List of files to process.
+        chunk_size: Chunk size in chars (optional, default 500).
+        overlap: Overlap in chars (optional, default 60).
 
     Returns:
         Contract with the processing details per file.
@@ -268,6 +474,11 @@ async def upload_files(name: str, files: list[UploadFile] = File(...)):
         error = validar_nombre_coleccion(name)
         if error:
             return make_error_response(message=error)
+
+        resolved = _resolve_chunking(chunk_size, overlap)
+        if isinstance(resolved, str):
+            return make_error_response(message=resolved)
+        chunk_size_chars, overlap_chars = resolved
 
         if len(files) > MAX_FILES:
             return make_error_response(
@@ -320,7 +531,11 @@ async def upload_files(name: str, files: list[UploadFile] = File(...)):
                 )
                 continue
 
-            chunks = chunk_file_content(filename, text)
+            chunks = chunk_file_content(
+                filename, text,
+                chunk_size_chars=chunk_size_chars,
+                overlap_chars=overlap_chars,
+            )
             if not chunks:
                 errores.append(
                     {"filename": filename, "error": "No se generaron chunks."}
@@ -371,7 +586,7 @@ async def upload_files(name: str, files: list[UploadFile] = File(...)):
 
 
 @router.post("/collections/{name}/urls")
-async def add_url(name: str, req: AddUrlRequest):
+async def add_url(name: str, req: AddUrlRequest) -> dict:
     """Add a web page to a collection.
 
     Fetches the content, chunks it like any other data and stores it.
@@ -379,7 +594,8 @@ async def add_url(name: str, req: AddUrlRequest):
 
     Args:
         name: Target collection name.
-        req: Body with ``url``.
+        req: Body with ``url`` (required), ``chunk_size`` and ``overlap``
+            (optional, defaults 500/60).
 
     Returns:
         Contract with the details of the added page.
@@ -392,6 +608,11 @@ async def add_url(name: str, req: AddUrlRequest):
         url = (req.url or "").strip()
         if not url:
             return make_error_response(message="La URL es obligatoria.")
+
+        resolved = _resolve_chunking(req.chunk_size, req.overlap)
+        if isinstance(resolved, str):
+            return make_error_response(message=resolved)
+        chunk_size_chars, overlap_chars = resolved
 
         db = get_vector_db()
         try:
@@ -416,7 +637,11 @@ async def add_url(name: str, req: AddUrlRequest):
                 message="No se pudo extraer contenido de la URL."
             )
 
-        chunks = chunk_file_content(url, text)
+        chunks = chunk_file_content(
+            url, text,
+            chunk_size_chars=chunk_size_chars,
+            overlap_chars=overlap_chars,
+        )
         if not chunks:
             return make_error_response(
                 message="No se generaron chunks para la URL."

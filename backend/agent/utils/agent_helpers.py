@@ -9,14 +9,18 @@ from __future__ import annotations
 import json
 import logging
 import os
+from typing import Any
 
 from backend.agent.utils.config_dir import get_skills_dir
 from backend.agent.permissions import list_agents
 from backend.agent.utils.skill_loader import _parse_frontmatter as parse_skill_frontmatter
-from backend.agent.utils.mcp_helper import check_all_mcp_servers_health, is_mcp_tool
+from backend.agent.utils.mcp_helper import check_all_mcp_servers_health, is_internal_mcp_tool, is_mcp_tool
 from backend.instances import agent
 
 logger = logging.getLogger(__name__)
+
+_HIDDEN_FROM_UI = frozenset({"query_model_capabilities", "skill"})
+"""Native helpers never listed in the UI dropdowns (not for the user)."""
 
 
 def get_skills_list() -> list[dict[str, str]]:
@@ -57,31 +61,46 @@ def get_skills_list() -> list[dict[str, str]]:
     return result
 
 
-def get_tools_list() -> list[dict[str, str]]:
+def get_tools_list(include_mcp: bool = False) -> list[dict[str, Any]]:
     """Return all available tools from the agent's registry.
 
     Reads the already-built ``_tools_registry`` (native + external tools)
     **without** applying any permission filtering. MCP tools are excluded
-    here because they are managed separately via the MCP endpoint.
+    by default because they are managed separately via the MCP endpoint.
+    Internal helpers (``_HIDDEN_FROM_UI``) are never listed: they are not
+    for the user, the creator flows allow them via their own permissions.
+
+    Args:
+        include_mcp: When ``True``, MCP tools are listed too (the router
+            panel needs them to pick which ones the router may use).
 
     Returns:
-        List of tool dicts with ``name`` and ``description`` keys.
+        List of tool dicts with ``name``, ``description`` and ``parameters`` (the JSON
+        Schema of its arguments, as the router receives it) keys.
     """
     if agent is None or agent.tools is None:
         return []
 
     registry = getattr(agent.tools, "_tools_registry", [])
-    result: list[dict[str, str]] = []
+    result: list[dict[str, Any]] = []
     for entry in registry:
         func = entry.get("function", {})
         name = func.get("name", "")
         description = func.get("description", "")
-        if name and not is_mcp_tool(name):
-            result.append({"name": name, "description": description})
+        if name in _HIDDEN_FROM_UI:
+            continue
+        if is_internal_mcp_tool(name):
+            continue
+        if name and (include_mcp or not is_mcp_tool(name)):
+            result.append({
+                "name": name,
+                "description": description,
+                "parameters": func.get("parameters") or {"type": "object", "properties": {}, "required": []},
+            })
     return result
 
 
-def get_agents_list() -> list[dict[str, str]]:
+def get_agents_list() -> list[dict[str, Any]]:
     """Return list of sub-agents, excluding AGENT.md and ROUTER.md.
 
     Reuses ``list_agents()`` from permissions, which already reads the

@@ -29,6 +29,12 @@ export interface SkillInfo {
 export interface ToolInfo {
   name: string;
   description: string;
+  /** JSON Schema of the arguments of the tool, as the router receives it. */
+  parameters?: {
+    type?: string;
+    properties?: Record<string, { type?: string; description?: string }>;
+    required?: string[];
+  };
 }
 
 export interface AgentInfo {
@@ -340,9 +346,12 @@ export const configService = {
     return data.skills || [];
   },
 
-  /** List all available tools (native + external, no MCP). */
-  async getTools(): Promise<ToolInfo[]> {
-    const response = await fetch(`${API_BASE_URL}/api/config/tools`, {
+  /** List all available tools (native + external, no MCP unless asked). */
+  async getTools(includeMcp = false): Promise<ToolInfo[]> {
+    const url = includeMcp
+      ? `${API_BASE_URL}/api/config/tools?include_mcp=true`
+      : `${API_BASE_URL}/api/config/tools`;
+    const response = await fetch(url, {
       method: "GET",
     });
     if (!response.ok) {
@@ -350,6 +359,42 @@ export const configService = {
     }
     const data = await response.json();
     return data.tools || [];
+  },
+
+  /** Router selection picked in the sidebar panel + where it comes from. */
+  async getRouter(): Promise<{
+    status: string;
+    selection: { agentes: string[]; tools: string[]; skills: string[]; rag: string[] };
+    source: "db" | "floor";
+  }> {
+    const response = await fetch(`${API_BASE_URL}/api/config/router`, {
+      method: "GET",
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    return response.json();
+  },
+
+  /** Save the router selection picked in the sidebar panel. */
+  async saveRouter(selection: {
+    agentes: string[];
+    tools: string[];
+    skills: string[];
+    rag: string[];
+  }): Promise<void> {
+    const response = await fetch(`${API_BASE_URL}/api/config/router`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(selection),
+    });
+    const result = await response.json().catch(() => null);
+    if (!response.ok || (result && result.status === "error")) {
+      const detail = result && Array.isArray(result.detail)
+        ? result.detail.map((d: { loc?: string[]; msg?: string }) => `${(d.loc || []).join(".")}: ${d.msg || ""}`).join("; ")
+        : null;
+      throw new Error((result && result.message) || detail || `HTTP ${response.status}`);
+    }
   },
 
   /** Force rebuild of the tools registry and return updated list. */
@@ -494,20 +539,6 @@ export const configService = {
     if (!response.ok || data.status === "error") {
       throw new Error(data.message || `HTTP ${response.status}`);
     }
-  },
-
-  /** Generate workflow YAML with the agent from a description. */
-  async generateWorkflow(description: string): Promise<{ yaml: string; name: string }> {
-    const response = await fetch(`${API_BASE_URL}/api/config/workflows/generate`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ description }),
-    });
-    const data = await response.json();
-    if (!response.ok || data.status === "error") {
-      throw new Error(data.message || `HTTP ${response.status}`);
-    }
-    return { yaml: data.data?.yaml || "", name: data.data?.name || "" };
   },
 
   /** List decision providers (from the decision_catalog table) + current selection. */

@@ -16,6 +16,11 @@ from fastapi.responses import StreamingResponse
 
 from backend.event_bus import event_bus
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
@@ -23,11 +28,23 @@ router = APIRouter()
 
 @router.get("/events")
 async def events_endpoint(request: Request) -> StreamingResponse:
-    """Stream events from the event bus as Server-Sent Events."""
+    """Stream events from the event bus as Server-Sent Events.
+
+    Args:
+        request: The request, used to detect when the client disconnects.
+
+    Returns:
+        A StreamingResponse with SSE events.
+    """
 
     q = await event_bus.subscribe()
 
-    async def event_stream():
+    async def event_stream() -> AsyncGenerator[str, None]:
+        """Generate the SSE events, with a keep-alive when nothing happens.
+
+        Yields:
+            SSE lines.
+        """
         try:
             while True:
                 if await request.is_disconnected():

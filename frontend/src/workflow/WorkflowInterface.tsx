@@ -7,13 +7,23 @@ import {
   type FormEvent,
 } from "react";
 import { flushSync } from "react-dom";
-import { Send, Square, Download } from "lucide-react";
+import { Send, Square, Download, Play, ShieldCheck } from "lucide-react";
 import { MessageRow } from "../components/chatBlocks";
 import { CreateModelSelector } from "../components/CreateModelSelector";
-import configService from "../services/configService";
+import { ResourceCards } from "../components/ResourceCards";
+import {
+  EMPTY_SELECTION,
+  selectionFromSetup,
+  selectionToRequest,
+  type ResourceSelection,
+} from "../utils/resourceSelection";
 import type { Message, ContentBlock } from "../App";
 import { saveFileWithPicker, fetchConversationMarkdown } from "../utils/conversationExport";
-import { API_BASE_URL } from "../config/api";
+import { API_BASE_URL, type ApiResponse } from "../config/api";
+import { CreatorHistory } from "../components/CreatorHistory";
+import { newCreatorId, type CreatorConversation } from
+"../services/creatorHistoryService";
+import { useCreatorVerify, VerifyToastBanner } from "../hooks/useCreatorVerify";
 
 const API = API_BASE_URL + "/api";
 
@@ -23,12 +33,6 @@ function generateId(): string {
     return crypto.randomUUID();
   }
   return `${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
-}
-
-/** Mensaje de la entrevista enviado al backend (/api/create/workflow). */
-interface HistorialMsg {
-  role: "user" | "assistant";
-  content: string;
 }
 
 export function WorkflowInterface() {
@@ -44,19 +48,25 @@ export function WorkflowInterface() {
   /* Sin proveedores cloud configurados: la creación queda bloqueada */
   const [noProviders, setNoProviders] = useState(false);
 
+  /* Recursos que el usuario eligió en las tarjetas de permisos: son obligatorios para el creador */
+  const [seleccion, setSeleccion] = useState<ResourceSelection>(EMPTY_SELECTION);
+
   const [messages, setMessages] = useState<Message[]>([]);
-  const historialRef = useRef<HistorialMsg[]>([]);
+  /* Conversation of the creator: the history sidebar reopens it later. */
+  const creatorIdRef = useRef<string>(newCreatorId());
+  const [historyKey, setHistoryKey] = useState(0);
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
   const [resultMsg, setResultMsg] = useState<string | null>(null);
   const [resultType, setResultType] = useState<"success" | "error" | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
-  const [isIterating, setIsIterating] = useState(false);
-  /* ---- editor YAML (validar/guardar, mismos endpoints que el panel) ---- */
-  const [yaml, setYaml] = useState("");
-  const [yamlMsg, setYamlMsg] = useState<string | null>(null);
-  const [yamlBusy, setYamlBusy] = useState(false);
+  /* Shared verification (decision model verdict) for creator pages. */
+  const { verifying, verifyToast, verificar } = useCreatorVerify("workflow");
+  /* Workflow recién creado para probar */
+  const [createdWorkflowName, setCreatedWorkflowName] = useState<string | null>(null);
+  const [runMsg, setRunMsg] = useState<string | null>(null);
+  const [runLoading, setRunLoading] = useState(false);
 
   /* ---- refs ---- */
   const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -152,7 +162,7 @@ export function WorkflowInterface() {
 
   /* ---- envío al backend (streaming SSE /api/create/workflow) ---- */
   const enviar = useCallback(
-    async (texto: string, iterate: boolean = false) => {
+    async (texto: string) => {
       if (isStreaming) return;
       setInput("");
       setChatError(null);
@@ -177,11 +187,7 @@ export function WorkflowInterface() {
       setIsStreaming(true);
       setResultMsg(null);
       setResultType(null);
-
-      historialRef.current = [
-        ...historialRef.current,
-        { role: "user", content: texto },
-      ];
+      setRunMsg(null);
 
       let accumulatedContent = "";
       let accumulatedReasoning = "";
@@ -208,10 +214,10 @@ export function WorkflowInterface() {
           body: JSON.stringify({
             descripcion,
             name: nombre || null,
-            mensajes: historialRef.current,
+            creator_id: creatorIdRef.current,
             model: createModel,
             provider: createProvider,
-            iterate,
+            ...selectionToRequest(seleccion),
           }),
           signal: abort.signal,
         });
@@ -220,6 +226,7 @@ export function WorkflowInterface() {
         const reader = resp.body!.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
+        let retryActive = false;
 
         while (true) {
           const { done, value } = await reader.read();
@@ -237,7 +244,24 @@ export function WorkflowInterface() {
               let event: any;
               try { event = JSON.parse(data); } catch { continue; }
 
+              // Transient retry notice (as in ChatInterface): cleared on the next event.
+              if (retryActive && event.type !== "retry") {
+                retryActive = false;
+                setMessages((prev) =>
+                  prev.map((m) => (m.id === assistantId ? { ...m, retryNotice: null } : m)),
+                );
+              }
+
               switch (event.type) {
+                case "retry":
+                  retryActive = true;
+                  setMessages((prev) =>
+                    prev.map((m) =>
+                      m.id === assistantId ? { ...m, retryNotice: String(event.content || "") } : m,
+                    ),
+                  );
+                  break;
+
                 case "chunk": {
                   accumulatedContent += event.content || "";
                   const last = accumulatedBlocks[accumulatedBlocks.length - 1];
@@ -360,31 +384,6 @@ export function WorkflowInterface() {
                   break;
                 }
 
-                case "workflow_action": {
-                  const action = event.content?.action;
-                  if (action === "question") {
-                    historialRef.current = [
-                      ...historialRef.current,
-                      { role: "assistant", content: accumulatedContent },
-                    ];
-                    setMessages((prev) =>
-                      prev.map((m) => (m.id === assistantId ? { ...m, isStreaming: false } : m)),
-                    );
-                    setIsStreaming(false);
-                  } else if (action === "creating") {
-                    historialRef.current = [
-                      ...historialRef.current,
-                      { role: "assistant", content: accumulatedContent },
-                    ];
-                  } else if (action === "iterating") {
-                    historialRef.current = [
-                      ...historialRef.current,
-                      { role: "assistant", content: accumulatedContent },
-                    ];
-                  }
-                  break;
-                }
-
                 case "workflow_result_final": {
                   const data = event.content || {};
                   setMessages((prev) =>
@@ -394,6 +393,10 @@ export function WorkflowInterface() {
                   if (data.status === "success") {
                     setResultType("success");
                     setResultMsg(data.message || "Workflow creado exitosamente.");
+                    const itemName = data?.data?.workflow;
+                    if (typeof itemName === "string" && itemName) {
+                      setCreatedWorkflowName(itemName);
+                    }
                   } else {
                     setResultType("error");
                     setResultMsg("Error: " + (data.message || "Error desconocido"));
@@ -438,70 +441,24 @@ export function WorkflowInterface() {
       } finally {
         setIsStreaming(false);
         abortRef.current = null;
+        setHistoryKey((k) => k + 1);
       }
     },
-    [isStreaming, descripcion, nombre, createModel, createProvider, isIterating],
+    [isStreaming, descripcion, nombre, createModel, createProvider, seleccion],
   );
 
   /* ---- enviar desde el chat ---- */
   const handleSend = useCallback(() => {
     const text = input.trim();
     if (!text || isStreaming) return;
-    const iterate = isIterating;
-    setIsIterating(false);
-    enviar(text, iterate);
-  }, [input, isStreaming, enviar, isIterating]);
+    enviar(text);
+  }, [input, isStreaming, enviar]);
 
   /* ---- detener streaming ---- */
   const handleCancel = useCallback(() => {
     abortRef.current?.abort();
     abortRef.current = null;
   }, []);
-
-  /* ---- YAML: generar con agente / validar / guardar ---- */
-  const handleGenerateYaml = useCallback(async () => {
-    const desc = descripcion.trim();
-    if (!desc) { setYamlMsg("Completá la descripción primero."); return; }
-    setYamlBusy(true);
-    setYamlMsg("Generando con el agente...");
-    try {
-      const res = await configService.generateWorkflow(desc);
-      setYaml(res.yaml);
-      if (res.name && !nombre.trim()) setNombre(res.name);
-      setYamlMsg("YAML generado. Revisalo y guardalo.");
-    } catch (err) {
-      setYamlMsg(err instanceof Error ? err.message : "No se pudo generar.");
-    } finally {
-      setYamlBusy(false);
-    }
-  }, [descripcion, nombre]);
-
-  const handleValidateYaml = useCallback(async () => {
-    if (!yaml.trim()) { setYamlMsg("No hay YAML para validar."); return; }
-    setYamlBusy(true);
-    try {
-      const res = await configService.validateWorkflow(yaml);
-      setYamlMsg(res.message);
-    } catch (err) {
-      setYamlMsg(err instanceof Error ? err.message : "Error validando.");
-    } finally {
-      setYamlBusy(false);
-    }
-  }, [yaml]);
-
-  const handleSaveYaml = useCallback(async () => {
-    const nameVal = nombre.trim();
-    if (!nameVal || !yaml.trim()) { setYamlMsg("Nombre y YAML requeridos."); return; }
-    setYamlBusy(true);
-    try {
-      await configService.saveWorkflow(nameVal, yaml);
-      setYamlMsg(`Workflow «${nameVal}» guardado.`);
-    } catch (err) {
-      setYamlMsg(err instanceof Error ? err.message : "No se pudo guardar.");
-    } finally {
-      setYamlBusy(false);
-    }
-  }, [nombre, yaml]);
 
   /* ---- keyboard ---- */
   const handleKeyDown = useCallback(
@@ -542,6 +499,55 @@ export function WorkflowInterface() {
     [],
   );
 
+  /* ---- historial del creador: empezar una conversación nueva o reabrir una ---- */
+  /** Start a new conversation of the creator: stop the stream and clear the page. */
+  const resetConversation = useCallback((): void => {
+    abortRef.current?.abort();
+    creatorIdRef.current = newCreatorId();
+    setMessages([]);
+    setSetupDone(false);
+    setNombre("");
+    setDescripcion("");
+    setInput("");
+    setChatError(null);
+    setResultMsg(null);
+    setResultType(null);
+    setSeleccion(EMPTY_SELECTION);
+    setCreatedWorkflowName(null);
+    setRunMsg(null);
+    setRunLoading(false);
+    setHistoryKey((k) => k + 1);
+  }, []);
+
+  /**
+   * Reopen a stored conversation of the creator to keep modifying what was created.
+   *
+   * @param c - Conversation loaded from the history.
+   */
+  const restoreConversation = useCallback((c: CreatorConversation): void => {
+    abortRef.current?.abort();
+    const setup = c.setup as Record<string, any>;
+    creatorIdRef.current = c.creator_id;
+    setNombre(typeof setup.name === "string" ? setup.name : "");
+    setDescripcion(typeof setup.descripcion === "string" ? setup.descripcion : "");
+    setSeleccion(selectionFromSetup(setup));
+    setMessages(c.messages.map((m) => ({ ...m, id: generateId(), isStreaming: false }) as Message));
+    const answered = c.result && c.result.action !== "question" ? c.result : null;
+    setResultType(answered ? (answered.status === "success" ? "success" : "error") : null);
+    setResultMsg(
+      answered ? (answered.status === "success" ? answered.message : "Error: " + answered.message) : null,
+    );
+    setCreatedWorkflowName(
+      c.result?.status === "success" && c.result.action !== "question" ? c.result.item_name : null,
+    );
+    setRunMsg(null);
+    setRunLoading(false);
+    setInput("");
+    setChatError(null);
+    setSetupDone(true);
+    setHistoryKey((k) => k + 1);
+  }, []);
+
   /* ---- render ---- */
   return (
     <div className="h-screen bg-app-bg flex flex-col overflow-hidden">
@@ -568,6 +574,18 @@ export function WorkflowInterface() {
 
         <div className="sm:w-44"></div>
       </header>
+
+      <div className="flex flex-1 min-h-0 overflow-hidden">
+        <CreatorHistory
+          kind="workflow"
+          activeId={creatorIdRef.current}
+          refreshKey={historyKey}
+          onSelect={restoreConversation}
+          onNew={resetConversation}
+          onDeletedActive={resetConversation}
+          disabled={isStreaming}
+        />
+        <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
 
       {!setupDone ? (
         /* ========== SETUP FORM ========== */
@@ -629,6 +647,13 @@ export function WorkflowInterface() {
                   Describí los pasos, qué agentes/tools usa y cuál es el resultado final. El LLM va a diseñar los nodos y steps.
                 </p>
               </div>
+
+              <ResourceCards
+                kinds={["agentes", "tools", "rag"]}
+                selection={seleccion}
+                onChange={setSeleccion}
+                idPrefix="workflow"
+              />
 
               <CreateModelSelector
                 onApply={(m, p) => {
@@ -694,47 +719,6 @@ export function WorkflowInterface() {
                        px-3 sm:px-4 py-3 sm:py-4"
           >
             <div className="max-w-full sm:max-w-3xl lg:max-w-4xl mx-auto">
-              {/* ========== YAML DEL WORKFLOW ========== */}
-              <div className="mb-3 rounded-2xl border border-app-border bg-white p-4 space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium text-app-text">YAML del workflow</span>
-                  <button
-                    type="button"
-                    disabled={yamlBusy}
-                    onClick={handleGenerateYaml}
-                    className="text-xs bg-app-primary hover:opacity-90 text-white px-3 py-1.5 rounded disabled:opacity-50"
-                  >
-                    {yamlBusy ? "Generando..." : "Generar con agente"}
-                  </button>
-                </div>
-                <textarea
-                  value={yaml}
-                  onChange={(e) => setYaml(e.target.value)}
-                  placeholder="YAML del workflow..."
-                  rows={8}
-                  spellCheck={false}
-                  className="w-full text-[11px] font-mono px-2 py-1.5 rounded border border-app-border bg-white text-app-text"
-                />
-                {yamlMsg && <p className="text-xs text-app-text-secondary">{yamlMsg}</p>}
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    disabled={yamlBusy}
-                    onClick={handleValidateYaml}
-                    className="text-xs px-3 py-1.5 rounded border border-app-border hover:bg-app-bg-tertiary disabled:opacity-50"
-                  >
-                    Validar
-                  </button>
-                  <button
-                    type="button"
-                    disabled={yamlBusy}
-                    onClick={handleSaveYaml}
-                    className="text-xs bg-app-primary hover:opacity-90 text-white px-3 py-1.5 rounded disabled:opacity-50"
-                  >
-                    Guardar
-                  </button>
-                </div>
-              </div>
               {resultMsg ? (
                 <div className="relative rounded-2xl border border-app-border bg-white p-4 sm:p-5 flex flex-col items-center gap-3 text-center">
                   <div
@@ -772,19 +756,6 @@ export function WorkflowInterface() {
                         <Download size={14} />
                         Descargar conversación
                       </button>
-                      {resultType === "success" && (
-                        <button
-                          onClick={() => {
-                            setResultMsg(null);
-                            setResultType(null);
-                            setIsIterating(true);
-                            setTimeout(() => scrollToBottom("smooth"), 50);
-                          }}
-                          className="flex items-center gap-1 bg-app-bg-tertiary text-app-text text-sm font-medium px-4 py-2 rounded-lg hover:bg-app-bg-secondary transition-colors border border-app-border"
-                        >
-                          Seguir iterando
-                        </button>
-                      )}
                       <button
                         onClick={() => window.close()}
                         className="bg-gradient-to-r from-app-primary to-app-gradient-secondary text-white text-sm font-medium px-5 py-2 rounded-lg hover:opacity-90 transition-colors"
@@ -793,13 +764,78 @@ export function WorkflowInterface() {
                       </button>
                     </div>
                 </div>
-              ) : (
-                <>
+              ) : null}
+              <>
                   {chatError && (
                     <div className="mb-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-4 py-2.5">
                       {chatError}
                     </div>
                   )}
+
+                  <div className="flex gap-2 mb-2">
+                    <button
+                      type="button"
+                      disabled={!createdWorkflowName || runLoading}
+                      title={createdWorkflowName ? `Probar ${createdWorkflowName}` : "Todavía no hay workflow creado"}
+                      onClick={async () => {
+                        if (!createdWorkflowName) return;
+                        try {
+                          setRunLoading(true);
+                          setRunMsg(null);
+                          const resp = await fetch(`${API}/workflows/${encodeURIComponent(createdWorkflowName)}/run`, {
+                            method: "POST",
+                          });
+                          const json: ApiResponse | null = await resp.json().catch(() => null);
+                          if (resp.ok && json && json.status === "success") {
+                            setRunMsg(json.message || `Workflow «${createdWorkflowName}» en ejecución.`);
+                          } else {
+                            setRunMsg("Error: " + ((json && json.message) || "No se pudo ejecutar el workflow."));
+                          }
+                        } catch (err) {
+                          setRunMsg("Error de conexión: " + (err instanceof Error ? err.message : "Error desconocido"));
+                        } finally {
+                          setRunLoading(false);
+                        }
+                      }}
+                      className="flex items-center gap-1 bg-app-bg-tertiary text-app-text text-sm font-medium px-4 py-2 rounded-lg hover:bg-app-bg-secondary transition-colors border border-app-border disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      <Play size={14} />
+                      {runLoading ? "Ejecutando..." : "Probar"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void verificar(creatorIdRef.current, isStreaming || messages.length === 0)}
+                      disabled={verifying || isStreaming || messages.length === 0}
+                      title="Verificar si el trabajo cumple con lo pedido"
+                      className="flex items-center gap-1 bg-app-bg-tertiary text-app-text text-sm font-medium px-4 py-2 rounded-lg hover:bg-app-bg-secondary transition-colors border border-app-border disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      <ShieldCheck size={14} />
+                      {verifying ? "Verificando..." : "Verificar"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          setDownloadError(null);
+                          const md = await fetchConversationMarkdown(messages, "Conversación - Creador de Workflows");
+                          await saveFileWithPicker(md, "conversacion-workflow", ".md");
+                        } catch (err) {
+                          setDownloadError(err instanceof Error ? err.message : "No se pudo descargar la conversación.");
+                        }
+                      }}
+                      className="flex items-center gap-1 bg-app-bg-tertiary text-app-text text-sm font-medium px-4 py-2 rounded-lg hover:bg-app-bg-secondary transition-colors border border-app-border"
+                    >
+                      <Download size={14} />
+                      Descargar conversación
+                    </button>
+                  </div>
+                  {runMsg && (
+                    <p className="text-sm text-app-text-secondary mb-2">{runMsg}</p>
+                  )}
+                  {downloadError && (
+                    <p className="text-sm text-red-600 mb-2">{downloadError}</p>
+                  )}
+                  <VerifyToastBanner toast={verifyToast} />
 
                   <div className="relative">
                     <textarea
@@ -858,12 +894,13 @@ export function WorkflowInterface() {
                       />
                     )}
                   </div>
-                </>
-              )}
+              </>
             </div>
           </div>
         </div>
       )}
+        </div>
+      </div>
     </div>
   );
 }

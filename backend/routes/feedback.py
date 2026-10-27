@@ -37,13 +37,24 @@ _FEEDBACK_TYPES = ("up", "down")
 
 
 def _session_exists(session_id: str) -> bool:
+    """Check that a session exists.
+
+    Args:
+        session_id: Session identifier.
+
+    Returns:
+        ``True`` when the session exists.
+    """
     with db_transaction() as conn:
         return conn.execute(load_query("sessions/exists.sql"), (session_id,)).fetchone() is not None
 
 
 @router.get("/feedback/{session_id}")
-async def get_session_feedback(session_id: str):
+async def get_session_feedback(session_id: str) -> dict:
     """Return the feedback of every answer of a session.
+
+    Args:
+        session_id: Session identifier.
 
     Returns:
         A contract response whose ``data`` maps ``turn_number`` to ``"up"`` or ``"down"``.
@@ -65,7 +76,7 @@ async def get_session_feedback(session_id: str):
 
 
 @router.put("/feedback/{session_id}/{turn_number}")
-async def set_feedback(session_id: str, turn_number: int, data: dict[str, Any] = Body(...)):
+async def set_feedback(session_id: str, turn_number: int, data: dict[str, Any] = Body(...)) -> dict:
     """Save the feedback of an answer, or change it if it already has one.
 
     Args:
@@ -101,8 +112,12 @@ async def set_feedback(session_id: str, turn_number: int, data: dict[str, Any] =
 
 
 @router.delete("/feedback/{session_id}/{turn_number}")
-async def delete_feedback(session_id: str, turn_number: int):
+async def delete_feedback(session_id: str, turn_number: int) -> dict:
     """Remove the feedback of an answer (nothing happens if it has none).
+
+    Args:
+        session_id: Session identifier.
+        turn_number: Turn of the answer.
 
     Returns:
         A contract response indicating success or failure.

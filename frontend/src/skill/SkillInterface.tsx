@@ -8,12 +8,16 @@ import {
   type FormEvent,
 } from "react";
 import { flushSync } from "react-dom";
-import { Send, Square, Paperclip, Download } from "lucide-react";
+import { Send, Square, Paperclip, Download, ShieldCheck } from "lucide-react";
 import { FileChip, FileWarningBanner, MessageRow } from "../components/chatBlocks";
 import { CreateModelSelector } from "../components/CreateModelSelector";
 import type { Message, ContentBlock } from "../App";
 import { saveFileWithPicker, fetchConversationMarkdown } from "../utils/conversationExport";
 import { API_BASE_URL } from "../config/api";
+import { CreatorHistory } from "../components/CreatorHistory";
+import { newCreatorId, type CreatorConversation } from
+"../services/creatorHistoryService";
+import { useCreatorVerify, VerifyToastBanner } from "../hooks/useCreatorVerify";
 
 const API = API_BASE_URL + "/api";
 
@@ -30,9 +34,8 @@ const ALLOWED_FILE_TYPES = [
   "application/xml",
   "text/xml",
 ];
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB per file
 const MAX_FILES = 3;
-const MAX_TOTAL_SIZE = 25 * 1024 * 1024; // 25 MB total
+const MAX_TOTAL_SIZE = 1 * 1024 * 1024; // 1 MB total
 
 /** Generate a unique ID with safe fallback when crypto is unavailable. */
 function generateId(): string {
@@ -40,13 +43,6 @@ function generateId(): string {
     return crypto.randomUUID();
   }
   return `${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
-}
-
-/** Mensaje de la entrevista enviado al backend (/api/create/skill). */
-interface HistorialMsg {
-  role: "user" | "assistant";
-  content: string;
-  files?: Array<{ name: string; size: number }>;
 }
 
 export function SkillInterface() {
@@ -63,7 +59,9 @@ export function SkillInterface() {
   const [noProviders, setNoProviders] = useState(false);
 
   const [messages, setMessages] = useState<Message[]>([]);
-  const historialRef = useRef<HistorialMsg[]>([]);
+  /* Conversation of the creator: the history sidebar reopens it later. */
+  const creatorIdRef = useRef<string>(newCreatorId());
+  const [historyKey, setHistoryKey] = useState(0);
   const [input, setInput] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [fileWarning, setFileWarning] = useState<string | null>(null);
@@ -72,7 +70,8 @@ export function SkillInterface() {
   const [resultMsg, setResultMsg] = useState<string | null>(null);
   const [resultType, setResultType] = useState<"success" | "error" | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
-  const [isIterating, setIsIterating] = useState(false);
+  /* Shared verification (decision model verdict) for creator pages. */
+  const { verifying, verifyToast, verificar } = useCreatorVerify("skill");
 
   /* ---- refs ---- */
   const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -177,10 +176,6 @@ export function SkillInterface() {
           warning = `Tipo de archivo no soportado: ${f.name}. Permitidos: PDF, DOCX, XLSX, TXT, CSV, JSON, XML.`;
           continue;
         }
-        if (f.size > MAX_FILE_SIZE) {
-          warning = `Archivo demasiado grande: ${f.name} (máx 10 MB).`;
-          continue;
-        }
         if (valid.length + files.length >= MAX_FILES) {
           warning = `Máximo ${MAX_FILES} archivos permitidos.`;
           break;
@@ -222,7 +217,7 @@ export function SkillInterface() {
 
   /* ---- envío al backend (streaming SSE /api/create/skill) ---- */
   const enviar = useCallback(
-    async (texto: string, archivos: File[], iterate: boolean = false) => {
+    async (texto: string, archivos: File[]) => {
       if (isStreaming) return;
       setInput("");
       setFiles([]);
@@ -250,13 +245,6 @@ export function SkillInterface() {
       setResultMsg(null);
       setResultType(null);
 
-      // Guardar solo nombres para el historial de display
-      const fileNames = archivos.map((f) => ({ name: f.name, size: f.size }));
-      historialRef.current = [
-        ...historialRef.current,
-        { role: "user", content: texto, files: fileNames.length ? fileNames : undefined },
-      ];
-
       let accumulatedContent = "";
       let accumulatedReasoning = "";
       let accumulatedBlocks: ContentBlock[] = [];
@@ -280,10 +268,9 @@ export function SkillInterface() {
         const formData = new FormData();
         formData.append("descripcion", descripcion);
         if (nombre) formData.append("name", nombre);
-        formData.append("mensajes", JSON.stringify(historialRef.current));
+        formData.append("creator_id", creatorIdRef.current);
         if (createModel) formData.append("model", createModel);
         if (createProvider) formData.append("provider", createProvider);
-        if (iterate) formData.append("iterate", "true");
         archivos.forEach((f) => formData.append("files", f));
 
         const resp = await fetch(`${API}/create/skill`, {
@@ -291,11 +278,19 @@ export function SkillInterface() {
           body: formData,
           signal: abort.signal,
         });
-        if (!resp.ok) throw new Error("HTTP " + resp.status);
+        if (!resp.ok) {
+          let detail = "HTTP " + resp.status;
+          try {
+            const body = await resp.json();
+            if (body && typeof body.message === "string" && body.message) detail = body.message;
+          } catch { /* keep generic detail */ }
+          throw new Error(detail);
+        }
 
         const reader = resp.body!.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
+        let retryActive = false;
 
         while (true) {
           const { done, value } = await reader.read();
@@ -313,7 +308,24 @@ export function SkillInterface() {
               let event: any;
               try { event = JSON.parse(data); } catch { continue; }
 
+              // Transient retry notice (as in ChatInterface): cleared on the next event.
+              if (retryActive && event.type !== "retry") {
+                retryActive = false;
+                setMessages((prev) =>
+                  prev.map((m) => (m.id === assistantId ? { ...m, retryNotice: null } : m)),
+                );
+              }
+
               switch (event.type) {
+                case "retry":
+                  retryActive = true;
+                  setMessages((prev) =>
+                    prev.map((m) =>
+                      m.id === assistantId ? { ...m, retryNotice: String(event.content || "") } : m,
+                    ),
+                  );
+                  break;
+
                 case "chunk": {
                   accumulatedContent += event.content || "";
                   const last = accumulatedBlocks[accumulatedBlocks.length - 1];
@@ -429,35 +441,7 @@ export function SkillInterface() {
                   break;
                 }
 
-                case "skill_action": {
-                  const action = event.content?.action;
-                  if (action === "question") {
-                    // La entrevista devuelve el control al usuario: finalizar el mensaje y habilitar input
-                    historialRef.current = [
-                      ...historialRef.current,
-                      { role: "assistant", content: accumulatedContent },
-                    ];
-                    setMessages((prev) =>
-                      prev.map((m) => (m.id === assistantId ? { ...m, isStreaming: false } : m)),
-                    );
-                    setIsStreaming(false);
-                  } else if (action === "creating") {
-                    // Sigue el stream (FASE 2/3): el typing aparece en los lapsos muertos
-                    historialRef.current = [
-                      ...historialRef.current,
-                      { role: "assistant", content: accumulatedContent },
-                    ];
-                  } else if (action === "iterating") {
-                    // Iteración: el LLM va a modificar la creación existente
-                    historialRef.current = [
-                      ...historialRef.current,
-                      { role: "assistant", content: accumulatedContent },
-                    ];
-                  }
-                  break;
-                }
-
-                case "skill_result": {
+                case "skill_result_final": {
                   const data = event.content || {};
                   setMessages((prev) =>
                     prev.map((m) => (m.id === assistantId ? { ...m, isStreaming: false } : m)),
@@ -517,19 +501,18 @@ export function SkillInterface() {
       } finally {
         setIsStreaming(false);
         abortRef.current = null;
+        setHistoryKey((k) => k + 1);
       }
     },
-    [isStreaming, descripcion, nombre, createModel, createProvider, isIterating],
+    [isStreaming, descripcion, nombre, createModel, createProvider],
   );
 
   /* ---- enviar desde el chat ---- */
   const handleSend = useCallback(() => {
     const text = input.trim();
     if (!text || isStreaming) return;
-    const iterate = isIterating;
-    setIsIterating(false);
-    enviar(text, files, iterate);
-  }, [input, files, isStreaming, enviar, isIterating]);
+    enviar(text, files);
+  }, [input, files, isStreaming, enviar]);
 
   /* ---- detener streaming ---- */
   const handleCancel = useCallback(() => {
@@ -575,6 +558,48 @@ export function SkillInterface() {
     [],
   );
 
+  /* ---- historial del creador: empezar una conversación nueva o reabrir una ---- */
+  /** Start a new conversation of the creator: stop the stream and clear the page. */
+  const resetConversation = useCallback((): void => {
+    abortRef.current?.abort();
+    creatorIdRef.current = newCreatorId();
+    setMessages([]);
+    setSetupDone(false);
+    setNombre("");
+    setDescripcion("");
+    setInput("");
+    setChatError(null);
+    setResultMsg(null);
+    setResultType(null);
+    setFiles([]);
+    setFileWarning(null);
+    setHistoryKey((k) => k + 1);
+  }, []);
+
+  /**
+   * Reopen a stored conversation of the creator to keep modifying what was created.
+   *
+   * @param c - Conversation loaded from the history.
+   */
+  const restoreConversation = useCallback((c: CreatorConversation): void => {
+    abortRef.current?.abort();
+    const setup = c.setup as Record<string, any>;
+    creatorIdRef.current = c.creator_id;
+    setNombre(typeof setup.name === "string" ? setup.name : "");
+    setDescripcion(typeof setup.descripcion === "string" ? setup.descripcion : "");
+    setFiles([]);
+    setMessages(c.messages.map((m) => ({ ...m, id: generateId(), isStreaming: false }) as Message));
+    const answered = c.result && c.result.action !== "question" ? c.result : null;
+    setResultType(answered ? (answered.status === "success" ? "success" : "error") : null);
+    setResultMsg(
+      answered ? (answered.status === "success" ? answered.message : "Error: " + answered.message) : null,
+    );
+    setInput("");
+    setChatError(null);
+    setSetupDone(true);
+    setHistoryKey((k) => k + 1);
+  }, []);
+
   /* ---- render ---- */
   return (
     <div className="h-screen bg-app-bg flex flex-col overflow-hidden">
@@ -604,6 +629,18 @@ export function SkillInterface() {
         {/* Right: empty to balance center */}
         <div className="sm:w-44"></div>
       </header>
+
+      <div className="flex flex-1 min-h-0 overflow-hidden">
+        <CreatorHistory
+          kind="skill"
+          activeId={creatorIdRef.current}
+          refreshKey={historyKey}
+          onSelect={restoreConversation}
+          onNew={resetConversation}
+          onDeletedActive={resetConversation}
+          disabled={isStreaming}
+        />
+        <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
 
       {!setupDone ? (
         /* ========== SETUP FORM ========== */
@@ -765,19 +802,6 @@ export function SkillInterface() {
                         <Download size={14} />
                         Descargar conversación
                       </button>
-                      {resultType === "success" && (
-                        <button
-                          onClick={() => {
-                            setResultMsg(null);
-                            setResultType(null);
-                            setIsIterating(true);
-                            setTimeout(() => scrollToBottom("smooth"), 50);
-                          }}
-                          className="flex items-center gap-1 bg-app-bg-tertiary text-app-text text-sm font-medium px-4 py-2 rounded-lg hover:bg-app-bg-secondary transition-colors border border-app-border"
-                        >
-                          Seguir iterando
-                        </button>
-                      )}
                       <button
                         onClick={() => window.close()}
                         className="bg-gradient-to-r from-[#4f46e5] to-[#8b5cf6] text-white text-sm font-medium px-5 py-2 rounded-lg hover:opacity-90 transition-colors"
@@ -786,8 +810,8 @@ export function SkillInterface() {
                       </button>
                     </div>
                 </div>
-              ) : (
-                <>
+              ) : null}
+              <>
               {chatError && (
                 <div className="mb-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-4 py-2.5">
                   {chatError}
@@ -822,6 +846,39 @@ export function SkillInterface() {
                 className="hidden"
                 onChange={handleFilesSelected}
               />
+
+              <div className="flex gap-2 mb-2">
+                <button
+                  type="button"
+                  onClick={() => void verificar(creatorIdRef.current, isStreaming || messages.length === 0)}
+                  disabled={verifying || isStreaming || messages.length === 0}
+                  title="Verificar si el trabajo cumple con lo pedido"
+                  className="flex items-center gap-1 bg-app-bg-tertiary text-app-text text-sm font-medium px-4 py-2 rounded-lg hover:bg-app-bg-secondary transition-colors border border-app-border disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <ShieldCheck size={14} />
+                  {verifying ? "Verificando..." : "Verificar"}
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      setDownloadError(null);
+                      const md = await fetchConversationMarkdown(messages, "Conversación - Creador de Skills");
+                      await saveFileWithPicker(md, "conversacion-skill", ".md");
+                    } catch (err) {
+                      setDownloadError(err instanceof Error ? err.message : "No se pudo descargar la conversación.");
+                    }
+                  }}
+                  className="flex items-center gap-1 bg-app-bg-tertiary text-app-text text-sm font-medium px-4 py-2 rounded-lg hover:bg-app-bg-secondary transition-colors border border-app-border"
+                >
+                  <Download size={14} />
+                  Descargar conversación
+                </button>
+              </div>
+              {downloadError && (
+                <p className="text-sm text-red-600 mb-2">{downloadError}</p>
+              )}
+              <VerifyToastBanner toast={verifyToast} />
 
               {/* Textarea wrapper with buttons inside */}
               <div className="relative">
@@ -896,12 +953,13 @@ export function SkillInterface() {
                   />
                 )}
               </div>
-                </>
-              )}
+              </>
             </div>
           </div>
         </div>
       )}
+        </div>
+      </div>
     </div>
   );
 }

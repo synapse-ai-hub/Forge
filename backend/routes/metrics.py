@@ -19,6 +19,11 @@ from typing import Any
 
 from fastapi import APIRouter, Body, Response
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import sqlite3
+
 # ---------------------------------------------------------------------------
 # Ensure the project root is in sys.path so absolute imports (backend.*)
 # resolve correctly regardless of how the file is invoked.
@@ -194,7 +199,7 @@ def _fill_cantidad_buckets(time_range: str, rows: list) -> list:
         return [{"date": "", "count": 0} for _ in range(12)]
 
 
-def _fetch_one(conn, path: str, clause: str, params: tuple) -> Any:
+def _fetch_one(conn: sqlite3.Connection, path: str, clause: str, params: tuple) -> Any:
     """Execute a query file with the time clause and return its first cell.
 
     Args:
@@ -252,7 +257,7 @@ def _rows_to_csv_response(rows: list, name: str) -> Response:
 
 
 @router.get("/metrics/sessions")
-async def get_session_metrics(time_range: str = "1m"):
+async def get_session_metrics(time_range: str = "1m") -> dict:
     """Return session metrics: totals plus the 12-bar creation chart.
 
     Args:
@@ -293,7 +298,7 @@ async def get_session_metrics(time_range: str = "1m"):
 
 
 @router.get("/metrics/sessions/export")
-async def export_sessions_csv(time_range: str = "1m"):
+async def export_sessions_csv(time_range: str = "1m") -> Any:
     """Download the sessions table for the time range as a CSV file.
 
     Args:
@@ -316,7 +321,7 @@ async def export_sessions_csv(time_range: str = "1m"):
 
 
 @router.get("/metrics/messages")
-async def get_message_metrics(time_range: str = "1m"):
+async def get_message_metrics(time_range: str = "1m") -> dict:
     """Return the five per-message metrics with time range filter.
 
     One row per turn for each defined message metric: steps, input
@@ -361,7 +366,7 @@ async def get_message_metrics(time_range: str = "1m"):
 
 
 @router.get("/metrics/messages/export")
-async def export_messages_csv(time_range: str = "1m"):
+async def export_messages_csv(time_range: str = "1m") -> Any:
     """Download the messages table for the time range as a CSV file.
 
     Args:
@@ -384,7 +389,7 @@ async def export_messages_csv(time_range: str = "1m"):
 
 
 @router.get("/metrics/tools/export")
-async def export_tools_csv(time_range: str = "1m"):
+async def export_tools_csv(time_range: str = "1m") -> Any:
     """Download the tool calls table for the time range as a CSV file.
 
     Args:
@@ -407,7 +412,7 @@ async def export_tools_csv(time_range: str = "1m"):
 
 
 @router.get("/metrics/models/export")
-async def export_models_csv(time_range: str = "1m"):
+async def export_models_csv(time_range: str = "1m") -> Any:
     """Download the assistant LLM calls table for the time range as a CSV file.
 
     Args:
@@ -430,8 +435,15 @@ async def export_models_csv(time_range: str = "1m"):
 
 
 @router.post("/metrics/eda/outliers-image")
-async def eda_outliers_image(payload: dict = Body(...)):
-    """Render a metric query with synapse_tools.eda.outliers (base64, no files)."""
+async def eda_outliers_image(payload: dict = Body(...)) -> dict:
+    """Render a metric query with synapse_tools.eda.outliers (base64, no files).
+
+    Args:
+        payload: Request body with the query to render.
+
+    Returns:
+        JSON response with the image encoded in base64.
+    """
     try:
         from backend.agent.utils.eda_figure import render_outliers_figure
 
@@ -485,14 +497,14 @@ async def eda_outliers_image(payload: dict = Body(...)):
 
 
 @router.get("/metrics/tools")
-async def get_tool_metrics(time_range: str = "1m"):
+async def get_tool_metrics(time_range: str = "1m") -> dict:
     """Return tool usage metrics aggregated from agent.db with time range filter.
 
     Args:
         time_range: Time filter ('1h', '6h', '1d', '1w', '1m', 'all').
 
     Returns:
-        A contract response with tool usage, totals and sub-agent calls.
+        A contract response with tool usage, totals and the calls to each sub-agent.
     """
     try:
         time_range = _normalize_range(time_range)
@@ -524,7 +536,7 @@ async def get_tool_metrics(time_range: str = "1m"):
             )
             subagent_rows = conn.execute(subagent_sql, params).fetchall()
         top_subagents = [
-            {"name": row["tool_name"], "count": row["cnt"]} for row in subagent_rows
+            {"name": row["agent_name"], "count": row["cnt"]} for row in subagent_rows
         ]
 
         return validate_response(
@@ -545,7 +557,7 @@ async def get_tool_metrics(time_range: str = "1m"):
 
 
 @router.get("/metrics/errors")
-async def get_error_metrics(time_range: str = "1m"):
+async def get_error_metrics(time_range: str = "1m") -> dict:
     """Return agent error metrics with time range filter.
 
     Only agent errors are counted: messages with status 'error'
@@ -606,7 +618,7 @@ async def get_error_metrics(time_range: str = "1m"):
 
 
 @router.get("/metrics/models")
-async def get_model_metrics(time_range: str = "1m"):
+async def get_model_metrics(time_range: str = "1m") -> dict:
     """Return LLM usage metrics grouped by model from agent.db with time range filter.
 
     Args:
@@ -702,7 +714,7 @@ async def get_model_metrics(time_range: str = "1m"):
 
 
 @router.get("/metrics/costs")
-async def get_cost_metrics(time_range: str = "1m"):
+async def get_cost_metrics(time_range: str = "1m") -> dict:
     """Return cost metrics grouped by provider/model from agent.db with time range filter.
 
     Args:
@@ -752,7 +764,7 @@ async def get_cost_metrics(time_range: str = "1m"):
 
 
 @router.get("/metrics/costs/export")
-async def export_costs_csv(time_range: str = "1m"):
+async def export_costs_csv(time_range: str = "1m") -> Any:
     """Download the assistant calls with cost for the time range as a CSV file.
 
     Args:
@@ -775,7 +787,7 @@ async def export_costs_csv(time_range: str = "1m"):
 
 
 @router.get("/metrics/overview")
-async def get_metrics_overview(time_range: str = "1m"):
+async def get_metrics_overview(time_range: str = "1m") -> dict:
     """Return an overview combining all metrics in a single response with time range filter.
 
     Args:

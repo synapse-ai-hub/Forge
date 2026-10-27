@@ -4,12 +4,12 @@ import json
 import logging
 
 from backend.agent.utils.contract import make_error_response, make_success_response, zero_usage
-from backend.agent.utils.error_logger import log_error
 
 logger = logging.getLogger(__name__)
 
 
 class QueryModelCapabilitiesMixin:
+    """Native tool ``query_model_capabilities``: query model capabilities from the local catalog."""
     async def query_model_capabilities(self, provider: str, model: str) -> dict:
             """Query model capabilities from the local catalog without huge context.
 
@@ -65,7 +65,6 @@ class QueryModelCapabilitiesMixin:
                 )
             except Exception as e:
                 logger.exception("Error in query_model_capabilities: %s", e)
-                log_error(str(e), source="tools.py:query_model_capabilities")
                 return make_error_response(
                     message=f"Error querying model capabilities: {e}",
                     usage=zero_usage(),

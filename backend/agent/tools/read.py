@@ -4,12 +4,12 @@ import logging
 import os
 
 from backend.agent.utils.contract import make_error_response, make_success_response, zero_usage
-from backend.agent.utils.error_logger import log_error
 
 logger = logging.getLogger(__name__)
 
 
 class ReadMixin:
+    """Native tool ``read``: read a file."""
     async def read(self, file_path: str, offset: int = 1, limit: int = 2000) -> dict:
             """Read a file or directory from the local filesystem.
 
@@ -105,7 +105,6 @@ class ReadMixin:
                 )
             except Exception as e:
                 logger.exception("Error in read: %s", e)
-                log_error(str(e), source="tools.py:read")
                 return make_error_response(
                     message=f"Error reading file: {e}",
                     usage=zero_usage(),

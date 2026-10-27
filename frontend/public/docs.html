@@ -272,26 +272,23 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
               <tr><td><code>workflows/</code></td><td>Archivos <code>.yaml</code> planos, uno por workflow determinista, y una carpeta opcional <code>prompts/</code> con prompts propios</td></tr>
               <tr><td><code>knowledge/</code></td><td>Colecciones RAG (ChromaDB) creadas desde la interfaz de creación</td></tr>
               <tr><td><code>mcp.json</code></td><td>Configuración de los servidores MCP disponibles (array JSON)</td></tr>
-              <tr><td><code>config.yaml</code></td><td>(Opcional) Permisos del agente principal: tools, skills y sub-agentes a los que puede delegar</td></tr>
             </tbody>
           </table>
           <p>Todo esto se lee en tiempo de ejecución, así que podés agregar, modificar o quitar archivos sin reinstalar nada. Las skills y los agentes se leen cada vez que se usan; las tools externas y los servidores MCP se vuelven a leer al pulsar <strong>Actualizar</strong> en el panel de agentes o al reiniciar el backend.</p>
-          <h3><code>config.yaml</code> — permisos del agente principal</h3>
-          <p>El agente principal (el router) toma sus permisos de <code>~/.config/synapseForge/config.yaml</code>, con la misma lógica que el frontmatter de los agentes:</p>
-          <pre><code>permissions:
-  tools:
-    read: allow
-  skills:
-    mi_skill: allow
-  tasks:
-    explorador: allow</code></pre>
-          <p>Las claves son siempre <code>tools</code>, <code>skills</code> y <code>tasks</code> (en plural). Las skills listadas se inyectan en el system prompt del router igual que en un sub-agente.</p>
+          <h3>Permisos del agente principal (panel Router)</h3>
+          <p>El agente principal (el router) se configura únicamente desde la interfaz, en la pestaña <strong>Router</strong> del panel de agentes, con listas desplegables por dimensión:</p>
           <ul>
-            <li>Si el archivo <strong>no existe</strong> → el agente principal opera con un conjunto base de tools de lectura y delegación: <code>task</code>, <code>help</code>, <code>search_memory</code>, <code>read</code>, <code>websearch</code> y <code>webfetch</code>. No tiene skills.</li>
-            <li>Si existe → usa <strong>solo</strong> los permisos que declara: no se suma ninguna tool base.</li>
-            <li><code>task</code> está disponible únicamente si el yaml la lista en <code>tools</code> o en <code>tasks</code>; <code>tasks</code> limita a qué sub-agentes puede delegar.</li>
+            <li><strong>Subagentes</strong> — A quiénes puede delegar trabajo.</li>
+            <li><strong>Tools</strong> — Qué herramientas puede usar (los servidores MCP aparecen agrupados en un contenedor con scroll).</li>
+            <li><strong>Skills</strong> — Qué habilidades se le inyectan en su prompt.</li>
+            <li><strong>RAG</strong> — Qué colecciones de la base de conocimiento puede consultar.</li>
           </ul>
-          <p>El system prompt del router incluye solo las secciones de las tools que tiene habilitadas, así que cada tool de menos son tokens de contexto que se ahorran.</p>
+          <ul>
+            <li>Si no guardás nada → opera con un conjunto base de lectura y delegación, sin skills.</li>
+            <li>Si guardás una selección → usa <strong>solo</strong> eso: no se suma nada base.</li>
+            <li>Haya o no selección, siempre puede consultar la documentación del sistema y la memoria de tus conversaciones; lo que agregues en RAG se suma a eso.</li>
+          </ul>
+          <p>Los cambios se aplican en el siguiente mensaje, sin reiniciar el backend. El prompt del router incluye solo las secciones de las tools habilitadas, así que cada tool de menos son tokens de contexto que se ahorran.</p>
         </section>
 
         <section id="rag">
@@ -306,6 +303,7 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
             <li><strong>Archivos</strong> — PDF, Word (DOCX/DOC), TXT, Markdown, CSV, XLSX/XLS, JSON, XML, YAML, Python. Se extrae el texto, se divide en <strong>chunks</strong> (con overlap inteligente) y se guarda.</li>
             <li><strong>Páginas web</strong> — Se fetchea el contenido, se convierte a texto, se divide en chunks y se guarda. La URL se conserva en el metadata y el HTML crudo en el primer chunk.</li>
           </ul>
+          <p>Al subir archivos o agregar una URL podés configurar el <strong>chunking</strong>: tamaño de chunk y overlap, en caracteres (por defecto 500 y 60). Si no tocás nada, se usan esos valores.</p>
           <h3>¿Cómo se crea una colección?</h3>
           <p>Desde la pestaña <strong>Crear → Gestionar RAG</strong> (modo dev) se abre la página de gestión de RAG, donde podés:</p>
           <ol>
@@ -548,15 +546,13 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
           <h3>¿Qué es un workflow?</h3>
           <p>Un <strong>workflow</strong> es un flujo determinista de nodos definido en YAML: un archivo plano por workflow en <code>~/.config/synapseForge/workflows/&lt;nombre&gt;.yaml</code>, sin subcarpetas. Cada nodo lleva un <code>id</code>, un <code>type</code> (<code>agent</code>, <code>tool</code>, <code>rag</code> o <code>run</code>), un <code>step</code> (entero desde 1) y hay exactamente un nodo con <code>final: true</code>, que produce la respuesta final.</p>
           <h3>¿Cómo se ejecuta?</h3>
-          <p>Los nodos del mismo <code>step</code> se ejecutan <strong>en paralelo</strong> con barrera; los distintos <code>step</code>, <strong>en secuencia</strong>. Los nodos <code>agent</code> corren en una sesión hija con los permisos propios de ese agente; los nodos <code>run</code> ejecutan comandos shell estilo GitHub Actions.</p>
+          <p>Los nodos del mismo <code>step</code> se ejecutan <strong>en paralelo</strong> con barrera; los distintos <code>step</code>, <strong>en secuencia</strong>. Los nodos <code>agent</code> corren en memoria, sin sesión, con el prompt, los permisos y los parámetros propios de ese agente; los nodos <code>run</code> ejecutan comandos shell estilo GitHub Actions.</p>
           <h3>Ejecutar un workflow</h3>
-          <p>Un workflow se ejecuta con el botón <strong>play</strong> de su tarjeta (panel de info del agente, pestaña <strong>Workflows</strong>). El flujo corre en segundo plano, en paralelo con el chat, y cada ejecución abre una sesión en el historial con el nombre del workflow y la fecha. Mientras corre, la tarjeta muestra <em>Ejecutando…</em>, el play queda bloqueado y aparece un botón para <strong>cancelar</strong> (la ejecución queda registrada como cancelada).</p>
+          <p>Un workflow se ejecuta con el botón <strong>play</strong> de su tarjeta (panel de info del agente, pestaña <strong>Workflows</strong>). El flujo corre en segundo plano, en paralelo con el chat, y nunca abre una sesión ni escribe en el historial: solo «Revisar con el agente» abre una sesión nueva con el resultado. Mientras corre, la tarjeta muestra <em>Ejecutando…</em>, el play queda bloqueado y aparece un botón para <strong>cancelar</strong> (la ejecución queda registrada como cancelada).</p>
           <h3>Reintentos y cierre</h3>
           <p>Cada nodo se confirma con su resultado completo. Si un nodo falla o la ejecución se corta (por ejemplo, se cierra la aplicación), el workflow se reintenta hasta <strong>3 veces en total</strong>, con espera exponencial, retomando desde el primer nodo sin resultado confirmado: lo ya hecho no se repite. Cuando todos los nodos terminan, se juzga si el workflow terminó bien a partir de sus resultados: con el modelo de decisión si está habilitado, o con el modelo de chat si no. Si falla definitivamente, un LLM explica en lenguaje simple qué pasó, y el error técnico queda en el registro de errores.</p>
           <h3>Resultados y notificaciones</h3>
           <p>El resultado llega como notificación en la <strong>campanita</strong> del header, con un círculo que cuenta las no leídas. Al abrirla, pasan a leídas; cada notificación se puede eliminar y el botón <strong>Limpiar</strong> borra todas. Las notificaciones y las ejecuciones se guardan en la base de datos.</p>
-          <h3>Workflows desde un agente</h3>
-          <p>Un agente puede ejecutar un workflow con la tool <code>workflow</code>, si lo permite el bloque <code>workflows</code> de sus permisos (<code>workflows: { nombre: allow }</code>), igual que <code>tasks</code> limita a qué sub-agentes puede delegar. La ejecución devuelve su resultado al agente y no genera notificación.</p>
           <h3>Verificación previa y permisos</h3>
           <p>Antes de ejecutar, el sistema verifica que cada agente, tool y colección RAG referenciada exista. Si falta algo, no ejecuta nada y avisa qué falta. Cada ejecución usa solo los permisos que sus nodos necesitan (mínimo privilegio).</p>
           <h3>Cómo crear un workflow</h3>
@@ -596,7 +592,7 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
             <li><strong>Crear Workflow</strong>: entrevista por chat y editor YAML con generar, validar y guardar para definir un workflow determinista (<code>.yaml</code>).</li>
             <li><strong>Gestionar RAG</strong>: página para crear colecciones RAG, subir archivos y agregar URLs, procesada con ChromaDB.</li>
           </ul>
-          <p>En las pantallas iniciales de creación (skill, tool y agente) podés elegir con qué modelo cloud se genera el elemento: seleccionás proveedor y modelo y pulsás <strong>Aplicar</strong>. La selección es efímera (solo vale para esa tarea mientras la pestaña está abierta); si no aplicás ninguna, se usa el modelo por defecto.</p>
+          <p>En las pantallas iniciales de creación (skill, tool, agente y workflow) podés elegir con qué modelo cloud se genera el elemento: seleccionás proveedor y modelo y pulsás <strong>Aplicar</strong>. La selección es efímera (solo vale para esa tarea mientras la pestaña está abierta); si no aplicás ninguna, se usa el modelo por defecto.</p>
           <p>Cada página muestra un indicador de trabajo mientras el backend procesa. Al finalizar, muestra un mensaje de éxito. Las páginas de creación incluyen un botón <strong>Descargar conversación</strong> para guardar la entrevista en Markdown.</p>
           <h3>Panel de agentes (modo desarrollador)</h3>
           <p>La pestaña <strong>Agente</strong> (modo dev) muestra el estado de los elementos del agente, con opción de eliminarlos:</p>
@@ -607,6 +603,7 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
             <li><strong>MCP</strong> — Lista los servidores MCP con su estado (Conectado, Error o Desactivado) y un interruptor para activar o desactivar cada uno.</li>
             <li><strong>RAG</strong> — Lista las colecciones de la base de conocimiento.</li>
             <li><strong>Workflows</strong> — Una tarjeta por workflow guardado, con un botón <strong>play</strong> para ejecutarlo (y cancelarlo mientras corre).</li>
+            <li><strong>Router</strong> — Permisos del agente principal: listas desplegables de subagentes, tools, skills y colecciones RAG (los servidores MCP aparecen en un contenedor con scroll). Sin selección guardada usa el conjunto base; los cambios se aplican en el siguiente mensaje.</li>
           </ul>
           <h3>Panel de configuración</h3>
           <p>En el panel lateral, hay una pestaña de <strong>Configuración</strong> con las siguientes opciones:</p>
@@ -639,14 +636,13 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
           <h3>Agenda (tareas programadas)</h3>
           <p>En el header, el botón <strong>Agenda</strong> abre el panel de tareas programadas, donde podés indicarle al agente qué hacer y cuándo, sin estar presente:</p>
           <ul>
-            <li><strong>Agregar una tarea</strong>: nombre, descripción de lo que tiene que hacer el agente, y uno o más horarios (hora <code>HH:MM</code> + días de la semana).</li>
-            <li><strong>Equipar la tarea</strong>: seleccionar las tools y skills que tendrá disponibles, y ajustar los parámetros del modelo.</li>
-            <li><strong>Refinar el prompt</strong>: el wizard del LLM puede refinar la descripción de la tarea.</li>
+            <li><strong>Agregar una tarea</strong>: nombre, descripción de lo que tiene que hacer, uno o más horarios (hora <code>HH:MM</code> + días de la semana) y los recursos que usará el workflow (agentes, tools, skills, colecciones RAG).</li>
+            <li><strong>Guardar</strong>: el creador de workflows escribe el YAML con su bloque <code>schedule</code> y lo valida (nombre y descripción presentes, al menos un horario válido con un día).</li>
             <li><strong>Editar el horario</strong> de una tarea existente (hora y días).</li>
-            <li><strong>Eliminar</strong> tareas.</li>
-            <li><strong>Guardar</strong>: valida todas las tareas antes de confirmar (nombre y descripción presentes, al menos un horario válido con un día).</li>
+            <li><strong>Ejecutar con play</strong> y <strong>cancelar</strong> como cualquier workflow.</li>
+            <li><strong>Eliminar</strong> tareas (borra el workflow, sus ejecuciones, sus commits y sus notificaciones).</li>
           </ul>
-          <p>La zona horaria se toma directamente del sistema. Al activar una tarea se crea un sub-agente dedicado con los permisos seleccionados, y se ejecuta con el modelo y proveedor seleccionados, como si la hubieras pedido desde el chat.</p>
+          <p>Una tarea programada es un workflow cuyo YAML tiene un bloque <code>schedule</code>. La zona horaria se toma directamente del sistema, sin configuración. El backend revisa cada 20 segundos qué horarios coinciden con el minuto actual y arranca el workflow en el mismo motor (reintentos, juez, notificaciones).</p>
           <h3>Notificaciones</h3>
           <p>Junto al botón de Agenda hay una <strong>campanita</strong> que guarda una notificación por cada ejecución de tarea programada y de workflow: indica si terminó con éxito o falló, con fecha y hora. Un círculo cuenta las no leídas y al abrirla pasan a leídas. Cada notificación se puede eliminar, y <strong>Limpiar</strong> borra todas. Las ejecuciones de tareas también se notifican por Telegram (ver la sección Telegram).</p>
           <h3>Historial</h3>
@@ -730,7 +726,7 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
           <p>Las tareas programadas también se gestionan desde Telegram, con el mismo flujo de pregunta y respuesta que el resto de los comandos:</p>
           <ul>
             <li><code>/agenda</code> lista las tareas vigentes.</li>
-            <li><code>/agendar</code> pregunta qué tiene que hacer el agente y a qué hora, y crea la tarea.</li>
+            <li><code>/agendar</code> pregunta qué hay que hacer y a qué hora, y crea la tarea (un workflow con su bloque <code>schedule</code>, vía el creador de workflows).</li>
             <li><code>/horario</code> permite cambiar hora y días de una tarea existente.</li>
             <li><code>/eliminar_tarea</code> elimina una tarea.</li>
           </ul>
@@ -781,6 +777,9 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
               <tr><td>POST</td><td><code>/api/config/tools/refresh</code></td><td>Releer las tools externas y reconstruir el registry (incluye MCP).</td></tr>
               <tr><td>GET</td><td><code>/api/config/agents</code></td><td>Listar sub-agentes disponibles.</td></tr>
               <tr><td>GET</td><td><code>/api/config/mcp</code></td><td>Listar servidores MCP con su estado.</td></tr>
+              <tr><td>GET</td><td><code>/api/config/router</code></td><td>Permisos del agente principal (selección guardada + permisos efectivos).</td></tr>
+              <tr><td>PUT</td><td><code>/api/config/router</code></td><td>Guardar la selección de permisos del agente principal.</td></tr>
+              <tr><td>GET</td><td><code>/api/config/router/selection</code></td><td>Selección guardada del agente principal (vacía si no hay).</td></tr>
               <tr><td>GET</td><td><code>/api/workflows</code></td><td>Listar los workflows con su estado (en ejecución, última ejecución).</td></tr>
               <tr><td>POST</td><td><code>/api/workflows/{name}/run</code></td><td>Ejecutar un workflow en segundo plano (botón play).</td></tr>
               <tr><td>DELETE</td><td><code>/api/workflows/{name}</code></td><td>Eliminar un workflow con sus ejecuciones y notificaciones.</td></tr>
@@ -792,7 +791,6 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
               <tr><td>DELETE</td><td><code>/api/notifications</code></td><td>Eliminar todas las notificaciones.</td></tr>
               <tr><td>POST</td><td><code>/api/config/workflows/validate</code></td><td>Validar un YAML de workflow sin guardarlo.</td></tr>
               <tr><td>POST</td><td><code>/api/config/workflows/save</code></td><td>Validar y guardar un workflow como <code>&lt;nombre&gt;.yaml</code>.</td></tr>
-              <tr><td>POST</td><td><code>/api/config/workflows/generate</code></td><td>Generar el YAML de un workflow a partir de una descripción.</td></tr>
               <tr><td>GET/POST</td><td><code>/api/context-files</code></td><td>Listar / subir archivos de contexto (instrucciones y documentos).</td></tr>
               <tr><td>DELETE</td><td><code>/api/context-files/{id}</code></td><td>Eliminar un archivo de contexto.</td></tr>
               <tr><td>GET</td><td><code>/api/metrics/overview</code></td><td>Métricas agregadas (sesiones, mensajes, tools, errores).</td></tr>
@@ -827,13 +825,10 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
               <tr><td>PUT</td><td><code>/api/agent/mcp/{label}/enabled</code></td><td>Activar o desactivar un servidor MCP.</td></tr>
               <tr><td>DELETE</td><td><code>/api/agent/knowledge/{collection}</code></td><td>Eliminar una colección RAG.</td></tr>
               <tr><td>GET</td><td><code>/api/events</code></td><td>Streaming SSE del event bus (Telegram, notificaciones y ejecuciones de workflows → Frontend).</td></tr>
-              <tr><td>GET</td><td><code>/api/scheduler/tasks</code></td><td>Listar las tareas programadas.</td></tr>
-              <tr><td>POST</td><td><code>/api/scheduler/craft-prompt</code></td><td>Refinar la descripción de una tarea con el LLM (wizard).</td></tr>
-              <tr><td>POST</td><td><code>/api/scheduler/tasks</code></td><td>Crear una tarea programada (descripción, hora y días).</td></tr>
-              <tr><td>PUT</td><td><code>/api/scheduler/tasks/{id}</code></td><td>Actualizar una tarea programada (hora, días o descripción).</td></tr>
-              <tr><td>DELETE</td><td><code>/api/scheduler/tasks/{id}</code></td><td>Eliminar una tarea programada.</td></tr>
+              <tr><td>GET</td><td><code>/api/scheduler/tasks</code></td><td>Listar las tareas programadas (workflows con bloque <code>schedule</code>).</td></tr>
+              <tr><td>PUT</td><td><code>/api/scheduler/tasks/{id}</code></td><td>Actualizar el horario de una tarea (hora, días, repeticiones, habilitada). Se crean con el creador de workflows (<code>POST /api/create/workflow</code> con <code>schedule</code>).</td></tr>
+              <tr><td>DELETE</td><td><code>/api/scheduler/tasks/{id}</code></td><td>Eliminar una tarea programada (workflow, ejecuciones y notificaciones).</td></tr>
               <tr><td>GET</td><td><code>/api/scheduler/runs</code></td><td>Historial de ejecuciones de tareas programadas.</td></tr>
-              <tr><td>GET</td><td><code>/api/scheduler/permissions/catalog</code></td><td>Tools, skills, agentes y workflows disponibles para armar los permisos de una tarea.</td></tr>
               <tr><td>GET</td><td><code>/api/telegram/status</code></td><td>Estado del bot de Telegram.</td></tr>
               <tr><td>POST</td><td><code>/api/telegram/toggle</code></td><td>Activar/desactivar el bot de Telegram.</td></tr>
               <tr><td>GET/POST</td><td><code>/api/telegram/active-session</code></td><td>Obtener/establecer la sesión activa compartida.</td></tr>

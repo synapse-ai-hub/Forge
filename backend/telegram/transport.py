@@ -38,7 +38,12 @@ class TransportMixin:
             raise
 
     async def send_message(self, chat_id: int, text: str) -> None:
-        """Send a text message to a chat (used for the final answer)."""
+        """Send a text message to a chat (used for the final answer).
+
+        Args:
+            chat_id: Telegram chat id.
+            text: Text to send.
+        """
         if not text:
             return
 
@@ -71,6 +76,17 @@ class TransportMixin:
             logger.warning("Failed to send Telegram message: %s", exc)
 
     async def _download_file(self, file_id: str) -> bytes:
+        """Download a file the user sent to the bot.
+
+        Args:
+            file_id: Telegram file id.
+
+        Returns:
+            The bytes of the file.
+
+        Raises:
+            RuntimeError: If Telegram does not return the file path.
+        """
         url = _TELEGRAM_API.format(token=self.token) + "/getFile"
         resp = await self._client.post(url, json={"file_id": file_id})
         data = resp.json()
@@ -85,7 +101,15 @@ class TransportMixin:
         """Transcribe audio bytes using Groq Whisper API (whisper-large-v3-turbo).
 
         Requires a Groq API key configured in the provider_api_keys table.
-        If no key is configured, raises RuntimeError.
+
+        Args:
+            content: Bytes of the audio.
+
+        Returns:
+            The transcribed text.
+
+        Raises:
+            RuntimeError: If no key is configured or the transcription fails.
         """
         from backend.agent.utils.provider_keys import get_key
 

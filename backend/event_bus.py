@@ -18,23 +18,36 @@ class EventBus:
     """Simple fan-out bus backed by one ``asyncio.Queue`` per subscriber."""
 
     def __init__(self) -> None:
+        """Create the bus with no subscribers."""
         self._subscribers: set[asyncio.Queue] = set()
         self._lock = asyncio.Lock()
 
     async def subscribe(self) -> asyncio.Queue:
-        """Register a new subscriber and return its queue."""
+        """Register a new subscriber.
+
+        Returns:
+            The queue where its events are put.
+        """
         q: asyncio.Queue = asyncio.Queue(maxsize=200)
         async with self._lock:
             self._subscribers.add(q)
         return q
 
     async def unsubscribe(self, q: asyncio.Queue) -> None:
-        """Remove a subscriber queue (client disconnected)."""
+        """Remove a subscriber queue (client disconnected).
+
+        Args:
+            q: Queue returned by ``subscribe``.
+        """
         async with self._lock:
             self._subscribers.discard(q)
 
     async def emit(self, event: dict) -> None:
-        """Publish an event to every subscriber (non-blocking, drop-oldest)."""
+        """Publish an event to every subscriber (non-blocking, drop-oldest).
+
+        Args:
+            event: The event to publish.
+        """
         async with self._lock:
             subs = list(self._subscribers)
 

@@ -56,22 +56,24 @@ from backend.agent.utils.error_logger import (
 )
 from backend.agent.utils.skill_loader import format_skills_section
 from backend.agent.utils.contract import zero_usage
+from backend.agent.utils.approvals import create_approval, wait_approval
 from backend.agent.permissions import (
-    list_agents,
     get_tool_permissions,
     get_skill_permissions,
     get_agent_parameters,
-    wildcard_match,
 )
 from backend.agent.utils.clean_memory import liberar_modelo
 from backend.instances import agent, session_manager
 from backend.agent.utils.loop_helpers import (
     _tool_call_ctx,
     build_initial_messages,
+    build_subagent_sections,
     build_system_prompt,
+    build_user_message,
     execute_tool,
     fetch_context_window_turns,
-    format_workflows_section,
+    get_temp_dir,
+    load_context_text,
 )
 from backend.agent.utils.model_resolver import (
     ensure_context_window,
@@ -86,7 +88,6 @@ from backend.agent.utils.decision import (
 from backend.agent.utils.frontier_helpers import (
     build_resume_message,
     clear_session,
-    clear_turn,
     collect_garbage,
     extract_task_child_id,
     mark_call_done,
@@ -160,6 +161,8 @@ class AgentLoop:
         parent_id: str | None = None,
         parent_model: str | None = None,
         parent_provider: str | None = None,
+        is_creator: bool = False,
+        user_setup: dict | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Run the agent loop for a single user message.
 
@@ -186,6 +189,15 @@ class AgentLoop:
             parent_provider: Parent agent's effective provider (any curated provider id or ``"LOCAL"``).
                 Used together with ``parent_model`` to decide whether to liberate
                 the parent model (only meaningful when both are LOCAL).
+            is_creator: Creator run (skill/tool/agent/workflow creators).
+                Skips the session title, the long-term memory indexing and
+                the per-turn close gate (verification is manual via the
+                Verificar button): creator conversations persist in the
+                ``creators`` table and run the same frontier machinery
+                (resume/record/close) keyed by creator_id.
+            user_setup: Setup form of a creator request (stored as JSON on
+                the user row so the creator page can rebuild it). Only
+                honored by session managers that support it.
 
         Yields:
             SSE events (raw ``"data: {...}\\n\\n"`` strings):
@@ -394,19 +406,24 @@ class AgentLoop:
             )
 
             # --- 1d. Create temp directory for agent's markdown file ---
-            from backend.agent.utils.config_dir import get_config_dir
-            temp_dir = get_config_dir() / "temp"
-            temp_dir.mkdir(parents=True, exist_ok=True)
-            temp_path = str(temp_dir)
+            temp_path = get_temp_dir()
             
 
-            # Router permissions (config.yaml) are read once: tools and tasks are
-            # resolved below, skills are injected into the system prompt.
+            # Router permissions (router_config table) are read once: tools and
+            # tasks are resolved below, skills are injected into the system prompt.
             router_perms = _load_router_permissions() if agent_name is None else None
+            # Router's explicit skill selection ({} when nothing is selected).
+            # Resolved here so both the prompt and the skill permission check
+            # use the same per-turn value.
+            router_skills: dict[str, Any] = {}
+            if router_perms is not None:
+                _selected_skills = router_perms.get("skills")
+                if isinstance(_selected_skills, dict):
+                    router_skills = _selected_skills
 
             # --- 2. Resolve tools (before the prompt: the router prompt depends on them) ---
             if agent_name is None:
-                # Router: config.yaml permissions replace the floor tools.
+                # Router: stored selection replaces the floor tools.
                 tool_permissions = _router_tool_permissions(router_perms)
                 try:
                     tools = list(agent.tools.tools_registry(tool_permissions))
@@ -424,9 +441,33 @@ class AgentLoop:
             # Expose the effective permissions to the execution layer so
             # execute_tool can enforce them (deny by default) on every call.
             agent.tools._current_tool_permissions = tool_permissions or {}
+            # Explicit skill permissions of the running agent (router: stored
+            # selection; sub-agent: its frontmatter). The skill tool enforces
+            # them by name: {} means no skill may be loaded.
+            if agent_name is None:
+                caller_skill_permissions = router_skills
+            else:
+                caller_skill_permissions = skill_permissions or {}
+            agent.tools._current_skill_permissions = caller_skill_permissions
 
             # --- 3. Build system prompt ---
+            # Every section is resolved here and passed as a template variable;
+            # the assembly lives in Jinja (system_prompt.jinja / subagent_prompt.jinja).
             if system_prompt is None:
+                skills_section = ""
+                agents_section = ""
+                if agent_name is not None:
+                    # Sub-agents get their skills/agents (the router lists its
+                    # agents in build_system_prompt; its skills come from the stored selection).
+                    skills_section, agents_section = build_subagent_sections(
+                        tool_permissions, skill_permissions
+                    )
+                elif router_perms is not None:
+                    # Router: no skills by default. If the stored selection lists
+                    # skills, they are injected like a sub-agent's.
+                    if router_skills:
+                        skills_section = format_skills_section(skill_permissions=router_skills)
+
                 system_prompt = build_system_prompt(
                     agent_name,
                     tools=(
@@ -439,94 +480,113 @@ class AgentLoop:
                         if agent_name is None
                         else None
                     ),
+                    skills_section=skills_section,
+                    agents_section=agents_section,
+                    temp_dir=temp_path,
                 )
-
-            # Sub-agents get their skills/agents appended (the router lists its
-            # agents in build_system_prompt; its skills come from config.yaml).
-            if agent_name is not None:
-                skills_section = format_skills_section(skill_permissions=skill_permissions)
-                agents_result = list_agents()
-                all_agents = (
-                    json.loads(agents_result["data"])
-                    if agents_result.get("status") == "success"
-                    else []
-                )
-                # Filtrar agentes según task permissions (solo mostrar los que puede llamar)
-                task_perms = (tool_permissions or {}).get("task", {})
-                agents = [
-                    a for a in all_agents
-                    if isinstance(task_perms, dict) and any(
-                        action == "allow" and wildcard_match(key, a["name"])
-                        for key, action in task_perms.items()
-                    )
-                ]
-                system_prompt = (
-                    f"{system_prompt}\n\n"
-                    f"## Skills Disponibles\n{skills_section}\n\n"
-                    f"## Agentes Disponibles\n{agents}"
-                )
-            elif router_perms is not None:
-                # Router: no skills by default. If config.yaml lists skills,
-                # they are injected like a sub-agent's.
-                router_skills = router_perms.get("skills")
-                if isinstance(router_skills, dict) and router_skills:
-                    skills_section = format_skills_section(skill_permissions=router_skills)
-                    if skills_section:
-                        system_prompt = (
-                            f"{system_prompt}\n\n## Skills Disponibles\n{skills_section}"
-                        )
-
-            # Workflows this agent may run through the ``workflow`` tool.
-            workflows_section = format_workflows_section(tool_permissions)
-            if workflows_section:
-                system_prompt = (
-                    f"{system_prompt}\n\n## Workflows Disponibles\n{workflows_section}"
-                )
-
-            # Append temp directory path to system prompt (concatenation, no .format)
-            system_prompt = f"{system_prompt}\n\n## Directorio temporal\n{temp_path}"
             
-            # --- 4. Build initial messages array (history does NOT include current message) ---
-            # Append attached files (if any) to the user message
-            effective_message = user_message
-            if file_contents:
-                try:
-                    parts: list[str] = []
-                    for fn, text in file_contents:
-                        parts.append(f"**Archivo: {fn}**\n{text}")
-                    attachments_section = (
-                        "<inicio_adjuntos>\n"
-                        + "\n".join(parts)
-                        + "\n<fin_adjuntos>"
-                    )
-                    effective_message = f"{user_message}\n\n{attachments_section}"
-                except Exception as exc:
-                    logger.warning("Error building attachments section: %s", exc)
-                    log_error(str(exc), source="loop.py:run")
-
-            messages = build_initial_messages(
-                session_manager,
-                session_id,
-                system_prompt,
-                effective_message,
-                max_turns=await asyncio.to_thread(fetch_context_window_turns),
+            # --- 4. Gate message: raw text + attachments (guardrail/gate input) ---
+            # Variable per-turn data (context files, pending frontier) is NOT
+            # part of the gate input: the guardrail and the continuity gate
+            # see exactly what they saw before (message + attachments).
+            gate_message = build_user_message(
+                user_message, file_contents=file_contents
             )
-            
+
             # --- 5. Input guardrail (router only) ---
             # With the decision model enabled the security rules go to it (the
             # router prompt has no "Seguridad" block), and an attack is stopped
             # before the LLM runs. The blocked text is not kept in the
             # history, so later turns never send it to the LLM.
             blocked = agent_name is None and await is_message_blocked(
-                session_id, turn_number, effective_message,
+                session_id, turn_number, gate_message,
                 [t["function"]["name"] for t in tools],
             )
 
-            # --- 5-bis. Save user message to DB (after building messages so history is clean) ---
+            # --- 5a. Resume unsettled frontier (read-first) ---
+            # A cut flow leaves open rows behind (they are only deleted on
+            # validated close). They are read FIRST, before the LLM runs,
+            # and injected as part of the user content (facts only, nothing
+            # truncated). In-memory only, never persisted — the same pattern
+            # as the empty-response hint. Confirmed rows older than the TTL
+            # are garbage-collected first (open rows are never collected:
+            # any future turn may resume them).
+            try:
+                collect_garbage(float(os.getenv("FRONTIER_TTL_HOURS", "24") or 24))
+            except Exception as exc:
+                log_error(str(exc), source="loop.py:run(frontier_gc)")
+            # Continuity gate (Option A): when the new message is unrelated
+            # to the pending frontier, discard it instead of re-injecting
+            # it forever. Only runs with a decision model enabled; without
+            # one should_keep_pending returns True (current behavior).
+            # Emits a "decision" SSE event so the frontend can render it
+            # as a card (ignored by older frontends).
+            # Creators run it too: their turns persist in the creators
+            # table and the frontier is keyed by creator_id, so nothing
+            # ever mixes with the chat sessions. The verdict row is saved
+            # through their own session manager.
+            try:
+                keep_pending = await should_keep_pending(session_id, gate_message, manager=session_manager)
+            except Exception as exc:
+                log_error(str(exc), source="loop.py:run(continuity)")
+                keep_pending = True
+            if not keep_pending:
+                try:
+                    clear_session(session_id)
+                except Exception as exc:
+                    log_error(str(exc), source="loop.py:run(continuity_clear)")
+                yield f"data: {json.dumps({'type': 'decision', 'content': {'action': 'discarded', 'reason': 'unrelated'}}, ensure_ascii=False)}\n\n"
+                resume_text = None
+            else:
+                try:
+                    resume_text = build_resume_message(
+                        session_id,
+                        manager=session_manager if is_creator else None,
+                    )
+                except Exception as exc:
+                    log_error(str(exc), source="loop.py:run(resume)")
+                    resume_text = None
+
+            # --- 5b. Build initial messages array (history does NOT include current message) ---
+            # The current user content is rendered via user_prompt.jinja:
+            # message + context files (router only, sub-agents stay isolated)
+            # + attachments + pending frontier. Only the raw message is
+            # persisted below, so the history stays clean.
+            try:
+                context_text = (
+                    await asyncio.to_thread(load_context_text)
+                    if agent_name is None else ""
+                )
+            except Exception as exc:
+                log_error(str(exc), source="loop.py:run(context)")
+                context_text = ""
+            user_content = build_user_message(
+                user_message,
+                context=context_text,
+                file_contents=file_contents,
+                frontier=resume_text or "",
+            )
+            # Creators always load the full history: unlike the normal
+            # chat, the user cannot configure a turn window for them.
+            turns = -1 if is_creator else await asyncio.to_thread(fetch_context_window_turns)
+            messages = build_initial_messages(
+                session_manager,
+                session_id,
+                system_prompt,
+                user_content,
+                max_turns=turns,
+            )
+
+            # --- 5-c. Save user message to DB (after building messages so history is clean) ---
+            user_row_kwargs: dict[str, Any] = {}
+            if user_setup is not None:
+                # Only creator session managers accept it; the chat never sends it.
+                user_row_kwargs["setup"] = user_setup
             session_manager.save_message(
                 session_id, "user",
                 content=BLOCKED_USER_TEXT if blocked else user_message,
                 turn_number=turn_number,
+                **user_row_kwargs,
             )
             if blocked:
                 session_manager.save_message(
@@ -541,52 +601,13 @@ class AgentLoop:
                 _schedule_latency()
                 return
 
-            # --- 5a. Resume unsettled frontier (read-first) ---
-            # A cut flow leaves open rows behind (they are only deleted on
-            # validated close). They are read FIRST, before the LLM runs,
-            # and injected as an ephemeral system message: facts only,
-            # nothing truncated. In-memory only, never persisted — the
-            # same pattern as the empty-response hint. Confirmed rows
-            # older than the TTL are garbage-collected first (open rows
-            # are never collected: any future turn may resume them).
-            try:
-                collect_garbage(float(os.getenv("FRONTIER_TTL_HOURS", "24") or 24))
-            except Exception as exc:
-                log_error(str(exc), source="loop.py:run(frontier_gc)")
-            # Continuity gate (Option A): when the new message is unrelated
-            # to the pending frontier, discard it instead of re-injecting
-            # it forever. Only runs with a decision model enabled; without
-            # one should_keep_pending returns True (current behavior).
-            # Emits a "decision" SSE event so the frontend can render it
-            # as a card (ignored by older frontends).
-            try:
-                keep_pending = await should_keep_pending(session_id, effective_message)
-            except Exception as exc:
-                log_error(str(exc), source="loop.py:run(continuity)")
-                keep_pending = True
-            if not keep_pending:
-                try:
-                    clear_session(session_id)
-                except Exception as exc:
-                    log_error(str(exc), source="loop.py:run(continuity_clear)")
-                yield f"data: {json.dumps({'type': 'decision', 'content': {'action': 'discarded', 'reason': 'unrelated'}}, ensure_ascii=False)}\n\n"
-                resume_text = None
-            else:
-                try:
-                    resume_text = build_resume_message(session_id)
-                except Exception as exc:
-                    log_error(str(exc), source="loop.py:run(resume)")
-                    resume_text = None
-            if resume_text:
-                messages.append({"role": "system", "content": resume_text})
-
             # --- 5b. Generate title on first turn (root sessions only, non-blocking) ---
             # Sub-agents (depth > 0) skip title generation entirely: each one
             # creates a new session (turn 1) and generating a title would block
             # the loop. For root sessions the title is generated in a background
             # task so it doesn't block the response stream; the result is pushed
             # to a queue that the loop drains to emit the session_title event.
-            if turn_number == 1 and depth == 0:
+            if turn_number == 1 and depth == 0 and not is_creator:
                 try:
                     existing_titles = session_manager.get_all_titles()
                     if existing_titles:
@@ -603,6 +624,7 @@ class AgentLoop:
                     title_queue = asyncio.Queue()
 
                     async def _generate_title() -> None:
+                        """Generate the title of the session from the first message and store it."""
                         try:
                             title_result = await agent.llm_process(
                                 model=model,
@@ -802,10 +824,10 @@ class AgentLoop:
                     except Exception as e:
                         error_category = classify_error_category(e)
                         logger.exception("Error in agent streaming: %s", e)
-                        log_error(str(e), source="loop.py:run(llm_stream)")
 
                         # User cancellation always wins: never retry.
                         if stream_cancel_event is not None and stream_cancel_event.is_set():
+                            log_error(str(e), source="loop.py:run(llm_stream)")
                             # The failed attempt never reached the agent's
                             # spend record: count it here (zero tokens when
                             # no usage was captured) so SUM(spend) == SUM(messages).
@@ -838,6 +860,7 @@ class AgentLoop:
                             return
                         # Fatal, budget and too-large errors: no retry.
                         if error_category in ("fatal", "budget", "too_large"):
+                            log_error(str(e), source="loop.py:run(llm_stream)")
                             error_msg = (
                                 RATE_LIMIT_MESSAGES["413"]
                                 if error_category == "too_large"
@@ -892,7 +915,6 @@ class AgentLoop:
                                 LLM_BACKOFF_BASE_SECONDS * (2 ** llm_attempt),
                                 get_retry_delay(e, LLM_BACKOFF_BASE_SECONDS, 60.0),
                             )
-                            await asyncio.sleep(delay)
                             logger.warning(
                                 "LLM %s error (attempt %d/%d): %s — retrying in %.0fs",
                                 error_category, llm_attempt + 1, MAX_LLM_RETRIES + 1,
@@ -900,10 +922,14 @@ class AgentLoop:
                             )
                             log_error(str(e), source="loop.py:run(llm_retry)")
                             if error_category == "rate_limit":
-                                retry_msg = f"\n\n*Rate limit alcanzado, reintentando (intento {llm_attempt + 1} de {MAX_LLM_RETRIES})...*"
+                                retry_msg = f"Rate limit alcanzado, reintentando (intento {llm_attempt + 1} de {MAX_LLM_RETRIES})..."
                             else:
-                                retry_msg = "\n\n*Error transitorio, reintentando...*"
-                            yield f"data: {json.dumps({'type': 'chunk', 'content': retry_msg}, ensure_ascii=False)}\n\n"
+                                retry_msg = "Error transitorio, reintentando..."
+                            # Transient notice, not part of the answer: the UI shows it
+                            # as the activity indicator and drops it on the next event.
+                            # Emitted before the back-off so it is visible while waiting.
+                            yield f"data: {json.dumps({'type': 'retry', 'content': retry_msg}, ensure_ascii=False)}\n\n"
+                            await asyncio.sleep(delay)
                             # Fold the failed attempt into the step accumulators
                             # exactly once (mirrors the spend record for this
                             # attempt) before retrying.
@@ -1057,14 +1083,26 @@ class AgentLoop:
                         btc_cfg: dict | None,
                         btc_queue: Any,
                     ) -> Any:
-                        """Run one block call under its own ContextVar snapshot."""
+                        """Run one block call under its own ContextVar snapshot.
+
+                        Args:
+                            btc_idx: Position of the call inside the block.
+                            btc: The tool call.
+                            btc_cfg: Resolved configuration of a ``task`` call, or None.
+                            btc_queue: Queue where the events of the sub-agent are put.
+
+                        Returns:
+                            The result of the call.
+                        """
                         snap = {
                             "parent_session_id": session_id,
                             "depth": depth,
                             "stream_cancel_event": stream_cancel_event,
                             "tool_permissions": tool_permissions or {},
+                            "skill_permissions": caller_skill_permissions,
                             "task_config": btc_cfg,
                             "subagent_event_queue": btc_queue,
+                            "file_contents": file_contents,
                         }
                         token = _tool_call_ctx.set(snap)
                         started = _time.perf_counter()
@@ -1086,6 +1124,22 @@ class AgentLoop:
                                 pass
                             _tool_call_ctx.reset(token)
 
+                    # Global pause-and-ask pre-scan: every shell command in
+                    # the whole block needs explicit user approval BEFORE
+                    # any tool_call is emitted (tasks included), so a deny
+                    # never leaves a tool block without its tool_result.
+                    # On deny or timeout the turn is cut here.
+                    for pre_tc in tool_calls:
+                        if pre_tc.get("name") != "shell":
+                            continue
+                        command = (pre_tc.get("args") or {}).get("command", "")
+                        approval_id = create_approval(session_id, command)
+                        yield f"data: {json.dumps({'type': 'approval_required', 'content': {'approval_id': approval_id, 'command': command}}, ensure_ascii=False)}\n\n"
+                        if not await wait_approval(approval_id, cancel_event=stream_cancel_event):
+                            msg = "Ejecución detenida: el comando no fue aprobado por el usuario."
+                            yield f"data: {json.dumps({'type': 'chunk', 'content': msg}, ensure_ascii=False)}\n\n"
+                            yield "data: [DONE]\n\n"
+                            return
                     tc_index = 0
                     while tc_index < len(tool_calls):
                         tc = tool_calls[tc_index]
@@ -1170,6 +1224,8 @@ class AgentLoop:
                             # are only queued here (tool_call SSE in original
                             # order); execution happens once the whole block
                             # is collected, concurrently with everything else.
+                            # Shell commands were already approved by the
+                            # global pre-scan above.
                             batch: list[dict[str, Any]] = []
                             _j = tc_index
                             while _j < len(tool_calls) and tool_calls[_j].get("name") != "task":
@@ -1190,6 +1246,8 @@ class AgentLoop:
                     # flip to done on ordered commit and are only deleted
                     # when the step closes with a validated done signal.
                     # Never breaks the loop (the helper never raises).
+                    # Creator rows are keyed by creator_id, never mixed
+                    # with the chat sessions.
                     record_block_dispatch(
                         session_id,
                         turn_number,
@@ -1286,6 +1344,7 @@ class AgentLoop:
                     agent.tools._current_depth = depth
                     agent.tools._stream_cancel_event = stream_cancel_event
                     agent.tools._current_tool_permissions = tool_permissions or {}
+                    agent.tools._current_skill_permissions = caller_skill_permissions
 
                     # --- Re-resolve model after subagents (task tool) ---
                     # A subagent may have used a different model and liberated it.
@@ -1400,8 +1459,9 @@ class AgentLoop:
                         mark_call_done(session_id, turn_number, step, idx)
                         # A task call exposes its child session id in the
                         # result XML: attach it to the frontier row so the
-                        # child stays visible to the parent.
-                        if tc.get("name") in ("task", "workflow"):
+                        # child stays visible to the parent. Creators never
+                        # delegate to sub-agents, so there is nothing to attach.
+                        if not is_creator and tc.get("name") == "task":
                             child_id = extract_task_child_id(result_data)
                             if child_id:
                                 set_task_child(
@@ -1526,9 +1586,14 @@ class AgentLoop:
                 # Validated done signal (final content, no tool_calls):
                 # the step closes only when the decision accepts it
                 # (LLM signal alone, or JEV verdict when configured).
-                # Otherwise the frontier stays for the next turn.
-                if await should_close_step(session_id, turn_number, cleaned, step=step):
-                    clear_turn(session_id, turn_number)
+                # Otherwise the frontier stays for the next turn. The
+                # rows of earlier turns that were left pending were handed
+                # to the model in the resume message of this turn, so a
+                # validated close finishes them too: the whole session
+                # frontier is deleted, not only this turn's.
+                # Creators have no frontier: the signal is always accepted.
+                if not is_creator and await should_close_step(session_id, turn_number, cleaned, step=step):
+                    clear_session(session_id)
 
                 # Emit the session title before [DONE] so the sidebar refreshes
                 # with the generated title even if it finished after the loop.
@@ -1551,8 +1616,9 @@ class AgentLoop:
                 # after the title drain so the indexed metadata can include
                 # the session title. Only root sessions are indexed —
                 # sub-agent child sessions duplicate the parent's content and
-                # would pollute the memory index.
-                if depth == 0:
+                # would pollute the memory index. Creator runs are never
+                # indexed either: they are work sessions, not conversations.
+                if depth == 0 and not is_creator:
                     try:
                         from backend.agent.utils.rag_helpers import index_turn_fire_and_forget
 
@@ -1587,6 +1653,9 @@ class AgentLoop:
 
             # ---- Max iterations ----
             logger.warning("Agent loop reached max_iterations (%d)", self.max_iterations)
+            if depth > 0:
+                # A sub-agent session is never resumed: its task is over.
+                clear_session(session_id)
             max_iter_msg = "*El agente alcanzó el límite de iteraciones.*"
             # Persisted like any other closing message so the history shows
             # why the turn ended (and carries a pending empty-response usage).
@@ -1668,6 +1737,7 @@ class AgentLoop:
 
 if __name__ == "__main__":
     async def _main() -> None:
+        """Run the loop once from the command line, for manual testing."""
         from backend.instances import agent, session_manager
 
         session_id = sys.argv[1] if len(sys.argv) > 1 else "test-session"

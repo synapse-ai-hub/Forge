@@ -698,10 +698,10 @@ def record_creator_call(
     """Record a direct LLM call made outside the chat loop.
 
     Creator flows (skill/tool/agent creators), the skills and tools
-    evaluators and the agenda prompt crafter call ``llm_process`` /
+    evaluators call ``llm_process`` /
     ``llm_streaming`` directly, so they never produce ``messages`` rows.
     Their usage is contemplated here instead, one row per call in the
-    ``creator_calls`` table with the same token and cost breakdown as
+    ``creators`` table with the same token and cost breakdown as
     ``messages``. Failures are recorded with zero tokens so every call
     counts. Never raises.
 
@@ -727,26 +727,17 @@ def record_creator_call(
         cost_input, cost_output, cost_total = calculate_cost(
             provider_value, model_value, prompt_tokens, completion_tokens
         )
-        now = datetime.now().isoformat()
+        # The call is stored under the creator conversation that made it, if any.
+        from backend.agent.utils.creators import add_call
 
-        with db_transaction() as conn:
-            conn.execute(
-                load_query("spend/insert_creator_call.sql"),
-                (
-                    caller_value, provider_value, model_value, prompt_tokens,
-                    completion_tokens, total_tokens, total_time, cost_input,
-                    cost_output, cost_total, now,
-                ),
-            )
-        # The usage also adds up in the creator run that made the call, if any.
-        from backend.agent.utils.creator_runs import add_usage, current_run_id
-
-        run_id = current_run_id()
-        if run_id is not None:
-            add_usage(
-                run_id, prompt_tokens, completion_tokens, total_tokens,
-                cost_input, cost_output, cost_total,
-            )
+        add_call(
+            caller_value, provider_value, model_value,
+            {
+                "prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens,
+                "total_tokens": total_tokens, "total_time": total_time,
+            },
+            (cost_input, cost_output, cost_total),
+        )
         # NOTE: spend is NOT touched here. Every creator/agenda call goes
         # through llm_process/llm_streaming, which already contemplate it
         # in spend via _record_spend (success and failure). Recording it

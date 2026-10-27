@@ -100,6 +100,9 @@ async def get_parameters() -> JSONResponse:
     reasoning (``reasoning_supported``) and structured output
     (``response_format_supported``): ``true``/``false`` per the provider
     catalog, or ``null`` when capability is unknown.
+
+    Returns:
+        JSON response with the parameters and the support flags.
     """
     try:
         current_model = agent._resolved_model if agent is not None else None

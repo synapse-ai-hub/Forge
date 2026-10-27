@@ -13,6 +13,8 @@ services:
         # VITE_URL_PROD: "http://localhost:8000"
     ports:
       - "8000:8000"
+    volumes:
+      - synapseforge-config:/root/.config/synapseForge
     restart: unless-stopped
 
   # ────────────────────────────────────────────────────────────────────────────
@@ -24,4 +26,10 @@ services:
       target: backend-only
     ports:
       - "8000:8000"
+    volumes:
+      - synapseforge-config:/root/.config/synapseForge
     restart: unless-stopped
+
+volumes:
+  # Tools, agentes, workflows y la lista de librerías de las tools (docs/venv/README.md)
+  synapseforge-config:

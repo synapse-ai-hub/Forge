@@ -171,7 +171,8 @@ async def should_close_step(session_id: str, turn_number: int,
         return True
 
 
-async def should_keep_pending(session_id: str, new_message: str) -> bool:
+async def should_keep_pending(session_id: str, new_message: str,
+                              manager: Any | None = None) -> bool:
     """Decide whether the new user message continues the pending work.
 
     Continuity gate, called at turn start before the resume block is
@@ -188,6 +189,10 @@ async def should_keep_pending(session_id: str, new_message: str) -> bool:
     Args:
         session_id: Session starting a new turn.
         new_message: New user message text.
+        manager: Session manager owning the session. ``None`` means the
+            global chat manager (``sessions`` / ``messages``); creator
+            runs pass their ``CreatorSessionManager`` so the verdict row
+            lands in ``creators`` instead of ``messages``.
 
     Returns:
         True when the pending frontier must be kept. Never raises.
@@ -234,18 +239,22 @@ async def should_keep_pending(session_id: str, new_message: str) -> bool:
             return True
         keep = float(verdict) > (1.0 - DECISION_CLOSE_THRESHOLD)
         try:
-            with db_transaction() as conn:
-                cur = conn.execute(
-                    load_query("messages/get_max_turn_or_zero.sql"),
-                    (session_id,),
-                )
-                row = cur.fetchone()
-                turn_number = int(row["max_turn"]) if row and row["max_turn"] is not None else 0
+            if manager is not None:
+                turn_number = int(manager.get_last_turn_number(session_id) or 0)
+            else:
+                with db_transaction() as conn:
+                    cur = conn.execute(
+                        load_query("messages/get_max_turn_or_zero.sql"),
+                        (session_id,),
+                    )
+                    row = cur.fetchone()
+                    turn_number = int(row["max_turn"]) if row and row["max_turn"] is not None else 0
         except Exception:
             turn_number = 0
         _save_decisor_row(session_id, turn_number, None, data,
                           (response or {}).get("usage"),
-                          float(verdict), keep, question="continue")
+                          float(verdict), keep, question="continue",
+                          manager=manager)
         return keep
     except Exception as exc:
         log_error(str(exc), source="decision.py:should_keep_pending")
@@ -256,7 +265,8 @@ def _save_decisor_row(session_id: str, turn_number: int,
                       step: int | None, data: dict[str, Any],
                       usage: dict[str, Any] | None,
                       verdict: float, outcome: bool,
-                      question: str = "close") -> None:
+                      question: str = "close",
+                      manager: Any | None = None) -> None:
     """Persist the decision verdict as a ``"decisor"`` message.
 
     Same session, turn and step as the surrounding flow, so the row stays
@@ -272,14 +282,18 @@ def _save_decisor_row(session_id: str, turn_number: int,
         outcome: Gate result — True means closed (close gate), kept
             (continue gate) or blocked (guard gate).
         question: Question name (``"close"``, ``"continue"`` or ``"guard"``).
+        manager: Session manager owning the session. ``None`` means the
+            global chat manager; creator runs pass their
+            ``CreatorSessionManager`` so the row lands in ``creators``.
     """
     try:
-        from backend.instances import session_manager
+        if manager is None:
+            from backend.instances import session_manager as manager
 
-        if session_manager is None:
+        if manager is None:
             return
         result_key = {"close": "closed", "continue": "kept", "guard": "blocked"}[question]
-        session_manager.save_message(
+        manager.save_message(
             session_id=session_id,
             role="decisor",
             content=json.dumps({
@@ -299,3 +313,154 @@ def _save_decisor_row(session_id: str, turn_number: int,
         )
     except Exception as exc:
         log_error(str(exc), source="decision.py:_save_decisor_row")
+
+
+async def verify_creator(manager: Any, creator_id: str) -> dict[str, Any]:
+    """Run the on-demand verification of a creator conversation.
+
+    Builds the same decision state the close gate uses (user request,
+    open frontier rows, proposed final answer) from the ``creators``
+    table and asks whether the work fulfils what the user asked. With a
+    decision model enabled the shared ``decision_close`` criteria apply;
+    without one an LLM with JSON output decides. The verdict is persisted
+    as a ``"decisor"`` row in ``creators`` and, when it is done, the step
+    frontier of the conversation is deleted.
+
+    Args:
+        manager: ``CreatorSessionManager`` owning the conversation.
+        creator_id: Creator conversation id.
+
+    Returns:
+        ``{"done": bool, "reason": str}``. Never raises: on any failure
+        the work is reported as not done with the failure as reason.
+    """
+    try:
+        from backend.agent.utils.creators import get_conversation
+        from backend.instances import agent
+
+        conv = get_conversation(creator_id)
+        if conv is None:
+            return {"done": False, "reason": "La conversación no existe."}
+        historial = conv.get("historial") or []
+        if not historial:
+            return {"done": False, "reason": "La conversación todavía no tiene mensajes."}
+        setup = conv.get("setup") or {}
+        request_lines = []
+        if setup.get("name"):
+            request_lines.append(f"Nombre: {setup['name']}")
+        if setup.get("descripcion"):
+            request_lines.append(f"Descripción: {setup['descripcion']}")
+        first_user = next((m.get("content", "") for m in historial if m.get("role") == "user"), "")
+        user_request = "\n".join(request_lines + [first_user]).strip()
+        assistants = [m.get("content", "") for m in historial if m.get("role") == "assistant" and m.get("content")]
+        result = conv.get("result") or {}
+        created = str(result.get("message") or "").strip()
+        final_parts = [assistants[-1]] if assistants else []
+        if created:
+            final_parts.append(f"Resultado registrado: {created}")
+        proposed_final = "\n\n".join(final_parts)
+        pending = [
+            {
+                "tool_name": item["tool_name"],
+                "tool_args": item["tool_args"],
+                "state": item["state"],
+                "child_id": item.get("child_id"),
+            }
+            for item in frontier_helpers.load_open_frontier(creator_id)
+        ]
+        state: dict[str, Any] = {
+            "user_request": user_request,
+            "pending": pending,
+            "proposed_final": proposed_final.strip(),
+        }
+        usage: dict[str, Any] | None = None
+        model: str | None = None
+        provider: str | None = None
+        done = False
+        reason = ""
+        if agent is not None and agent.decision_enabled:
+            try:
+                instructions = agent.prompt("decision_close")
+            except Exception as exc:
+                log_error(str(exc), source="decision.py:verify_creator(prompt)")
+                return {"done": False, "reason": "No se pudo cargar el prompt de verificación."}
+            response = await agent.decision(state, {
+                "close": {"type": "noul", "instructions": instructions},
+            })
+            data = (response or {}).get("data") or {}
+            if not data.get("available"):
+                return {"done": False, "reason": "El modelo de decisión no está disponible."}
+            answers = data.get("answers") or {}
+            verdict = (answers.get("close") or {}).get("noul")
+            if not isinstance(verdict, (int, float)) or isinstance(verdict, bool):
+                return {"done": False, "reason": "El modelo de decisión no devolvió un veredicto."}
+            done = bool(verdict) and float(verdict) >= DECISION_CLOSE_THRESHOLD
+            reason = ("Cumple con lo pedido." if done
+                      else "Todavía no cumple con lo pedido.")
+            usage = (response or {}).get("usage")
+            model = data.get("model")
+            provider = data.get("provider")
+            _save_decisor_row(creator_id, _creator_turn(manager, creator_id), None,
+                              data, usage, float(verdict), done,
+                              manager=manager)
+        else:
+            if agent is None:
+                return {"done": False, "reason": "El agente no está disponible."}
+            prompt = (
+                "Evaluá si el trabajo realizado cumple con lo pedido por el usuario.\n\n"
+                f"Pedido del usuario:\n{user_request}\n\n"
+                f"Última respuesta:\n{proposed_final.strip()}\n\n"
+                f"Pendientes abiertos: {len(pending)}\n\n"
+                'Respondé SOLO con un JSON: {"done": true/false, "reason": "motivo breve"}. '
+                "Solo done=true si cumple de forma completa y no quedan pendientes."
+            )
+            response = await agent.llm_process(
+                model=agent._resolved_model,
+                prompt=prompt,
+                response_format="json",
+                reasoning=False,
+            )
+            if not isinstance(response, dict) or response.get("status") == "error":
+                return {"done": False, "reason": "No se pudo evaluar: el modelo no está disponible."}
+            data = response.get("data") or ""
+            try:
+                parsed = json.loads(data) if isinstance(data, str) else {}
+            except (ValueError, TypeError):
+                parsed = {}
+            if not parsed:
+                return {"done": False, "reason": "No se pudo evaluar: el modelo no devolvió un veredicto."}
+            done = bool(parsed.get("done")) and not pending
+            if parsed.get("done") and pending:
+                reason = f"Quedan {len(pending)} pasos pendientes abiertos."
+            else:
+                reason = str(parsed.get("reason") or ("Cumple con lo pedido." if done else "Todavía no cumple con lo pedido."))
+            usage = (response or {}).get("usage")
+            _save_decisor_row(creator_id, _creator_turn(manager, creator_id), None,
+                              {"model": agent._resolved_model, "provider": agent.provider},
+                              usage, 1.0 if done else 0.0, done,
+                              manager=manager)
+        if done:
+            try:
+                frontier_helpers.clear_session(creator_id)
+            except Exception as exc:
+                log_error(str(exc), source="decision.py:verify_creator(clear)")
+        return {"done": done, "reason": reason}
+    except Exception as exc:
+        log_error(str(exc), source="decision.py:verify_creator")
+        return {"done": False, "reason": "Falló la verificación."}
+
+
+def _creator_turn(manager: Any, creator_id: str) -> int:
+    """Return the last turn of a creator conversation, 0 when unknown.
+
+    Args:
+        manager: ``CreatorSessionManager`` owning the conversation.
+        creator_id: Creator conversation id.
+
+    Returns:
+        The last turn number. Never raises.
+    """
+    try:
+        return int(manager.get_last_turn_number(creator_id) or 0)
+    except Exception:
+        return 0

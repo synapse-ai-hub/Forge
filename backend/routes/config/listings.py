@@ -24,7 +24,11 @@ router = APIRouter()
 
 @router.get("/skills")
 async def list_skills() -> JSONResponse:
-    """List available skills (name + description)."""
+    """List available skills (name + description).
+
+    Returns:
+        JSON response with the skills.
+    """
     try:
         skills = get_skills_list()
         return JSONResponse(
@@ -39,10 +43,17 @@ async def list_skills() -> JSONResponse:
         )
 
 @router.get("/tools")
-async def list_tools() -> JSONResponse:
-    """List all available tools (native + external) without permission filtering."""
+async def list_tools(include_mcp: bool = False) -> JSONResponse:
+    """List all available tools (native + external) without permission filtering.
+
+    Args:
+        include_mcp: When ``True``, MCP tools are listed too.
+
+    Returns:
+        JSON response with the tools.
+    """
     try:
-        tools = get_tools_list()
+        tools = get_tools_list(include_mcp=include_mcp)
         return JSONResponse(
             status_code=200,
             content={"status": "success", "tools": tools},
@@ -59,8 +70,16 @@ async def refresh() -> JSONResponse:
     """Full refresh: re-scan external tools, rebuild registry (including MCP).
 
     Triggered by the ``Actualizar`` button in the agent panel.
+
+    Returns:
+        JSON response with the result.
     """
     try:
+        if agent is None or agent.tools is None:
+            return JSONResponse(
+                status_code=500,
+                content={"status": "error", "message": "Error refreshing tools", "tools": []},
+            )
         agent.tools._external_tools = agent.tools._scan_external_tools()
         agent.tools._tools_registry = agent.tools._build_tools_registry()
         tools = get_tools_list()
@@ -77,7 +96,11 @@ async def refresh() -> JSONResponse:
 
 @router.get("/agents")
 async def list_agents() -> JSONResponse:
-    """List available sub-agents (excluding AGENT.md and ROUTER.md)."""
+    """List available sub-agents (excluding AGENT.md and ROUTER.md).
+
+    Returns:
+        JSON response with the agents.
+    """
     try:
         agents = get_agents_list()
         return JSONResponse(
@@ -97,6 +120,9 @@ async def list_mcp_servers() -> JSONResponse:
 
     ``error`` is set when ``mcp.json`` is not a valid array (the list is then
     empty because of the file, not because nothing is configured).
+
+    Returns:
+        JSON response with the servers.
     """
     try:
         servers = await get_mcp_list()

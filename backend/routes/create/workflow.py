@@ -1,51 +1,63 @@
-"""Endpoint POST /api/create/workflow — crear workflows deterministas."""
+"""Endpoint to create or modify workflows.
+
+Runs the agent loop with the workflow creator system prompt. Every turn of
+the same ``creator_id`` continues the conversation (history persists in the
+``creators`` table): the first turn carries the setup form, follow-ups carry
+only the user message. When the turn writes the workflow file, a terminal
+``workflow_result_final`` event is appended; a turn that only asks questions
+emits none.
+
+Scheduled tasks reuse this endpoint through ``create_scheduled_task``: the
+prompt carries the ``schedule`` block and the creator finishes without asking
+for approval.
+"""
 
 from __future__ import annotations
 
 import logging
-import os
 import re
-import sys
-from typing import Any, AsyncGenerator
+import uuid
+from typing import Any
 
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
-# ---------------------------------------------------------------------------
-# Ensure project root for absolute imports
-# ---------------------------------------------------------------------------
-_current_dir = os.path.dirname(os.path.abspath(__file__))
-_project_root = os.path.dirname(os.path.dirname(os.path.dirname(_current_dir)))
-if _project_root not in sys.path:
-    sys.path.insert(0, _project_root)
-
-from backend.agent.utils.config_dir import get_workflows_dir
-from backend.agent.utils.workflows_helpers import (
-    _listar_workflows_locales,
-    _evaluar_si_existe as _evaluar_si_existe_workflow,
-    _workflow_file_path,
-)
-from backend.agent.utils.create_helpers import (
-    stream_tool_calling_loop,
-    stream_interview_loop,
-    resolve_create_model_provider,
-)
+from backend.agent.creator_session import CreatorSessionManager
+from backend.agent.utils.config_dir import get_workflow_prompts_dir, get_workflows_dir, get_workspace_dir
+from backend.agent.utils.create_helpers import build_resource_context, resolve_create_model_provider
+from backend.agent.utils.creators import is_valid_id
+from backend.agent.utils.workflow_validator import normalize_schedule
+from backend.agent.utils.workflows_helpers import _workflow_file_path
 from backend.instances import agent
-from backend.agent.utils.error_logger import log_error
-from backend.agent.utils.creator_runs import track_creator_run
 from backend.routes.create.common import (
-    _AGENT_TOOLS_PERMS,
-    _formatear_mensajes,
-    _sse,
-    _try_parse_json,
+    _WORKFLOWS_DIR,
+    VerifyCreatorRequest,
+    error_response,
+    prompt_error_stream,
     router,
+    stream_creator_turn,
+    verify_creator_conversation,
 )
 
 logger = logging.getLogger(__name__)
 
-_WORKFLOWS_DIR = get_workflows_dir()
+creator_sessions = CreatorSessionManager(kind="workflow")
+"""Persistence of the workflow creator conversations."""
 
-_FRIENDLY_ERROR_WORKFLOW = "No se pudo crear el workflow. Ocurrió un error durante el proceso. Verificá la configuración e intentá de nuevo."
+
+class CreateWorkflowRequest(BaseModel):
+    """Request to create or modify a workflow."""
+
+    descripcion: str
+    name: str | None = None
+    creator_id: str | None = None
+    agentes: list[str] | None = None
+    tools: list[str] | None = None
+    rag: list[str] | None = None
+    tool_args: dict[str, dict[str, Any]] | None = None
+    schedule: dict[str, Any] | None = None
+    model: str | None = None
+    provider: str | None = None
 
 
 def _validar_nombre_workflow(name: str | None) -> str | None:
@@ -70,374 +82,176 @@ def _validar_nombre_workflow(name: str | None) -> str | None:
         return None
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# POST /api/create/workflow — crear workflows deterministas
-# ═══════════════════════════════════════════════════════════════════════
+def _yaml_schedule(schedule: dict[str, Any] | None) -> str:
+    """Render a schedule as the YAML block the creator has to write.
+
+    Args:
+        schedule: Validated schedule (``{"enabled", "slots"}``), or ``None``.
+
+    Returns:
+        The ``schedule:`` block as YAML text, or an empty string without schedule.
+    """
+    if not schedule:
+        return ""
+    lines = ["schedule:", "  enabled: true", "  slots:"]
+    for slot in schedule.get("slots", []) or []:
+        lines.append(f"    - time: \"{slot.get('time', '')}\"")
+        days = slot.get("days", [])
+        lines.append(f"      days: [{', '.join(str(d) for d in days)}]")
+    return "\n".join(lines)
 
 
-class CreateWorkflowRequest(BaseModel):
-    """Request para crear un workflow con iteración."""
+def _setup_text(req: CreateWorkflowRequest, descripcion: str) -> str:
+    """Render the setup form as the head of the first user message.
 
-    descripcion: str
-    name: str | None = None
-    mensajes: list[dict] | None = None
-    model: str | None = None
-    provider: str | None = None
-    iterate: bool = False
+    Args:
+        req: The creation request.
+        descripcion: What the workflow does.
 
-
-_WORKFLOW_INTERVIEW_TOOL: dict[str, Any] = {
-    "type": "function",
-    "function": {
-        "name": "responder_interview_workflow",
-        "description": (
-            "Llamar cuando tengas suficiente información para crear el workflow "
-            "o cuando necesites hacer una pregunta al usuario."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "action": {
-                    "type": "string",
-                    "enum": ["question", "create"],
-                    "description": (
-                        "'question' cuando necesitás más información. "
-                        "'create' cuando ya tenés suficiente para diseñar el workflow."
-                    ),
-                },
-                "question": {
-                    "type": "string",
-                    "description": "Tu pregunta para el usuario (solo si action='question').",
-                },
-                "task": {
-                    "type": "string",
-                    "description": "Descripción detallada del workflow (solo si action='create').",
-                },
-                "name": {
-                    "type": "string",
-                    "description": "Nombre en minúsculas con guiones (solo si action='create').",
-                },
-            },
-            "required": ["action"],
-        },
-    },
-}
+    Returns:
+        The setup block in plain text.
+    """
+    lines = [
+        "Datos del formulario:",
+        f"- Nombre: {(req.name or '').strip() or '(sin nombre, elegilo vos)'}",
+        f"- Descripción: {descripcion}",
+    ]
+    if req.agentes:
+        lines.append(f"- Agentes: {', '.join(req.agentes)}")
+    if req.tools:
+        lines.append(f"- Tools: {', '.join(req.tools)}")
+    if req.tool_args:
+        lines.append(f"- Argumentos de tools: {req.tool_args}")
+    if req.rag:
+        lines.append(f"- Colecciones RAG: {', '.join(req.rag)}")
+    if req.schedule:
+        lines.append("- Es una tarea programada: incluí el bloque schedule indicado y terminá sin pedir aprobación.")
+    return "\n".join(lines)
 
 
 @router.post("/workflow")
 async def post_create_workflow_stream(req: CreateWorkflowRequest):
-    """Streaming endpoint to create a workflow via an LLM interview.
+    """Stream one turn of the workflow creator.
 
-    Same contract as ``POST /api/create/skill`` but emits ``workflow_action``
-    and ``workflow_result_final`` events.
+    Args:
+        req: The creation request (message, optional name, setup form,
+            optional creator id and optional model/provider override).
 
     Returns:
-        A StreamingResponse with SSE events.
+        A ``StreamingResponse`` with the loop SSE events plus, when the
+        turn touched the workflow file, a terminal ``workflow_result_final``
+        event.
     """
     descripcion = (req.descripcion or "").strip()
-    nombre = req.name.strip() if req.name else None
-    mensajes = req.mensajes or []
-
     if not descripcion:
-        return StreamingResponse(
-            iter([_sse({"type": "error", "content": "El campo 'descripcion' es obligatorio."})]),
-            media_type="text/event-stream",
+        return error_response("La descripción es obligatoria.")
+    creator_id = req.creator_id if req.creator_id and is_valid_id(req.creator_id) else str(uuid.uuid4())
+    nombre = _validar_nombre_workflow(req.name)
+    if req.name and not nombre:
+        return error_response("Nombre inválido. Minúsculas, números, guiones.")
+
+    schedule = normalize_schedule(req.schedule) if req.schedule else None
+
+    first_turn = not creator_sessions.has_rows(creator_id)
+    if first_turn:
+        user_message = f"{_setup_text(req, descripcion)}\n\nMensaje del usuario: {descripcion}"
+        user_setup: dict | None = {
+            "name": nombre,
+            "descripcion": descripcion,
+            "agentes": req.agentes or [],
+            "tools": req.tools or [],
+            "rag": req.rag or [],
+            "tool_args": req.tool_args or {},
+            "schedule": schedule,
+        }
+    else:
+        user_message = descripcion
+        user_setup = None
+
+    parameters: dict | None = None
+    if req.model or req.provider:
+        model, provider = resolve_create_model_provider(req.model, req.provider)
+        parameters = {"model": model, "provider": provider}
+
+    try:
+        recursos = await build_resource_context(
+            agentes=req.agentes, tools=req.tools, tool_args=req.tool_args,
+            skills=None, rag=req.rag, with_skills=False, with_mcp=False,
         )
-
-    async def event_stream() -> AsyncGenerator[str, None]:
-        """Generate SSE events for the workflow creation flow."""
-        try:
-            _create_model, _create_provider = resolve_create_model_provider(req.model, req.provider)
-        except Exception as exc:
-            log_error(str(exc), source="create.py:workflow(resolve)")
-            yield _sse({"type": "error", "content": _FRIENDLY_ERROR_WORKFLOW})
-            return
-
-        if req.iterate:
-            yield _sse({"type": "workflow_action", "content": {"action": "iterating"}})
-            valid_iter_name = _validar_nombre_workflow(nombre)
-            if nombre and not valid_iter_name:
-                yield _sse({"type": "error", "content": "Nombre inválido. Minúsculas, números, guiones."})
-                return
-            try:
-                workflow_archivo = str(_workflow_file_path(valid_iter_name or "workflow"))
-                iter_prompt = agent.prompt(
-                    "iterate_workflow",
-                    nombre=valid_iter_name or "(inferir)",
-                    archivo=workflow_archivo,
-                    conversacion=_formatear_mensajes(mensajes),
-                )
-            except FileNotFoundError:
-                logger.exception("Prompt iterate_workflow.jinja no encontrado.")
-                yield _sse({"type": "error", "content": _FRIENDLY_ERROR_WORKFLOW})
-                return
-            except Exception as exc:
-                log_error(str(exc), source="create.py:workflow(iterate_format)")
-                yield _sse({"type": "error", "content": _FRIENDLY_ERROR_WORKFLOW})
-                return
-            try:
-                tools = list(agent.tools.tools_registry(_AGENT_TOOLS_PERMS))
-            except Exception as exc:
-                logger.exception("Error obteniendo tools: %s", exc)
-                yield _sse({"type": "error", "content": _FRIENDLY_ERROR_WORKFLOW})
-                return
-            msgs: list[dict[str, Any]] = [
-                {"role": "system", "content": iter_prompt},
-                {"role": "user", "content": mensajes[-1]["content"] if mensajes else "Modificá el workflow."},
-            ]
-            async for event in stream_tool_calling_loop(
-                msgs, tools, _FRIENDLY_ERROR_WORKFLOW, model=_create_model, provider=_create_provider
-            ):
-                yield _sse(event)
-                if event["type"] == "error":
-                    return
-            try:
-                from backend.agent.utils.workflow_validator import validate_workflow as _validate_iter
-                import yaml as _yaml_iter
-
-                iter_ok = False
-                iter_error = "El workflow modificado no valida."
-                if valid_iter_name:
-                    try:
-                        cand = _workflow_file_path(valid_iter_name)
-                        if cand.is_file():
-                            data = _yaml_iter.safe_load(cand.read_text(encoding="utf-8"))
-                            res = _validate_iter(data if isinstance(data, dict) else {})
-                            if res.get("status") == "success":
-                                iter_ok = True
-                            else:
-                                iter_error = str(res.get("message", iter_error))
-                        else:
-                            iter_error = f"Workflow '{valid_iter_name}' no tiene archivo {cand.name}."
-                    except Exception as exc:
-                        log_error(str(exc), source="create.py:workflow(iterate_validate)")
-                        iter_error = str(exc)
-                if not iter_ok:
-                    yield _sse({"type": "error", "content": iter_error})
-                    return
-            except Exception as exc:
-                log_error(str(exc), source="create.py:workflow(iterate_validate)")
-                yield _sse({"type": "error", "content": _FRIENDLY_ERROR_WORKFLOW})
-                return
-            yield _sse({"type": "workflow_result_final", "content": {
-                "status": "success",
-                "message": f"Workflow '{valid_iter_name}' modificado exitosamente.",
-                "data": {"exist": "Sí", "workflow": valid_iter_name, "workflow_path": workflow_archivo},
-            }})
-            return
-
-        try:
-            _WORKFLOWS_DIR.mkdir(parents=True, exist_ok=True)
-            workflows_locales = _listar_workflows_locales()
-            decision = await _evaluar_si_existe_workflow(descripcion, workflows_locales, req.model, req.provider)
-            if decision and decision.get("exist") == "Sí":
-                wf_name = decision.get("workflow")
-                yield _sse({"type": "workflow_result_final", "content": {
-                    "status": "success",
-                    "message": f"Ya existe el workflow '{wf_name}' que cubre esta tarea.",
-                    "data": {"exist": "Sí", "workflow": wf_name},
-                }})
-                return
-        except Exception as exc:
-            logger.exception("Error en evaluación inicial: %s", exc)
-
-        try:
-            try:
-                prompt = agent.prompt(
-                    "interview_workflow",
-                    descripcion=descripcion,
-                    nombre=nombre or "(inferir)",
-                    mensajes=_formatear_mensajes(mensajes),
-                )
-            except FileNotFoundError:
-                logger.exception("Prompt interview_workflow.jinja no encontrado.")
-                yield _sse({"type": "error", "content": _FRIENDLY_ERROR_WORKFLOW})
-                return
-        except Exception as exc:
-            log_error(str(exc), source="create.py:workflow(interview_format)")
-            yield _sse({"type": "error", "content": _FRIENDLY_ERROR_WORKFLOW})
-            return
-
-        collected_content = ""
-        tool_calls_data = None
-
-        async for event in stream_interview_loop(
-            prompt=prompt,
-            interview_tool=_WORKFLOW_INTERVIEW_TOOL,
-            friendly_error=_FRIENDLY_ERROR_WORKFLOW,
-            model=_create_model,
-            provider=_create_provider,
-        ):
-            if event["type"] == "chunk":
-                collected_content += event.get("content", "")
-                yield _sse(event)
-            elif event["type"] == "_interview_args":
-                tool_calls_data = event.get("content") or {}
-            elif event["type"] == "aborted":
-                yield _sse(event)
-                return
-            else:
-                yield _sse(event)
-
-        if not tool_calls_data:
-            parsed = _try_parse_json(collected_content)
-            if parsed:
-                tool_calls_data = parsed
-            elif collected_content.strip():
-                return
-            else:
-                yield _sse({"type": "error", "content": "El LLM no devolvió una respuesta válida."})
-                return
-
-        action = tool_calls_data.get("action")
-        if action == "question":
-            yield _sse({"type": "workflow_action", "content": {
-                "action": "question", "question": tool_calls_data.get("question", ""),
-            }})
-            return
-        if action != "create":
-            logger.warning("Acción desconocida del LLM: %s", action)
-            yield _sse({"type": "error", "content": _FRIENDLY_ERROR_WORKFLOW})
-            return
-
-        task = tool_calls_data.get("task", descripcion)
-        raw_name = nombre or tool_calls_data.get("name")
-        name = _validar_nombre_workflow(raw_name)
-        if raw_name and not name:
-            yield _sse({"type": "error", "content": "Nombre inválido. Minúsculas, números, guiones."})
-            return
-
-        yield _sse({"type": "workflow_action", "content": {"action": "creating"}})
-
-        try:
-            conversacion = _formatear_mensajes(mensajes) if mensajes else f"**Usuario**: {task}"
-            archivo = str(_workflow_file_path(name or "workflow"))
-            try:
-                sys_prompt = agent.prompt(
-                    "create_workflow",
-                    nombre=name or "(inferir del contexto)",
-                    descripcion=task,
-                    conversacion=conversacion,
-                    archivo=archivo,
-                )
-            except FileNotFoundError:
-                logger.exception("Prompt create_workflow.jinja no encontrado.")
-                yield _sse({"type": "error", "content": _FRIENDLY_ERROR_WORKFLOW})
-                return
-        except Exception as exc:
-            log_error(str(exc), source="create.py:workflow(create_format)")
-            yield _sse({"type": "error", "content": _FRIENDLY_ERROR_WORKFLOW})
-            return
-
-        user_msg = "Creá el workflow. Pasos OBLIGATORIOS en orden: 1) Escribí el archivo <nombre>.yaml con write en la carpeta de workflows. 2) Validá el YAML. 3) Cuando valide, pedime aprobación. Si el workflow necesita prompts propios, guardalos sueltos en workflows/prompts/."
-
-        try:
-            tools = list(agent.tools.tools_registry(_AGENT_TOOLS_PERMS))
-        except Exception as exc:
-            logger.exception("Error obteniendo tools: %s", exc)
-            yield _sse({"type": "error", "content": _FRIENDLY_ERROR_WORKFLOW})
-            return
-
-        msgs_create: list[dict[str, Any]] = [
-            {"role": "system", "content": sys_prompt},
-            {"role": "user", "content": user_msg},
-        ]
-
-        async for event in stream_tool_calling_loop(
-            msgs_create, tools, _FRIENDLY_ERROR_WORKFLOW, model=_create_model, provider=_create_provider
-        ):
-            yield _sse(event)
-            if event["type"] == "error":
-                return
-
-        try:
-            from backend.agent.utils.workflow_validator import validate_workflow
-            import time as _time
-            import yaml as _yaml
-
-            def _try_validate_file(file_name: str) -> tuple[str | None, str | None, str | None]:
-                """Validate one flat workflow file, returning (name, path, error)."""
-                try:
-                    candidate = _workflow_file_path(file_name)
-                except ValueError as exc:
-                    return None, None, str(exc)
-                try:
-                    if not candidate.is_file():
-                        return None, None, f"Workflow '{file_name}' no tiene archivo {candidate.name}."
-                    data = _yaml.safe_load(candidate.read_text(encoding="utf-8"))
-                    result = validate_workflow(data if isinstance(data, dict) else {})
-                    if result.get("status") == "success":
-                        return file_name, str(candidate), None
-                    return None, None, str(result.get("message", "Workflow inválido."))
-                except Exception as exc:
-                    log_error(str(exc), source="create.py:workflow(validate)")
-                    return None, None, str(exc)
-
-            found_name = None
-            found_path = None
-            last_error = "El agente no generó un workflow válido."
-            if name:
-                ok_name, ok_path, err = _try_validate_file(name)
-                if ok_name:
-                    found_name, found_path = ok_name, ok_path
-                elif err:
-                    last_error = err
-            if not found_name and _WORKFLOWS_DIR.is_dir():
-                try:
-                    cutoff = _time.time() - 300
-                    for entry in _WORKFLOWS_DIR.iterdir():
-                        try:
-                            if not entry.is_file() or entry.suffix != ".yaml":
-                                continue
-                            if entry.name.startswith("."):
-                                continue
-                            if name and entry.stem == name:
-                                continue
-                            try:
-                                if entry.stat().st_mtime < cutoff:
-                                    continue
-                            except Exception:
-                                continue
-                            ok_name, ok_path, err = _try_validate_file(entry.stem)
-                            if ok_name:
-                                found_name, found_path = ok_name, ok_path
-                                break
-                            elif err:
-                                last_error = err
-                        except Exception:
-                            continue
-                except Exception as exc:
-                    log_error(str(exc), source="create.py:workflow(scan)")
-        except Exception as exc:
-            log_error(str(exc), source="create.py:workflow(search)")
-            found_name = None
-            found_path = None
-            last_error = "Error buscando el workflow creado."
-
-        if not found_name or not found_path:
-            yield _sse({"type": "error", "content": last_error})
-            return
-        try:
-            import yaml as _yaml_refs
-
-            from backend.agent.utils.workflows_helpers import verificar_refs as _verificar_refs_wf
-
-            with open(found_path, encoding="utf-8") as _fh:
-                _wf_data = _yaml_refs.safe_load(_fh.read())
-            _refs = _verificar_refs_wf(_wf_data if isinstance(_wf_data, dict) else {})
-            _falt = _refs.get("faltantes", []) or []
-            if _falt:
-                _det = "; ".join(str(f.get("detalle", "")) for f in _falt if isinstance(f, dict))
-                yield _sse({"type": "chunk", "content": f"Advertencia: {_det} Crealos para que el workflow pueda ejecutarse."})
-        except Exception as exc:
-            log_error(str(exc), source="create.py:workflow(verificar_refs)")
-        yield _sse({"type": "workflow_result_final", "content": {
-            "status": "success",
-            "message": f"Workflow '{found_name}' creado exitosamente.",
-            "data": {"exist": "No", "workflow": found_name, "workflow_path": found_path},
-        }})
+        system_prompt = agent.prompt(
+            "create_workflow",
+            archivo=str(_workflow_file_path(nombre or "workflow")),
+            programada=schedule is not None,
+            horarios=_yaml_schedule(schedule),
+            carpeta_workflows=_WORKFLOWS_DIR.as_posix(),
+            carpeta_prompts=get_workflow_prompts_dir().as_posix(),
+            carpeta_workspace=get_workspace_dir().as_posix(),
+            **recursos,
+        )
+    except Exception:
+        logger.exception("Prompt create_workflow.jinja no encontrado.")
+        return prompt_error_stream()
 
     return StreamingResponse(
-        track_creator_run("workflow", req, event_stream()),
+        stream_creator_turn(
+            kind="workflow",
+            creator_id=creator_id,
+            user_message=user_message,
+            system_prompt=system_prompt,
+            session_manager=creator_sessions,
+            user_setup=user_setup,
+            parameters=parameters,
+        ),
         media_type="text/event-stream",
     )
+
+
+@router.post("/workflow/verify")
+async def post_verify_workflow(req: VerifyCreatorRequest):
+    """Verify the workflow creator conversation on demand.
+
+    Args:
+        req: The verification request (creator conversation id).
+
+    Returns:
+        ``{"done", "reason"}``: whether the work fulfils the request.
+    """
+    return await verify_creator_conversation("workflow", creator_sessions, req.creator_id)
+
+
+async def create_scheduled_task(req: CreateWorkflowRequest) -> dict[str, str]:
+    """Create a scheduled task and wait for the result (used by Telegram).
+
+    Runs the same creation as ``POST /api/create/workflow`` with a schedule and reads its
+    stream until the final event.
+
+    Args:
+        req: The creation request; ``schedule`` and ``name`` are required.
+
+    Returns:
+        ``{"status": "success" | "error", "message": ...}`` with the final message of the creator.
+    """
+    import json
+
+    final = {"status": "error", "message": "No se pudo crear la tarea programada."}
+    last_text = ""
+    response = await post_create_workflow_stream(req)
+    async for chunk in response.body_iterator:
+        text = chunk.decode("utf-8") if isinstance(chunk, (bytes, bytearray)) else str(chunk)
+        for line in text.splitlines():
+            if not line.startswith("data: "):
+                continue
+            try:
+                payload = json.loads(line[len("data: "):])
+            except ValueError:
+                continue
+            if payload.get("type") == "chunk":
+                last_text += str(payload.get("content") or "")
+            elif payload.get("type") == "workflow_result_final":
+                content = payload.get("content") or {}
+                final = {"status": str(content.get("status", "error")), "message": str(content.get("message", ""))}
+            elif payload.get("type") == "error":
+                final = {"status": "error", "message": str(payload.get("content") or last_text or final["message"])}
+    if final["status"] != "success" and last_text.strip() and final["message"] == "No se pudo crear la tarea programada.":
+        final = {"status": "error", "message": last_text.strip()}
+    return final

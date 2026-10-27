@@ -1,3 +1,9 @@
+"""Extract plain text from the files the user uploads.
+
+Supports text formats, PDF (with OCR for scanned pages), Word and Excel, validating the
+extension and the size before extracting.
+"""
+
 import io
 import logging
 import os
@@ -8,6 +14,11 @@ from dataclasses import dataclass
 from typing import Optional, Tuple
 
 from backend.agent.utils.error_logger import log_error
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from docx.document import Document
 
 logger = logging.getLogger(__name__)
 
@@ -93,20 +104,14 @@ OCR_DPI = int(os.getenv("FILE_UPLOAD_OCR_DPI", "200"))
 
 @dataclass
 class ExtractionResult:
-    '''
-    Container for the result of a text-extraction operation.
+    """Container for the result of a text-extraction operation.
 
-    Attributes
-    ----------
-    success : bool
-        Indicates whether the extraction succeeded without raising an exception.
-    text : str
-        The extracted text if ``success`` is ``True``; otherwise an error placeholder.
-    error_detail : Optional[str]
-        Human-readable description of the error, if any.
-    error_code : Optional[str]
-        Machine-readable error identifier (e.g., ``file_too_large``).
-    '''
+    Attributes:
+        success: Indicates whether the extraction succeeded without raising an exception.
+        text: The extracted text if ``success`` is ``True``; otherwise an error placeholder.
+        error_detail: Human-readable description of the error, if any.
+        error_code: Machine-readable error identifier (e.g., ``file_too_large``).
+    """
     success: bool
     text: str
     error_detail: Optional[str] = None
@@ -114,42 +119,31 @@ class ExtractionResult:
 
 
 def detect_extension(filename: str) -> str:
-    '''
-    Return the lower-case file extension of ``filename``.
+    """Return the lower-case file extension of ``filename``.
 
-    Parameters
-    ----------
-    filename : str
-        Name of the file whose extension should be extracted.
+    Args:
+        filename: Name of the file whose extension should be extracted.
 
-    Returns
-    -------
-    str
+    Returns:
         The extension, including the leading dot (e.g., ``".pdf"``).
-    '''
+    """
     return os.path.splitext(filename)[1].lower()
 
 
 def validate_extension(extension: str, filename: str) -> None:
-    '''
-    Verify that ``extension`` is allowed for upload.
+    """Verify that ``extension`` is allowed for upload.
 
     If the extension is not present in ``ALLOWED_EXTENSIONS``, an
     ``UnsupportedFileTypeError`` is raised with a message that lists the
     permitted extensions.
 
-    Parameters
-    ----------
-    extension : str
-        The file extension to validate (including the leading dot).
-    filename : str
-        The original filename, used only for constructing the error message.
+    Args:
+        extension: The file extension to validate (including the leading dot).
+        filename: The original filename, used only for constructing the error message.
 
-    Raises
-    ------
-    UnsupportedFileTypeError
-        If ``extension`` is not in ``ALLOWED_EXTENSIONS``.
-    '''
+    Raises:
+        UnsupportedFileTypeError: If ``extension`` is not in ``ALLOWED_EXTENSIONS``.
+    """
     if extension not in ALLOWED_EXTENSIONS:
         raise UnsupportedFileTypeError(
             f"Formato no soportado para {filename}. Formatos permitidos: "
@@ -158,21 +152,15 @@ def validate_extension(extension: str, filename: str) -> None:
 
 
 def validate_size(file_size_bytes: int, filename: str) -> None:
-    '''
-    Ensure that the uploaded file does not exceed ``MAX_UPLOAD_SIZE_MB``.
+    """Ensure that the uploaded file does not exceed ``MAX_UPLOAD_SIZE_MB``.
 
-    Parameters
-    ----------
-    file_size_bytes : int
-        Size of the file in bytes.
-    filename : str
-        Name of the file, used for the error message.
+    Args:
+        file_size_bytes: Size of the file in bytes.
+        filename: Name of the file, used for the error message.
 
-    Raises
-    ------
-    FileTooLargeError
-        If the file size exceeds the configured limit.
-    '''
+    Raises:
+        FileTooLargeError: If the file size exceeds the configured limit.
+    """
     max_bytes = int(MAX_UPLOAD_SIZE_MB * 1024 * 1024)
     if file_size_bytes > max_bytes:
         raise FileTooLargeError(
@@ -181,8 +169,7 @@ def validate_size(file_size_bytes: int, filename: str) -> None:
 
 
 def extract_text_from_bytes(filename: str, data: bytes) -> ExtractionResult:
-    '''
-    Extract plain text from a file represented by ``data`` according to its extension.
+    """Extract plain text from a file represented by ``data`` according to its extension.
 
     The function determines the file type, validates the extension and size,
     and then dispatches to a format-specific extractor.  Supported formats
@@ -196,20 +183,13 @@ def extract_text_from_bytes(filename: str, data: bytes) -> ExtractionResult:
     and ``error_code`` fields.  Unexpected exceptions are logged and also
     result in ``success=False``.
 
-    Parameters
-    ----------
-    filename : str
-        Original name of the uploaded file (used for extension detection and
-        error messages).
-    data : bytes
-        Raw file contents.
+    Args:
+        filename: Original name of the uploaded file (used for extension detection and error messages).
+        data: Raw file contents.
 
-    Returns
-    -------
-    ExtractionResult
-        An object describing whether extraction succeeded and containing the
-        extracted text or an error placeholder.
-    '''
+    Returns:
+        An object describing whether extraction succeeded and containing the extracted text or an error placeholder.
+    """
     extension = detect_extension(filename)
     try:
         validate_extension(extension, filename)
@@ -278,24 +258,17 @@ def extract_text_from_bytes(filename: str, data: bytes) -> ExtractionResult:
 
 
 def _decode_text_bytes(data: bytes) -> str:
-    '''
-    Decode a ``bytes`` object to ``str`` using UTF-8, falling back to Latin-1.
+    """Decode a ``bytes`` object to ``str`` using UTF-8, falling back to Latin-1.
 
-    Parameters
-    ----------
-    data : bytes
-        Raw text data.
+    Args:
+        data: Raw text data.
 
-    Returns
-    -------
-    str
+    Returns:
         Decoded text.
 
-    Raises
-    ------
-    FileTextExtractionError
-        If the data cannot be decoded with either UTF-8 or Latin-1.
-    '''
+    Raises:
+        FileTextExtractionError: If the data cannot be decoded with either UTF-8 or Latin-1.
+    """
     try:
         return data.decode("utf-8")
     except UnicodeDecodeError as e:
@@ -310,29 +283,22 @@ def _decode_text_bytes(data: bytes) -> str:
 
 
 def _extract_docx_bytes(data: bytes) -> str:
-    '''
-    Extract text from a ``.docx`` file stored in memory.
+    """Extract text from a ``.docx`` file stored in memory.
 
     The function uses ``python-docx`` to read paragraphs and tables.
     Paragraph texts are stripped of surrounding whitespace; table rows are
     concatenated with ``" | "`` separators.  Paragraph text appears before
     any extracted tables.
 
-    Parameters
-    ----------
-    data : bytes
-        Binary content of the ``.docx`` file.
+    Args:
+        data: Binary content of the ``.docx`` file.
 
-    Returns
-    -------
-    str
+    Returns:
         Combined plain-text representation of the document.
 
-    Raises
-    ------
-    MissingDependencyError
-        If ``python-docx`` is not installed.
-    '''
+    Raises:
+        MissingDependencyError: If ``python-docx`` is not installed.
+    """
     if Document is None:
         raise MissingDependencyError(
             "Dependencia python-docx no disponible en el servidor."
@@ -346,22 +312,17 @@ def _extract_docx_bytes(data: bytes) -> str:
     return combined
 
 
-def _extract_docx_tables(document) -> str:
-    '''
-    Extract table contents from a ``python-docx`` document.
+def _extract_docx_tables(document: 'Document') -> str:
+    """Extract table contents from a ``python-docx`` document.
 
     Each row is joined with ``" | "`` and rows are separated by newlines.
 
-    Parameters
-    ----------
-    document : Document
-        ``python-docx`` Document object.
+    Args:
+        document: ``python-docx`` Document object.
 
-    Returns
-    -------
-    str
+    Returns:
         Text representation of all tables in the document.
-    '''
+    """
     rows = []
     for table in getattr(document, "tables", []):
         for row in table.rows:
@@ -372,33 +333,24 @@ def _extract_docx_tables(document) -> str:
 
 
 def _extract_doc_bytes(data: bytes, filename: str) -> str:
-    '''
-    Convert a legacy ``.doc`` file to ``.docx`` using LibreOffice and extract text.
+    """Convert a legacy ``.doc`` file to ``.docx`` using LibreOffice and extract text.
 
     The function locates the ``soffice`` executable, writes the input bytes to a
     temporary file, runs LibreOffice in headless mode to perform the conversion,
     and then delegates to ``_extract_docx_bytes``.  Errors during conversion
     raise ``FileTextExtractionError``.
 
-    Parameters
-    ----------
-    data : bytes
-        Binary content of the ``.doc`` file.
-    filename : str
-        Original filename (used for error messages).
+    Args:
+        data: Binary content of the ``.doc`` file.
+        filename: Original filename (used for error messages).
 
-    Returns
-    -------
-    str
+    Returns:
         Extracted text from the converted document.
 
-    Raises
-    ------
-    MissingDependencyError
-        If LibreOffice ``soffice`` cannot be found.
-    FileTextExtractionError
-        If the conversion fails or the resulting ``.docx`` file is missing.
-    '''
+    Raises:
+        MissingDependencyError: If LibreOffice ``soffice`` cannot be found.
+        FileTextExtractionError: If the conversion fails or the resulting ``.docx`` file is missing.
+    """
     soffice_path = _locate_soffice()
     if not soffice_path:
         raise MissingDependencyError(
@@ -433,8 +385,7 @@ def _extract_doc_bytes(data: bytes, filename: str) -> str:
 
 
 def _extract_xlsx_bytes(data: bytes, filename: str) -> str:
-    '''
-    Extract text from an ``.xlsx`` workbook.
+    """Extract text from an ``.xlsx`` workbook.
 
     The function writes the bytes to a temporary file, opens it with
     ``openpyxl`` in read-only mode, iterates over worksheets and rows,
@@ -442,25 +393,17 @@ def _extract_xlsx_bytes(data: bytes, filename: str) -> str:
     prefixed with ``[Hoja: <title>]``.  Empty rows are skipped.  The temporary
     file is removed after processing.
 
-    Parameters
-    ----------
-    data : bytes
-        Binary content of the ``.xlsx`` file.
-    filename : str
-        Original filename (used for error messages).
+    Args:
+        data: Binary content of the ``.xlsx`` file.
+        filename: Original filename (used for error messages).
 
-    Returns
-    -------
-    str
+    Returns:
         Plain-text representation of the workbook.
 
-    Raises
-    ------
-    MissingDependencyError
-        If ``openpyxl`` is not installed.
-    FileTextExtractionError
-        If the workbook cannot be opened or contains no usable content.
-    '''
+    Raises:
+        MissingDependencyError: If ``openpyxl`` is not installed.
+        FileTextExtractionError: If the workbook cannot be opened or contains no usable content.
+    """
     if load_workbook is None:
         raise MissingDependencyError(
             "Dependencia openpyxl no disponible en el servidor."
@@ -507,32 +450,23 @@ def _extract_xlsx_bytes(data: bytes, filename: str) -> str:
 
 
 def _extract_xls_bytes(data: bytes, filename: str) -> str:
-    '''
-    Convert a legacy ``.xls`` file to ``.xlsx`` using LibreOffice and extract text.
+    """Convert a legacy ``.xls`` file to ``.xlsx`` using LibreOffice and extract text.
 
     The conversion process mirrors ``_extract_doc_bytes``.  After conversion,
     the resulting ``.xlsx`` bytes are passed to ``_extract_xlsx_bytes`` for
     actual text extraction.
 
-    Parameters
-    ----------
-    data : bytes
-        Binary content of the ``.xls`` file.
-    filename : str
-        Original filename (used for error messages).
+    Args:
+        data: Binary content of the ``.xls`` file.
+        filename: Original filename (used for error messages).
 
-    Returns
-    -------
-    str
+    Returns:
         Extracted text from the converted workbook.
 
-    Raises
-    ------
-    MissingDependencyError
-        If LibreOffice ``soffice`` cannot be found.
-    FileTextExtractionError
-        If the conversion fails or the resulting file is missing.
-    '''
+    Raises:
+        MissingDependencyError: If LibreOffice ``soffice`` cannot be found.
+        FileTextExtractionError: If the conversion fails or the resulting file is missing.
+    """
     soffice_path = _locate_soffice()
     if not soffice_path:
         raise MissingDependencyError(
@@ -567,14 +501,11 @@ def _extract_xls_bytes(data: bytes, filename: str) -> str:
 
 
 def _locate_soffice() -> Optional[str]:
-    '''
-    Search the system PATH for the LibreOffice ``soffice`` executable.
+    """Search the system PATH for the LibreOffice ``soffice`` executable.
 
-    Returns
-    -------
-    Optional[str]
+    Returns:
         Full path to ``soffice`` if found; otherwise ``None``.
-    '''
+    """
     for candidate in ("soffice", "soffice.exe"):
         path = shutil.which(candidate)
         if path:
@@ -583,8 +514,7 @@ def _locate_soffice() -> Optional[str]:
 
 
 def _extract_pdf_bytes(data: bytes, filename: str) -> str:
-    '''
-    Extract text from a PDF file, falling back to OCR when necessary.
+    """Extract text from a PDF file, falling back to OCR when necessary.
 
     The function first attempts to extract embedded text using
     ``pdfminer.six``.  If the resulting text length is below
@@ -593,25 +523,17 @@ def _extract_pdf_bytes(data: bytes, filename: str) -> str:
     The final result is the concatenation of the extracted text and any
     OCR output, with whitespace trimmed.
 
-    Parameters
-    ----------
-    data : bytes
-        Binary PDF content.
-    filename : str
-        Original filename (used for error messages).
+    Args:
+        data: Binary PDF content.
+        filename: Original filename (used for error messages).
 
-    Returns
-    -------
-    str
+    Returns:
         Extracted (and possibly OCR-augmented) text.
 
-    Raises
-    ------
-    MissingDependencyError
-        If ``pdfminer.six`` is not installed.
-    FileTextExtractionError
-        If PDF parsing fails.
-    '''
+    Raises:
+        MissingDependencyError: If ``pdfminer.six`` is not installed.
+        FileTextExtractionError: If PDF parsing fails.
+    """
     if pdf_extract_text is None:
         raise MissingDependencyError(
             "Dependencia pdfminer.six no disponible en el servidor."
@@ -644,34 +566,24 @@ def _extract_pdf_bytes(data: bytes, filename: str) -> str:
 
 
 def _extract_pdf_via_ocr(data: bytes, filename: str) -> str:
-    '''
-    Perform OCR on a PDF file using ``pdf2image`` and ``pytesseract``.
+    """Perform OCR on a PDF file using ``pdf2image`` and ``pytesseract``.
 
     The function renders up to ``MAX_OCR_PAGES`` pages at ``OCR_DPI`` DPI,
     runs Tesseract OCR (Spanish + English), and concatenates non-empty
     results separated by double newlines.  If OCR fails for a page, a
     warning is logged and processing continues.
 
-    Parameters
-    ----------
-    data : bytes
-        Binary PDF content.
-    filename : str
-        Original filename (used for error messages).
+    Args:
+        data: Binary PDF content.
+        filename: Original filename (used for error messages).
 
-    Returns
-    -------
-    str
+    Returns:
         OCR-derived text.
 
-    Raises
-    ------
-    MissingDependencyError
-        If any of ``pdf2image``, ``pytesseract`` or ``Pillow`` is missing,
-        or if Tesseract executable is not found.
-    FileTextExtractionError
-        If PDF rendering fails or no text is extracted.
-    '''
+    Raises:
+        MissingDependencyError: If any of ``pdf2image``, ``pytesseract`` or ``Pillow`` is missing, or if Tesseract executable is not found.
+        FileTextExtractionError: If PDF rendering fails or no text is extracted.
+    """
     if convert_from_bytes is None or pytesseract is None or Image is None:
         raise MissingDependencyError(
             "OCR no disponible: faltan dependencias (pdf2image, pytesseract o Pillow)."
@@ -719,20 +631,13 @@ def _extract_pdf_via_ocr(data: bytes, filename: str) -> str:
 
 
 def is_extension_allowed(filename: str) -> Tuple[bool, str]:
-    '''
-    Determine whether a file's extension is permitted for upload.
+    """Determine whether a file's extension is permitted for upload.
 
-    Parameters
-    ----------
-    filename : str
-        Name of the file to check.
+    Args:
+        filename: Name of the file to check.
 
-    Returns
-    -------
-    Tuple[bool, str]
-        A tuple where the first element is ``True`` if the extension is in
-        ``ALLOWED_EXTENSIONS`` and ``False`` otherwise; the second element is
-        the detected lower-case extension.
-    '''
+    Returns:
+        A tuple where the first element is ``True`` if the extension is in ``ALLOWED_EXTENSIONS`` and ``False`` otherwise; the second element is the detected lower-case extension.
+    """
     extension = detect_extension(filename)
     return extension in ALLOWED_EXTENSIONS, extension

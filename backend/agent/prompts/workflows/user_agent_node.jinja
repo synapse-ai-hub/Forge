@@ -1,0 +1,10 @@
+{# name: user_agent_node
+   description: Mensaje de un nodo agent de un workflow: el prompt del nodo y, si hay, los resultados completos de los nodos anteriores.
+   version: 0.0.1
+   updated: 2026-10-21 #}
+{{ prompt }}
+{% if contexto %}
+
+Contexto de steps previos:
+{{ contexto }}
+{% endif %}

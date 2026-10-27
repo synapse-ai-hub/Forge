@@ -8,6 +8,11 @@ class ListingCommandsMixin:
     """``/skills``, ``/tools`` and ``/agentes``."""
 
     async def _cmd_skills(self, chat_id: int) -> None:
+        """Answer ``/skills``: list the skills (dev mode only).
+
+        Args:
+            chat_id: Telegram chat id.
+        """
         if not self.is_dev:
             await self.send_message(chat_id, "Disponible solo en modo dev.")
             return
@@ -22,6 +27,11 @@ class ListingCommandsMixin:
         await self.send_message(chat_id, "\n".join(lines))
 
     async def _cmd_tools(self, chat_id: int) -> None:
+        """Answer ``/tools``: list the tools (dev mode only).
+
+        Args:
+            chat_id: Telegram chat id.
+        """
         if not self.is_dev:
             await self.send_message(chat_id, "Disponible solo en modo dev.")
             return
@@ -36,6 +46,11 @@ class ListingCommandsMixin:
         await self.send_message(chat_id, "\n".join(lines))
 
     async def _cmd_agentes(self, chat_id: int) -> None:
+        """Answer ``/agentes``: list the agents (dev mode only).
+
+        Args:
+            chat_id: Telegram chat id.
+        """
         if not self.is_dev:
             await self.send_message(chat_id, "Disponible solo en modo dev.")
             return

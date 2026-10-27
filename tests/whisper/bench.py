@@ -40,7 +40,14 @@ RUNS = 5
 # ---------------------------------------------------------------------------
 
 def get_audio_bytes(path: Path) -> tuple[bytes, str]:
-    """Read audio file and determine media type for Groq API."""
+    """Read an audio file and determine its media type for the Groq API.
+
+    Args:
+        path: Audio file.
+
+    Returns:
+        ``(bytes, media_type)`` of the file.
+    """
     raw = path.read_bytes()
 
     if raw[:4] == b"OggS":
@@ -68,7 +75,14 @@ def get_audio_bytes(path: Path) -> tuple[bytes, str]:
 # ---------------------------------------------------------------------------
 
 def bench_local(audio_bytes: bytes) -> tuple[list[float], list[str]]:
-    """Benchmark local faster-whisper (base model, CPU, int8)."""
+    """Benchmark local faster-whisper (base model, CPU, int8).
+
+    Args:
+        audio_bytes: Content of the audio file.
+
+    Returns:
+        ``(times, texts)`` of every run; both empty when faster-whisper is not installed.
+    """
     try:
         from faster_whisper import WhisperModel
     except ImportError:
@@ -93,7 +107,16 @@ def bench_local(audio_bytes: bytes) -> tuple[list[float], list[str]]:
 
 
 def bench_groq(audio_bytes: bytes, media_type: str, model: str) -> tuple[list[float], list[str]]:
-    """Benchmark Groq Whisper API."""
+    """Benchmark Groq Whisper API.
+
+    Args:
+        audio_bytes: Content of the audio file.
+        media_type: Media type of the audio.
+        model: Groq model to call.
+
+    Returns:
+        ``(times, texts)`` of every run; both empty when there is no Groq API key.
+    """
     if not GROQ_API_KEY:
         print("  [SKIP] GROQ_API_KEY not in .env")
         return [], []
@@ -132,7 +155,14 @@ def bench_groq(audio_bytes: bytes, media_type: str, model: str) -> tuple[list[fl
 # ---------------------------------------------------------------------------
 
 def _stats(times: list[float]) -> dict:
-    """Compute min, max, avg, median from a list of times."""
+    """Compute min, max, avg, median from a list of times.
+
+    Args:
+        times: Durations in seconds.
+
+    Returns:
+        The four statistics (zeros for an empty list).
+    """
     if not times:
         return {"min": 0, "max": 0, "avg": 0, "median": 0}
     return {
@@ -146,7 +176,14 @@ def _stats(times: list[float]) -> dict:
 def generate_markdown(
     audio_results: list[dict],
 ) -> str:
-    """Generate the full markdown report."""
+    """Generate the full markdown report.
+
+    Args:
+        audio_results: One dict per audio file with its size, media type and the results of each provider.
+
+    Returns:
+        The markdown text.
+    """
     lines: list[str] = []
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     lines.append(f"# Whisper Benchmark — {ts}\n")
@@ -210,6 +247,11 @@ PROVIDERS = {
 
 
 def main() -> None:
+    """Benchmark every audio file of the data folder and save the markdown report.
+
+    Raises:
+        SystemExit: If the data folder does not exist or has no audio files.
+    """
     if not _DATA_DIR.exists():
         print(f"Data directory not found: {_DATA_DIR}")
         sys.exit(1)

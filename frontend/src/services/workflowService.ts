@@ -8,7 +8,6 @@ export type WorkflowRunStatus = "running" | "success" | "error" | "cancelled";
 export interface WorkflowRun {
   id: string;
   workflow_name: string;
-  session_id: string | null;
   source: "play" | "tool" | null;
   status: WorkflowRunStatus;
   attempt: number | null;
@@ -35,7 +34,6 @@ export interface WorkflowRunEvent {
   workflow: string;
   status: WorkflowRunStatus;
   attempt: number | null;
-  session_id: string | null;
 }
 
 async function list(): Promise<WorkflowItem[]> {
@@ -46,7 +44,7 @@ async function list(): Promise<WorkflowItem[]> {
 }
 
 /** Start a run in the background (the play button). */
-async function run(name: string): Promise<{ run_id: string; session_id: string }> {
+async function run(name: string): Promise<{ run_id: string }> {
   const res = await fetch(`${API_BASE_URL}/api/workflows/${encodeURIComponent(name)}/run`, {
     method: "POST",
   });

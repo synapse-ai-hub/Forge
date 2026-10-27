@@ -35,6 +35,7 @@ import re
 import sys
 import time
 import types
+from typing import Any
 
 _current_dir = os.path.dirname(os.path.abspath(__file__))
 _project_root = os.path.dirname(os.path.dirname(os.path.dirname(_current_dir)))
@@ -51,6 +52,7 @@ from backend.agent.permissions import (
 from backend.agent.utils.mcp_helper import (
     execute_mcp_tool,
     get_mcp_tools,
+    is_internal_mcp_tool,
     is_mcp_tool,
     mcp_servers_configured,
     mcp_tools_discovered,
@@ -80,7 +82,6 @@ from backend.agent.tools.check_email import CheckEmailMixin
 from backend.agent.tools.edit import EditMixin
 from backend.agent.tools.glob import GlobMixin
 from backend.agent.tools.grep import GrepMixin
-from backend.agent.tools.help import HelpMixin
 from backend.agent.tools.list_dir import ListDirMixin
 from backend.agent.tools.query_model_capabilities import QueryModelCapabilitiesMixin
 from backend.agent.tools.rag import RagMixin
@@ -93,7 +94,6 @@ from backend.agent.tools.skill import SkillMixin
 from backend.agent.tools.task import TaskMixin
 from backend.agent.tools.webfetch import WebfetchMixin
 from backend.agent.tools.websearch import WebsearchMixin
-from backend.agent.tools.workflow import WorkflowMixin
 from backend.agent.tools.write import WriteMixin
 
 
@@ -119,6 +119,8 @@ class ToolsBase:
 
             Uses the type annotation to select the JSON type and unwraps ``Optional`` /
             ``Union[..., None]`` so that ``str | None`` yields ``{"type": "string"}``.
+            Generic aliases are mapped through their origin, and ``array``
+            schemas always carry ``items`` (required by Gemini).
 
             Args:
                 param: The parameter to convert.
@@ -151,11 +153,30 @@ class ToolsBase:
                     annotation = non_none[0]  # fallback: use first non-None
 
             json_type = Tools._PY_TYPE_TO_JSON.get(annotation)
+            item_args: tuple = ()
+            if json_type is None:
+                # Support generic aliases (list[dict], dict[str, Any], ...):
+                # map them through their origin (list -> array, dict -> object).
+                origin = getattr(annotation, "__origin__", None)
+                if origin is not None:
+                    json_type = Tools._PY_TYPE_TO_JSON.get(origin)
+                    item_args = getattr(annotation, "__args__", ()) or ()
             if json_type is None:
                 return None
 
+            if json_type == "array":
+                # Gemini function declarations reject arrays without ``items``.
+                item_type = None
+                if item_args:
+                    item_type = Tools._PY_TYPE_TO_JSON.get(item_args[0])
+                    if item_type is None:
+                        item_origin = getattr(item_args[0], "__origin__", None)
+                        if item_origin is not None:
+                            item_type = Tools._PY_TYPE_TO_JSON.get(item_origin)
+                return {"type": "array", "items": {"type": item_type or "string"}}
+
             return {"type": json_type}
-    def __init__(self):
+    def __init__(self) -> None:
             """Initializes Tools.
         
             """
@@ -190,6 +211,7 @@ class ToolsBase:
                     self._last_mcp_selfheal = now
 
                     def _rebuild() -> None:
+                        """Rebuild the tools registry after the MCP self-heal."""
                         try:
                             self._tools_registry = self._build_tools_registry()
                         except Exception as e:
@@ -217,14 +239,16 @@ class ToolsBase:
 
             Checks the registry content (not the discovery mapping) so a late
             background discovery that populated the mapping but not the registry
-            still triggers the self-heal.
+            still triggers the self-heal. Internal tools (``context7docs_*``)
+            do not count: they are granted per-turn, not via ``mcp.json``.
 
             Returns:
                 ``True`` when at least one registry tool is MCP-managed.
             """
             return any(
-                is_mcp_tool(str(tool.get("function", {}).get("name", "")))
+                is_mcp_tool(name) and not is_internal_mcp_tool(name)
                 for tool in self._tools_registry
+                for name in [str(tool.get("function", {}).get("name", ""))]
             )
     def _build_tool_schema(
             self,
@@ -256,7 +280,10 @@ class ToolsBase:
                     continue
                 schema = self._param_to_schema(param)
                 if schema is not None:
-                    pdesc = param_descs.get(param_name)
+                    pdesc = param_descs.get(param_name) or ""
+                    if param.default is not inspect.Parameter.empty and param.default is not None:
+                        if "default" not in pdesc.lower() and "defecto" not in pdesc.lower():
+                            pdesc = f"{pdesc} Default: {param.default!r}.".strip()
                     if pdesc:
                         schema["description"] = pdesc
                     properties[param_name] = schema
@@ -343,13 +370,13 @@ class ToolsBase:
             return tools
     @staticmethod
     def _parse_param_descriptions(doc: str) -> dict[str, str]:
-            """Parse Google-style ``Args:`` section from a docstring.
+            """Parse the Google-style ``Args:`` section of a docstring.
 
-            Looks for a block like::
+            Each entry of the section is ``name: description`` and its description may continue on
+            the following, more indented lines.
 
-                Args:
-                    param_name: Description text.
-                    other_param: Another description.
+            Args:
+                doc: Docstring of the tool method.
 
             Returns:
                 ``{param_name: description}`` dict.
@@ -357,6 +384,31 @@ class ToolsBase:
             descs: dict[str, str] = {}
             if not doc:
                 return descs
+
+            in_args = False
+            base_indent: int | None = None
+            current: str | None = None
+            for line in doc.split("\n"):
+                stripped = line.strip()
+                if stripped == "Args:":
+                    in_args = True
+                    continue
+                if not in_args or not stripped:
+                    continue
+                indent = len(line) - len(line.lstrip())
+                if base_indent is None:
+                    base_indent = indent
+                # A line less indented than the parameters is the next section (``Returns:``, ...)
+                if indent < base_indent:
+                    break
+                match = re.match(r"^(\w+)(?:\s*\([^)]*\))?:\s*(.*)", stripped) if indent == base_indent else None
+                if match:
+                    current = match.group(1)
+                    descs[current] = match.group(2).strip()
+                elif current is not None:
+                    # Continuation of the description of the previous parameter
+                    descs[current] = f"{descs[current]} {stripped}".strip()
+            return descs
 
             lines = doc.split("\n")
             in_args = False
@@ -380,7 +432,9 @@ class ToolsBase:
             """Locate the external ``tools/`` folder.
 
             Uses the config directory ``~/.config/synapseForge/tools/``.
-            Returns ``None`` (no error) if the folder does not exist.
+
+            Returns:
+                The path as text, or ``None`` (no error) if the folder does not exist.
             """
             from backend.agent.utils.config_dir import get_tools_dir
 
@@ -453,7 +507,7 @@ class ToolsBase:
                 })
 
             return results
-    async def _execute_tool(self, tool_name: str, **kwargs) -> dict:
+    async def _execute_tool(self, tool_name: str, **kwargs: Any) -> dict:
             """Execute a tool by name, dispatching to native or external handler.
 
             Args:
@@ -471,8 +525,10 @@ class ToolsBase:
                     try:
                         spec = importlib.util.spec_from_file_location(tool_name, module_path)
                         if spec is None or spec.loader is None:
+                            load_message = f"execute_tool: no se pudo cargar '{tool_name}'"
+                            log_error(load_message, source="tools.py:execute_tool")
                             return make_error_response(
-                                message=f"execute_tool: no se pudo cargar '{tool_name}'",
+                                message=load_message,
                                 usage=zero_usage(),
                             )
                         mod = importlib.util.module_from_spec(spec)
@@ -489,12 +545,20 @@ class ToolsBase:
                                 sys.path.remove(tools_dir)
                         handler = getattr(mod, handler_name, None)
                         if handler is None:
+                            handler_message = f"execute_tool: '{tool_name}' no expone handler '{handler_name}'"
+                            log_error(handler_message, source="tools.py:execute_tool")
                             return make_error_response(
-                                message=f"execute_tool: '{tool_name}' no expone handler '{handler_name}'",
+                                message=handler_message,
                                 usage=zero_usage(),
                             )
                         # External tools are self-contained — pass only user params
-                        return await handler(**kwargs)
+                        ext_result = await handler(**kwargs)
+                        if isinstance(ext_result, dict) and ext_result.get("status") == "error":
+                            log_error(
+                                f"execute_tool: '{tool_name}' devolvió error: {ext_result.get('message', ext_result)}",
+                                source="tools.py:execute_tool",
+                            )
+                        return ext_result
                     except Exception as e:
                         logging.getLogger(__name__).exception(
                             "execute_tool: error en '%s': %s", tool_name, e
@@ -508,7 +572,13 @@ class ToolsBase:
             # Fall back to native method
             native = getattr(self, tool_name, None)
             if native and callable(native):
-                return await native(**kwargs)
+                native_result = await native(**kwargs)
+                if isinstance(native_result, dict) and native_result.get("status") == "error":
+                    log_error(
+                        f"execute_tool: '{tool_name}' devolvió error: {native_result.get('message', native_result)}",
+                        source="tools.py:execute_tool",
+                    )
+                return native_result
 
             # --- MCP tool dispatch -----------------------------------------------
             # Attempt MCP dispatch when the tool is known MCP, or when MCP servers
@@ -532,8 +602,10 @@ class ToolsBase:
                         usage=zero_usage(),
                     )
 
+            not_found_message = f"execute_tool: tool '{tool_name}' no encontrada en native, externas ni MCP"
+            log_error(not_found_message, source="tools.py:execute_tool")
             return make_error_response(
-                message=f"execute_tool: tool '{tool_name}' no encontrada en native, externas ni MCP",
+                message=not_found_message,
                 usage=zero_usage(),
             )
     @staticmethod
@@ -560,6 +632,14 @@ class ToolsBase:
 
             # Inline: links [text](url) -> <a href="url">text</a>
             def _sanitize_url(match: re.Match) -> str:
+                """Build the HTML of a markdown link, blocking unsafe URL schemes.
+
+                Args:
+                    match: Regex match of ``[label](url)``.
+
+                Returns:
+                    The ``<a>`` element for a safe URL, or the label followed by the URL as text.
+                """
                 url = match.group(2).strip()
                 label = match.group(1)
                 allowed = ("http://", "https://", "mailto:", "ftp://")
@@ -647,7 +727,6 @@ class Tools(
     EditMixin,
     GlobMixin,
     GrepMixin,
-    HelpMixin,
     ListDirMixin,
     QueryModelCapabilitiesMixin,
     RagMixin,
@@ -660,7 +739,6 @@ class Tools(
     TaskMixin,
     WebfetchMixin,
     WebsearchMixin,
-    WorkflowMixin,
     WriteMixin,
     ToolsBase,
 ):

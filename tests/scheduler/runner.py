@@ -1,9 +1,9 @@
-"""Scheduler E2E runner: verifies the scheduled-task CRUD lifecycle.
+"""Scheduler E2E runner: verifies the endpoints of the scheduled tasks (agenda).
 
 Follows the same declarative YAML methodology as ``tests.e2e.runner`` (real
 endpoints, no mocks) and adds a scheduler-specific verification: after the
-scenario steps run, it calls ``/api/scheduler/tasks`` and asserts that the task
-created by the scenario persisted with the expected fields.
+scenario steps run, a ``verify`` block can call ``/api/scheduler/tasks`` and assert that a
+task persisted with the expected fields.
 
 Scenario YAML schema::
 

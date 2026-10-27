@@ -4,12 +4,12 @@ import logging
 import os
 
 from backend.agent.utils.contract import make_error_response, make_success_response, zero_usage
-from backend.agent.utils.error_logger import log_error
 
 logger = logging.getLogger(__name__)
 
 
 class EditMixin:
+    """Native tool ``edit``: replace text in a file."""
     async def edit(self, file_path: str, old_string: str, new_string: str,
                        replace_all: bool = False) -> dict:
             """Performs exact string replacements in a file.
@@ -75,7 +75,6 @@ class EditMixin:
                 )
             except Exception as e:
                 logger.exception("Error in edit: %s", e)
-                log_error(str(e), source="tools.py:edit")
                 return make_error_response(
                     message=f"Error editing file: {e}",
                     usage=zero_usage(),

@@ -35,8 +35,12 @@
   background-color: #ebebeb;
 }
 .markdown-content a {
+  /* index.css pinta el link con fondo = --color-app-primary; acá el texto es
+     ese mismo índigo, así que sin esto fondo y letra quedaban iguales. */
+  background-color: transparent;
   color: #4f46e5;
   text-decoration: underline;
+  padding: 0;
 }
 .markdown-content blockquote {
   border-left: 4px solid #d4d4d4;

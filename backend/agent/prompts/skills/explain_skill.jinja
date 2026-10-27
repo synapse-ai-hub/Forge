@@ -1,0 +1,23 @@
+{# name: explain_skill
+   description: Explica brevemente qué hace una skill y por qué sirve para la tarea del usuario.
+   version: 0.0.1
+   updated: 2026-10-25 #}
+## Rol y objetivo
+
+Dado el contenido de una skill (SKILL.md) y la tarea que el usuario quiere resolver, explicá de forma breve y clara qué hace esa skill y por qué es útil para lo que el usuario necesita.
+
+## Tarea del usuario
+
+{{ tarea }}
+
+## Contenido de la skill
+
+{{ contenido }}
+
+## Formato de salida
+
+Devolvé SOLO un JSON válido con las siguientes keys:
+
+{"explicacion": "<explicación breve de 2-3 oraciones: qué hace la skill + por qué sirve para esta tarea>"}
+
+Sin texto adicional.

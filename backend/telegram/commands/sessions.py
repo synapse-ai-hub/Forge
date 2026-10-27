@@ -12,7 +12,11 @@ class SessionCommandsMixin:
     """``/sesiones``, ``/usar``, ``/actual``, ``/contexto`` and ``/borrar``."""
 
     def _list_sessions(self) -> list[dict]:
-        """Return the list of root sessions (most recent first)."""
+        """List the root sessions.
+
+        Returns:
+            The sessions, most recent first.
+        """
         try:
             return self.session_manager.list_sessions() or []
         except Exception as exc:
@@ -20,17 +24,31 @@ class SessionCommandsMixin:
             return []
 
     def _session_title(self, session_id: str) -> str | None:
+        """Look up the title of a session.
+
+        Args:
+            session_id: Session identifier.
+
+        Returns:
+            The title (the session id when it has none), or None when the session does not exist.
+        """
         for s in self._list_sessions():
             if s.get("session_id") == session_id:
                 return s.get("title") or session_id
         return None
 
     def _active_session(self, chat_id: int) -> str | None:
-        """Return the active session for a chat.
+        """Get the active session for a chat.
 
         Prefers the in-memory per-chat session (set via ``/usar``, ``/nueva``,
         ``/borrar``). Falls back to the DB-persisted ``active_session`` so a
         session selected in the frontend is also active in Telegram.
+
+        Args:
+            chat_id: Telegram chat id.
+
+        Returns:
+            The session id, or None when there is no active session.
         """
         sid = self._session.get(chat_id)
         if sid:
@@ -42,6 +60,11 @@ class SessionCommandsMixin:
             return None
 
     async def _cmd_sesiones(self, chat_id: int) -> None:
+        """Answer ``/sesiones``: list the sessions of the user.
+
+        Args:
+            chat_id: Telegram chat id.
+        """
         sessions = self._list_sessions()
         if not sessions:
             await self.send_message(chat_id, "No hay sesiones.")
@@ -53,6 +76,12 @@ class SessionCommandsMixin:
         await self.send_message(chat_id, "\n".join(lines))
 
     async def _cmd_usar(self, chat_id: int, title: str | None = None) -> None:
+        """Answer ``/usar``: activate the session with the given title.
+
+        Args:
+            chat_id: Telegram chat id.
+            title: Title of the session; when None the bot asks for it.
+        """
         sessions = self._list_sessions()
         if not sessions:
             await self.send_message(chat_id, "No hay sesiones.")
@@ -83,6 +112,11 @@ class SessionCommandsMixin:
         await self.send_message(chat_id, f"Sesión cambiada a '{target.get('title') or target['session_id']}'.")
 
     async def _cmd_actual(self, chat_id: int) -> None:
+        """Answer ``/actual``: tell which session is active.
+
+        Args:
+            chat_id: Telegram chat id.
+        """
         sid = self._active_session(chat_id)
         if not sid:
             await self.send_message(chat_id, "No hay sesión activa.")
@@ -96,6 +130,9 @@ class SessionCommandsMixin:
         Shows session title, model, model context window, tokens used
         (cumulative ``prompt_tokens`` of the latest assistant message) and
         the percentage of the context window consumed.
+
+        Args:
+            chat_id: Telegram chat id.
         """
         sid = self._active_session(chat_id)
         if not sid:
@@ -139,6 +176,12 @@ class SessionCommandsMixin:
         await self.send_message(chat_id, "\n".join(lines))
 
     async def _cmd_borrar(self, chat_id: int, title: str | None = None) -> None:
+        """Answer ``/borrar``: delete the session with the given title.
+
+        Args:
+            chat_id: Telegram chat id.
+            title: Title of the session; when None the bot asks for it.
+        """
         sessions = self._list_sessions()
         if not sessions:
             await self.send_message(chat_id, "No hay sesiones.")

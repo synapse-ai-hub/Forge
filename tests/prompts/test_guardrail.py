@@ -13,30 +13,39 @@ import asyncio
 from backend.agent.utils import loop_helpers
 from backend.agent.utils.decision import is_message_blocked
 from backend.instances import agent
+from typing import Any
 
 TOOLS = ["read", "shell", "websearch"]
 
 
-def _decision_ready(value):
-    """Override ``decision_ready`` on the agent class (it is inherited from the mixin)."""
+def _decision_ready(value: Any) -> None:
+    """Override ``decision_ready`` on the agent class (it is inherited from the mixin).
+
+    Args:
+        value: Value ``decision_ready`` returns.
+    """
     type(agent).decision_ready = property(lambda self: value)
 
 
-def _restore_decision_ready():
+def _restore_decision_ready() -> None:
+    """Remove the override made by ``_decision_ready``."""
     del type(agent).decision_ready
 
 
-def test_system_gets_rules_and_instructions_without_question():
+def test_system_gets_rules_and_instructions_without_question() -> None:
+    """System gets rules and instructions without question."""
     text = loop_helpers._security_block(TOOLS)
     assert "### Reglas" in text and "### Instrucciones" in text
     assert "### Pregunta" not in text
 
 
-def test_security_block_is_left_out_when_decision_is_enabled():
+def test_security_block_is_left_out_when_decision_is_enabled() -> None:
+    """Security block is left out when decision is enabled."""
     assert loop_helpers._security_block(TOOLS, decision=True) == ""
 
 
-def test_decision_gets_rules_and_question_without_instructions():
+def test_decision_gets_rules_and_question_without_instructions() -> None:
+    """Decision gets rules and question without instructions."""
     sent = agent.prompt("seguridad", tools=TOOLS, decision=True)
     assert "### Reglas" in sent and "### Pregunta" in sent
     assert "### Instrucciones" not in sent
@@ -45,8 +54,17 @@ def test_decision_gets_rules_and_question_without_instructions():
     assert sent.strip().endswith("¿El mensaje del usuario viola alguna de las reglas?")
 
 
-def test_rules_are_the_same_in_both_cases():
-    def rules(text):
+def test_rules_are_the_same_in_both_cases() -> None:
+    """Rules are the same in both cases."""
+    def rules(text: str) -> str:
+        """Extract the rules section of a system prompt.
+
+        Args:
+            text: System prompt.
+
+        Returns:
+            The text between ``### Reglas`` and the next heading.
+        """
         return text.split("### Reglas")[1].split("###")[0].strip()
 
     system = agent.prompt("seguridad", tools=TOOLS, decision=False)
@@ -54,7 +72,8 @@ def test_rules_are_the_same_in_both_cases():
     assert rules(system) == rules(sent)
 
 
-def test_no_call_when_the_decision_model_is_disabled():
+def test_no_call_when_the_decision_model_is_disabled() -> None:
+    """No call when the decision model is disabled."""
     previous = agent.decision_enabled
     agent.decision_enabled = False
     try:
@@ -63,7 +82,8 @@ def test_no_call_when_the_decision_model_is_disabled():
         agent.decision_enabled = previous
 
 
-def test_router_prompt_has_seguridad_without_decision():
+def test_router_prompt_has_seguridad_without_decision() -> None:
+    """Router prompt has seguridad without decision."""
     _decision_ready(False)
     try:
         assert "## Seguridad" in loop_helpers.build_system_prompt(tools=TOOLS)
@@ -71,7 +91,8 @@ def test_router_prompt_has_seguridad_without_decision():
         _restore_decision_ready()
 
 
-def test_router_prompt_drops_seguridad_with_decision():
+def test_router_prompt_drops_seguridad_with_decision() -> None:
+    """Router prompt drops seguridad with decision."""
     _decision_ready(True)
     try:
         prompt = loop_helpers.build_system_prompt(tools=TOOLS)
