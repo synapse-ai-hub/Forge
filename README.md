@@ -132,9 +132,7 @@ On first launch, configure an API key from any curated cloud provider (all offer
 | `synapseForge update [dir]` | Update project to latest template (preserves data) |
 
 <p align="center">
-  <a href="https://github.com/synapse-ai-hub/sources/blob/main/videos/pipeline-video-en.html">
-    <img src="https://github.com/synapse-ai-hub/sources/raw/main/videos/pipeline-en.gif" alt="Hand-drawn pipeline: from pip install to distributable app" width="100%">
-  </a>
+  <img src="https://github.com/synapse-ai-hub/sources/raw/main/videos/pipeline-en.gif" alt="synapseForge pipeline: from pip install to distributable app" width="100%">
 </p>
 
 ---
