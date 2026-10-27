@@ -5,7 +5,6 @@ import os
 
 from backend.agent.permissions import dict_to_ruleset, evaluate
 from backend.agent.utils.contract import make_error_response, make_success_response, zero_usage
-from backend.agent.utils.error_logger import log_error
 from backend.agent.utils.skill_loader import find_skill_folder, parse_skill_md
 
 logger = logging.getLogger(__name__)
@@ -51,10 +50,6 @@ class SkillMixin:
                         logger.warning(
                             "Permission denied: skill '%s' is not explicitly allowed.",
                             name,
-                        )
-                        log_error(
-                            f"Permission denied for skill '{name}'.",
-                            source="tools.py:skill(permission)",
                         )
                         return make_error_response(
                             message=f"Permiso denegado para la skill '{name}'.",
@@ -102,7 +97,6 @@ class SkillMixin:
                 )
             except Exception as e:
                 logger.exception("Error in skill: %s", e)
-                log_error(str(e), source="tools.py:skill")
                 return make_error_response(
                     message=f"Error loading skill: {e}",
                     usage=zero_usage(),

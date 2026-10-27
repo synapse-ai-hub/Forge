@@ -725,8 +725,9 @@ class WorkflowRunner:
             return result
         data = result.get("data", "") if isinstance(result, dict) else result
         # Like a GitHub Actions step: a command that exits with a non-zero
-        # code fails the node (the shell tool reports it as a success with
-        # the return code inside its data).
+        # code fails the node. The shell tool already returns an error
+        # contract in that case (handled above); this is a defensive
+        # fallback for tools that still report the code inside data.
         if isinstance(data, dict) and isinstance(data.get("returncode"), int) and data["returncode"] != 0:
             output = str(data.get("output", "") or "").strip()
             tail = output[-500:] if output else "sin salida"

@@ -142,7 +142,6 @@ class CheckEmailMixin:
                 )
             except Exception as e:
                 logger.exception("Error in check_email: %s", e)
-                log_error(str(e), source="tools.py:check_email")
                 return make_error_response(
                     message=f"Error checking email: {e}",
                     usage=zero_usage(),

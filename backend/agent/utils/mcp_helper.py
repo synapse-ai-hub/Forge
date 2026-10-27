@@ -65,10 +65,9 @@ def load_mcp_config() -> list[McpServerConfig]:
     """
     servers = load_mcp_servers()
     if not servers:
-        logger.info("No MCP servers found in mcp.json — skipping MCP config load.")
+        logger.debug("No MCP servers found in mcp.json — skipping MCP config load.")
         return []
 
-    logger.info("Loaded %d MCP server(s) from mcp.json", len(servers))
     return servers
 
 
@@ -220,14 +219,15 @@ async def _discover_server_tools(
 ) -> list[Any]:
     """Discover tools from a single MCP server using the official SDK.
 
-    Retries with a short backoff so a transient failure (e.g. the server
-    being momentarily busy, or a lingering instance holding a shared
-    resource) does not permanently leave the tool registry empty.
+    Retries with exponential backoff so a transient failure (e.g. the
+    server being momentarily busy, or a lingering instance holding a
+    shared resource) does not permanently leave the tool registry empty,
+    without hammering a deterministically broken server.
 
     Args:
         config: MCP server config dict.
         retries: Number of attempts before giving up.
-        backoff: Base delay (seconds) between attempts (grows linearly).
+        backoff: Base delay (seconds); doubled on every retry.
 
     Returns:
         List of ``mcp.types.Tool`` objects.
@@ -254,7 +254,7 @@ async def _discover_server_tools(
                     retries,
                     exc,
                 )
-                await asyncio.sleep(backoff * attempt)
+                await asyncio.sleep(backoff * (2 ** (attempt - 1)))
     if last_exc is not None:
         raise last_exc
     return []
@@ -327,6 +327,17 @@ _internal_mcp_tool_to_server: dict[str, str] = {}
 
 _context7_schemas_cache: list[dict[str, Any]] | None = None
 """Discovered context7 schemas, cached so ``npx`` is spawned only once per process."""
+
+_context7_failed_ts: float = 0.0
+"""When the last context7 discovery failed (``0.0`` when it never failed)."""
+
+_CONTEXT7_RETRY_COOLDOWN = 600.0
+"""Seconds before a failed context7 discovery is retried.
+
+A failure caches ``[]`` so a broken server (no ``npx``, no network) does
+not spawn a process on every tool-creator turn; once the cooldown expires
+the next turn tries again in case the problem was transient.
+"""
 
 _context7_lock = threading.Lock()
 """Guards the check-then-set of ``_context7_schemas_cache`` under concurrency."""
@@ -657,12 +668,22 @@ def get_context7_tools() -> list[dict[str, Any]]:
     Returns:
         List of function schemas (possibly empty).
     """
-    global _context7_schemas_cache
-    if _context7_schemas_cache is not None:
+    global _context7_schemas_cache, _context7_failed_ts
+    if _context7_schemas_cache:
         return list(_context7_schemas_cache)
+    if _context7_schemas_cache is not None and (
+        time.time() - _context7_failed_ts < _CONTEXT7_RETRY_COOLDOWN
+    ):
+        # A previous discovery failed and the cooldown has not expired:
+        # do not spawn `npx` again on this turn.
+        return []
     with _context7_lock:
-        if _context7_schemas_cache is not None:
+        if _context7_schemas_cache:
             return list(_context7_schemas_cache)
+        if _context7_schemas_cache is not None and (
+            time.time() - _context7_failed_ts < _CONTEXT7_RETRY_COOLDOWN
+        ):
+            return []
         try:
             # Resolve through get_internal_mcp_server so platform fixes
             # (e.g. `npx.cmd` on Windows) apply to discovery as well.
@@ -673,6 +694,7 @@ def get_context7_tools() -> list[dict[str, Any]]:
             logger.warning("Internal context7 discovery failed: %s", exc)
             log_error(str(exc), source="mcp_helper.py:get_context7_tools")
             _context7_schemas_cache = []
+            _context7_failed_ts = time.time()
             return []
         # Move the entries out of the mcp.json mapping into the internal one so
         # a later global re-discovery cannot wipe them.
