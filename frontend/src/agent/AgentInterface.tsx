@@ -57,8 +57,6 @@ export function AgentInterface() {
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
-  const [resultMsg, setResultMsg] = useState<string | null>(null);
-  const [resultType, setResultType] = useState<"success" | "error" | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
   /* Shared verification (decision model verdict) for creator pages. */
   const { verifying, verifyToast, verificar } = useCreatorVerify("agent");
@@ -180,8 +178,6 @@ export function AgentInterface() {
       setMessages((prev) => [...prev, userMessage, assistantMessage]);
       setAutoScrollEnabled(true);
       setIsStreaming(true);
-      setResultMsg(null);
-      setResultType(null);
 
       let accumulatedContent = "";
       let accumulatedReasoning = "";
@@ -368,28 +364,37 @@ export function AgentInterface() {
 
                 case "agent_result_final": {
                   const data = event.content || {};
+                  const finalText =
+                    data.status === "success"
+                      ? data.message || "Agente creado exitosamente."
+                      : "Error: " + (data.message || "Error desconocido");
+                  accumulatedContent += (accumulatedContent ? "\n\n" : "") + finalText;
+                  accumulatedBlocks.push({ type: "text", content: finalText });
                   setMessages((prev) =>
-                    prev.map((m) => (m.id === assistantId ? { ...m, isStreaming: false } : m)),
+                    prev.map((m) =>
+                      m.id === assistantId
+                        ? { ...m, content: accumulatedContent, blocks: [...accumulatedBlocks], isStreaming: false }
+                        : m,
+                    ),
                   );
                   setIsStreaming(false);
-                  if (data.status === "success") {
-                    setResultType("success");
-                    setResultMsg(data.message || "Agente creado exitosamente.");
-                  } else {
-                    setResultType("error");
-                    setResultMsg("Error: " + (data.message || "Error desconocido"));
-                  }
                   break;
                 }
 
-                case "error":
+                case "error": {
+                  const errorText = String(event.content || "Error desconocido");
+                  accumulatedContent += (accumulatedContent ? "\n\n" : "") + errorText;
+                  accumulatedBlocks.push({ type: "text", content: errorText });
                   setMessages((prev) =>
-                    prev.map((m) => (m.id === assistantId ? { ...m, isStreaming: false } : m)),
+                    prev.map((m) =>
+                      m.id === assistantId
+                        ? { ...m, content: accumulatedContent, blocks: [...accumulatedBlocks], isStreaming: false }
+                        : m,
+                    ),
                   );
-                  setResultType("error");
-                  setResultMsg(event.content || "Error desconocido");
                   setIsStreaming(false);
                   break;
+                }
 
                 case "aborted":
                   setMessages((prev) =>
@@ -489,8 +494,6 @@ export function AgentInterface() {
     setSeleccion(EMPTY_SELECTION);
     setInput("");
     setChatError(null);
-    setResultMsg(null);
-    setResultType(null);
     setHistoryKey((k) => k + 1);
   }, []);
 
@@ -507,11 +510,6 @@ export function AgentInterface() {
     setDescripcion(typeof setup.descripcion === "string" ? setup.descripcion : "");
     setSeleccion(selectionFromSetup(setup));
     setMessages(c.messages.map((m) => ({ ...m, id: generateId(), isStreaming: false }) as Message));
-    const answered = c.result && c.result.action !== "question" ? c.result : null;
-    setResultType(answered ? (answered.status === "success" ? "success" : "error") : null);
-    setResultMsg(
-      answered ? (answered.status === "success" ? answered.message : "Error: " + answered.message) : null,
-    );
     setInput("");
     setChatError(null);
     setSetupDone(true);
@@ -689,53 +687,7 @@ export function AgentInterface() {
                        px-3 sm:px-4 py-3 sm:py-4"
           >
             <div className="max-w-full sm:max-w-3xl lg:max-w-4xl mx-auto">
-              {resultMsg ? (
-                <div className="relative rounded-2xl border border-app-border bg-white p-4 sm:p-5 flex flex-col items-center gap-3 text-center">
-                  <div
-                    className={`w-10 h-10 rounded-full flex items-center justify-center ${
-                      resultType === "error" ? "bg-red-100" : "bg-green-100"
-                    }`}
-                  >
-                    {resultType === "error" ? (
-                      <svg className="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                    ) : (
-                      <svg className="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                      </svg>
-                    )}
-                  </div>
-                   <p className="text-sm text-app-text">{resultMsg}</p>
-                   {downloadError && (
-                     <p className="text-sm text-red-600">{downloadError}</p>
-                   )}
-                    <div className="flex gap-2">
-                      <button
-                        onClick={async () => {
-                          try {
-                            setDownloadError(null);
-                            const md = await fetchConversationMarkdown(messages, "Conversación - Creador de Agentes");
-                            await saveFileWithPicker(md, "conversacion-agente", ".md");
-                          } catch (err) {
-                            setDownloadError(err instanceof Error ? err.message : "No se pudo descargar la conversación.");
-                          }
-                        }}
-                        className="flex items-center gap-1 bg-app-bg-tertiary text-app-text text-sm font-medium px-4 py-2 rounded-lg hover:bg-app-bg-secondary transition-colors border border-app-border"
-                      >
-                        <Download size={14} />
-                        Descargar conversación
-                      </button>
-                      <button
-                        onClick={() => window.close()}
-                        className="bg-gradient-to-r from-app-primary to-app-gradient-secondary text-white text-sm font-medium px-5 py-2 rounded-lg hover:opacity-90 transition-colors"
-                      >
-                        Aceptar
-                      </button>
-                    </div>
-                </div>
-              ) : null}
-              <>
+                            <>
                   {chatError && (
                     <div className="mb-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-4 py-2.5">
                       {chatError}
