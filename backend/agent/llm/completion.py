@@ -15,6 +15,7 @@ from backend.agent.utils.contract import (
     validate_response,
 )
 from backend.agent.utils.model_catalog import translate_reasoning
+from backend.agent.llm.decision import _is_model_not_found
 from backend.agent.llm.api_type import _resolve_api_type
 from backend.agent.llm.gemini import _signature_to_str
 
@@ -330,8 +331,17 @@ class CompletionMixin:
                 self._record_spend(effective_provider, model, None)
             except Exception:
                 pass
+            if _is_model_not_found(str(e)):
+                # The configured model does not exist: the technical detail
+                # stays in the db log, the caller gets clean text.
+                user_message = (
+                    f"El modelo configurado '{model}' no existe o no está disponible. "
+                    "Revisá la configuración del modelo."
+                )
+            else:
+                user_message = str(e)
             return validate_response(make_error_response(
-                message=str(e),
+                message=user_message,
                 usage={
                     'prompt_tokens': 0,
                     'completion_tokens': 0,

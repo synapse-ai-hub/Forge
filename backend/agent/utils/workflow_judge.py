@@ -25,6 +25,7 @@ import logging
 import re
 from typing import Any
 
+from backend.agent.llm.decision import DECISION_MODEL_NOT_FOUND_PREFIX
 from backend.agent.utils import workflow_db
 from backend.agent.utils.decision import DECISION_CLOSE_THRESHOLD
 from backend.agent.utils.error_logger import log_error
@@ -171,6 +172,60 @@ async def generate_output(
         return None
 
 
+def _decision_model_not_found(response: Any) -> bool:
+    """Check whether a decision answer means the configured model does not exist.
+
+    Args:
+        response: Contract answer of ``Agent.decision``.
+
+    Returns:
+        ``True`` when the model is unavailable because its slug was not found
+        (not when it is simply disabled or unconfigured).
+    """
+    if not isinstance(response, dict):
+        return False
+    if response.get("status") != "success":
+        return False
+    data = response.get("data") or {}
+    if not isinstance(data, dict) or data.get("available"):
+        return False
+    return str(response.get("message") or "").startswith(DECISION_MODEL_NOT_FOUND_PREFIX)
+
+
+async def _notify_missing_decision_model(
+    workflow_name: str,
+    source: str,
+) -> None:
+    """Tell the user that the configured decision model does not exist.
+
+    Clean text only: the technical detail stays in the db log, it never
+    reaches the UI. The notification carries no ``run_id`` on purpose: it
+    is a configuration warning, not the result of the run, so opening it
+    shows its own message instead of the run's output.
+
+    Args:
+        workflow_name: Workflow of the run.
+        source: ``"play"``, ``"schedule"`` or ``"tool"`` (tool runs do not notify).
+    """
+    try:
+        if source not in ("play", "schedule"):
+            return
+        from backend.agent.utils.notifications_helpers import notify
+
+        await notify(
+            kind="workflow" if source == "play" else "schedule",
+            workflow_name=workflow_name,
+            title=workflow_name,
+            status="error",
+            message=(
+                "El modelo de decisión configurado no existe o no está disponible. "
+                "El workflow se evaluó sin decisor; revisá la configuración del modelo."
+            ),
+        )
+    except Exception as exc:
+        log_error(str(exc), source="workflow_judge.py:_notify_missing_decision_model")
+
+
 async def judge_run(
     agent: Agent,
     workflow_name: str,
@@ -179,6 +234,7 @@ async def judge_run(
     nodes: list[dict[str, Any]],
     results: dict[str, str],
     final_text: str,
+    source: str = "play",
 ) -> tuple[bool, str]:
     """Decide whether a run that completed every node finished well.
 
@@ -190,6 +246,8 @@ async def judge_run(
         nodes: Normalized workflow nodes.
         results: Node id → committed result.
         final_text: Final answer of the run.
+        source: ``"play"``, ``"schedule"`` or ``"tool"`` (only used to notify
+            when the configured decision model does not exist).
 
     Returns:
         ``(ok, reason)``. ``reason`` is plain language and only meaningful
@@ -221,6 +279,8 @@ async def judge_run(
             }
             response = await agent.decision(state, questions)
             data = (response or {}).get("data") or {}
+            if _decision_model_not_found(response):
+                await _notify_missing_decision_model(workflow_name, source)
             if data.get("available"):
                 verdict = ((data.get("answers") or {}).get("done") or {}).get("noul")
                 readable = isinstance(verdict, (int, float)) and not isinstance(verdict, bool)
@@ -264,13 +324,11 @@ async def judge_run(
             json_format=True,
             reasoning=False,
         )
-        if not isinstance(response, dict):
+        if not isinstance(response, dict) or response.get("status") != "success":
+            # The judge could not run (no model, provider down): approve
+            # silently, as if it were disabled. No error row.
             return True, ""
-        parsed = (
-            _parse_verdict(str(response.get("data") or ""))
-            if response.get("status") == "success"
-            else None
-        )
+        parsed = _parse_verdict(str(response.get("data") or ""))
         workflow_db.record_engine_row(
             run_id, "judge", provider, model, response.get("usage"),
             status="error" if parsed is None else ("approved" if parsed[0] else "rejected"),

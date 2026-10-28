@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import re
 import time
 from typing import Any
 
@@ -15,6 +16,23 @@ from backend.agent.utils.contract import (
     validate_response,
     zero_usage,
 )
+
+DECISION_MODEL_NOT_FOUND_PREFIX = "Decision model not found:"
+"""Prefix of the ``decision`` message when the configured model slug does not exist."""
+
+def _is_model_not_found(message: str) -> bool:
+    """Check whether a decision-call failure means the model slug does not exist.
+
+    Args:
+        message: Exception text of the failed call.
+
+    Returns:
+        ``True`` for a 404 / "not found" answer (dead slug, wrong model name),
+        ``False`` for anything else (transient errors keep the error path).
+    """
+    text = message or ""
+    return bool(re.search(r"\b404\b", text) or "not found" in text.lower())
+
 
 class DecisionMixin:
     """System One decision calls."""
@@ -172,7 +190,20 @@ class DecisionMixin:
                 },
             ))
         except Exception as e:
-            log_error(str(e), source="agent.py:decision")
+            message = str(e)
+            if _is_model_not_found(message):
+                # The configured slug does not exist: the technical detail
+                # stays in the db log, but the caller sees the model as
+                # disabled. The marker in the message lets the caller tell
+                # the user (clean text, no technical detail).
+                log_error(message, source="agent.py:decision")
+                return validate_response(make_success_response(
+                    message=f"{DECISION_MODEL_NOT_FOUND_PREFIX} {message}",
+                    data={'available': False, 'answers': None,
+                          'model': None, 'provider': None},
+                    usage=zero_usage(),
+                ))
+            log_error(message, source="agent.py:decision")
             try:
                 self._record_spend(effective_provider, effective_model or 'unknown', None)
             except Exception:

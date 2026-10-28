@@ -108,6 +108,7 @@ from backend.agent.loop.constants import (
     MAX_LLM_RETRIES,
     MAX_SUBAGENT_DEPTH,
 )
+from backend.agent.llm.decision import _is_model_not_found
 from backend.agent.loop.router_tools import _ROUTER_TOOLS
 from backend.agent.loop.helpers import (
     _load_router_permissions,
@@ -861,11 +862,20 @@ class AgentLoop:
                         # Fatal, budget and too-large errors: no retry.
                         if error_category in ("fatal", "budget", "too_large"):
                             log_error(str(e), source="loop.py:run(llm_stream)")
-                            error_msg = (
-                                RATE_LIMIT_MESSAGES["413"]
-                                if error_category == "too_large"
-                                else "Ocurrió un error al procesar la solicitud. Por favor, intentá de nuevo."
-                            )
+                            if _is_model_not_found(str(e)):
+                                # The configured model does not exist: the
+                                # technical detail stays in the db log, the
+                                # user gets clean text naming the model.
+                                error_msg = (
+                                    f"El modelo configurado '{model}' no existe o no está disponible. "
+                                    "Revisá la configuración del modelo."
+                                )
+                            else:
+                                error_msg = (
+                                    RATE_LIMIT_MESSAGES["413"]
+                                    if error_category == "too_large"
+                                    else "Ocurrió un error al procesar la solicitud. Por favor, intentá de nuevo."
+                                )
                             # Guardar respuesta parcial antes de terminar con error
                             # The failed attempt never reached the agent's
                             # spend record: count it here (zero tokens when

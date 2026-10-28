@@ -244,6 +244,7 @@ def test_the_judge_receives_the_results_of_the_nodes(
         nodes: list[dict[str, Any]],
         results: dict[str, str],
         final_text: str,
+        source: str = "play",
     ) -> tuple[bool, str]:
         """Record what the judge receives.
 
@@ -255,6 +256,7 @@ def test_the_judge_receives_the_results_of_the_nodes(
             nodes: Nodes of the workflow.
             results: Result of every node.
             final_text: Final output of the run.
+            source: Origin of the run (ignored).
 
         Returns:
             ``(True, "")``: the run is accepted.
