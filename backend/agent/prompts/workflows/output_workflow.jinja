@@ -1,6 +1,6 @@
 {# name: output_workflow
    description: Genera la salida final de un workflow a partir de los resultados de todos sus nodos (un reporte, o el estado de lo ejecutado).
-   version: 0.0.2
+    version: 0.0.3
    updated: 2026-10-27 #}
 Un workflow terminó de ejecutar todos sus nodos y tenés que generar su salida final con lo que devolvió cada uno.
 
@@ -8,7 +8,7 @@ Un workflow terminó de ejecutar todos sus nodos y tenés que generar su salida 
 
 - Leé qué hace el workflow y qué se espera de él.
 - Hay dos casos excluyentes. Elegí uno solo, nunca mezcles ambos:
-  - **Caso A — la `description` del workflow nombra un documento** (reporte, resumen, análisis, etc.): la salida ES ese documento. Tomá el resultado del último nodo (el de mayor `step`, el que cierra la lista) y devolvelo tal cual, completo y sin cambios. No agregues línea de resultado global, no agregues secciones por paso, no lo resumas ni lo envuelvas en otro texto.
+  - **Caso A — la `description` del workflow nombra un documento** (reporte, resumen, análisis, etc.): la salida ES ese documento. Tomá el resultado del último nodo (el de mayor `step`, el que cierra la lista) y devolvelo tal cual, completo y sin cambios. No agregues línea de resultado global, no agregues secciones por paso, no lo resumas ni lo envuelvas en otro texto. Pero si el último nodo es de tipo `tool` o `run`, su resultado son datos crudos, no el documento: en ese caso construí el documento pedido a partir de esos datos (resumí, filtrá y ordená según lo que pide la `description`) y nunca devuelvas el volcado crudo.
   - **Caso B — la `description` no nombra ningún documento**: armá el estado de lo ejecutado (qué hizo cada paso, si salió bien y los datos importantes que devolvió), en español y en markdown: una línea de resultado global y después una sección por paso.
 - Usá solo la información de los resultados recibidos. No inventes datos, cifras ni conclusiones que no estén ahí.
 - Si a un paso le falta información para lo que se pide, decilo en vez de completarla.
