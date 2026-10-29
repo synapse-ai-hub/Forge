@@ -290,7 +290,7 @@ class WorkflowRunner:
         failures: list[dict[str, str]],
         nodes: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        """Build the attempt result, resolving the final answer of the run.
+        """Build the attempt result from every node result.
 
         Args:
             status: ``"success"``, ``"error"`` or ``"cancelled"``.
@@ -300,16 +300,14 @@ class WorkflowRunner:
 
         Returns:
             The attempt outcome ``{status, results, failures, final_text}``.
+            ``final_text`` is always empty here: the report is generated
+            afterwards by ``generate_output`` from all results.
         """
-        final_text = ""
-        for node in nodes:
-            if node.get("final"):
-                final_text = str(state["results"].get(node["id"], "") or "")
         return {
             "status": status,
             "results": dict(state["results"]),
             "failures": failures,
-            "final_text": final_text,
+            "final_text": "",
         }
 
     # ------------------------------------------------------------------

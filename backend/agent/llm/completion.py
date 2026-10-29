@@ -7,7 +7,6 @@ from typing import Any
 
 from google.genai import types
 
-from backend.agent.utils.error_logger import log_error
 from backend.agent.utils.contract import (
     ContractResponse,
     make_error_response,
@@ -324,7 +323,8 @@ class CompletionMixin:
             ))
         except Exception as e:
             print(f'Error al procesar con LLM.\n{str(e)}')
-            log_error(str(e), source="agent.py:llm")
+            # No log here: the caller logs once with its own source, so each
+            # failure lands a single row in error_log instead of two.
             # Count the failed request in spend (zero tokens) so the
             # requests counter stays consistent with the messages log.
             try:

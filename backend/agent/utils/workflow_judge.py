@@ -97,7 +97,27 @@ def _parse_verdict(raw: str) -> tuple[bool, str] | None:
 
 
 OUTPUT_ATTEMPTS = 3
-"""Tries of the output call before the final node's result is used instead."""
+"""Tries of the output call."""
+
+
+def _load_output_instructions(workflow_name: str) -> str:
+    """Load the optional per-workflow output instructions.
+
+    Args:
+        workflow_name: Workflow name (``<name>_output.toml`` in the prompts dir).
+
+    Returns:
+        The rendered toml text, or an empty string when absent.
+    """
+    try:
+        from backend.agent.utils.workflow_loader import load_prompt_file
+
+        loaded = load_prompt_file(f"{workflow_name}_output")
+        if isinstance(loaded, dict) and loaded.get("status") == "success":
+            return str(loaded.get("data") or "").strip()
+    except Exception:
+        pass
+    return ""
 
 
 async def generate_output(
@@ -110,9 +130,10 @@ async def generate_output(
 ) -> str | None:
     """Generate the output of a run from the results of all its nodes.
 
-    One ``llm_process`` call with the chat model. Each node contributes what
-    it returned (the ``data`` of its contract). Transient failures are tried
-    again with a growing wait.
+    One ``llm_process`` call with the chat model: instructions go as
+    ``system``, every node result goes as ``user``. Each node contributes
+    what it returned (the ``data`` of its contract). Transient failures
+    are tried again with a growing wait.
 
     Args:
         agent: Agent singleton (LLM access).
@@ -123,8 +144,7 @@ async def generate_output(
         results: Node id → committed result.
 
     Returns:
-        The generated output, or ``None`` when it could not be produced (the
-        caller keeps the result of the final node).
+        The generated output, or ``None`` when it could not be produced.
     """
     try:
         model, provider = _chat_model(agent)
@@ -138,17 +158,22 @@ async def generate_output(
         nodes_text = "\n\n".join(
             f"#### {node_id} ({node_type})\n\n{text}" for node_id, node_type, text in items
         ) or "(sin nodos)"
-        prompt = agent.prompt(
-            "output_workflow",
-            name=workflow_name,
-            description=description or "(sin descripción)",
-            nodes_text=nodes_text,
-        )
+        system = agent.prompt("output_workflow")
+        specific = _load_output_instructions(workflow_name)
+        user_parts = [
+            f"### Workflow\n\n{workflow_name}",
+            f"### Qué hace el workflow\n\n{description or '(sin descripción)'}",
+            f"### Resultados de los nodos\n\n{nodes_text}",
+        ]
+        if specific:
+            user_parts.append(f"### Instrucciones específicas del reporte\n\n{specific}")
+        user = "\n\n".join(user_parts)
         for attempt in range(OUTPUT_ATTEMPTS):
             response = await agent.llm_process(
                 model=model,
                 provider=provider,
-                prompt=prompt,
+                prompt=user,
+                system_content=system,
                 temperature=0.2,
                 top_p=0.7,
                 reasoning=False,

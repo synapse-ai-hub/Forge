@@ -366,18 +366,34 @@ async def stream_creator_turn(
         return
 
     loop = AgentLoop(agent, session_manager)
-    async for event in loop.run(
-        session_id=creator_id,
-        user_message=user_message,
-        file_contents=file_contents,
-        system_prompt=system_prompt,
-        tool_permissions=tool_permissions,
-        parameters=parameters,
-        agent_name=f"creator_{kind}",
-        is_creator=True,
-        user_setup=user_setup,
-    ):
-        yield event
+    try:
+        async for event in loop.run(
+            session_id=creator_id,
+            user_message=user_message,
+            file_contents=file_contents,
+            system_prompt=system_prompt,
+            tool_permissions=tool_permissions,
+            parameters=parameters,
+            agent_name=f"creator_{kind}",
+            is_creator=True,
+            user_setup=user_setup,
+        ):
+            yield event
+    except Exception as exc:
+        try:
+            from backend.agent.utils.error_logger import log_error
+
+            log_error(
+                f"{type(exc).__name__}: {exc}",
+                session_id=creator_id,
+                source=f"create/common.py:stream_creator_turn({kind})",
+            )
+        except Exception:
+            pass
+        logger.exception("Error en turno del creador %s: %s", kind, exc)
+        yield _sse({"type": "error", "content": "En este momento no se puede ejecutar la solicitud. Por favor, intentá más tarde."})
+        yield "data: [DONE]\n\n"
+        return
 
     found = find_created_item(kind, item_name, start_ts)
     if found is not None:

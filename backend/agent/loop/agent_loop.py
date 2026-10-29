@@ -145,6 +145,8 @@ class AgentLoop:
             session_manager: ``SessionManager`` for SQLite.
             max_iterations: Max tool-calling iterations.
         """
+        self.agent = agent
+        self.session_manager = session_manager
         self.max_iterations = max_iterations
 
     async def run(
@@ -236,6 +238,10 @@ class AgentLoop:
         title_task: asyncio.Task | None = None
 
         try:
+            # Use the injected instances (creators pass CreatorSessionManager).
+            # Falls back to the global singletons for legacy callers.
+            agent = getattr(self, "agent", None) or agent
+            session_manager = getattr(self, "session_manager", None) or session_manager
             # --- Recursion guard for sub-agent delegation ---
             if depth >= MAX_SUBAGENT_DEPTH:
                 log_error("Max sub-agent depth reached", source="loop.py:recursion_guard")
@@ -1142,6 +1148,8 @@ class AgentLoop:
                     for pre_tc in tool_calls:
                         if pre_tc.get("name") != "shell":
                             continue
+                        if is_creator:
+                            continue
                         command = (pre_tc.get("args") or {}).get("command", "")
                         approval_id = create_approval(session_id, command)
                         yield f"data: {json.dumps({'type': 'approval_required', 'content': {'approval_id': approval_id, 'command': command}}, ensure_ascii=False)}\n\n"
@@ -1694,6 +1702,24 @@ class AgentLoop:
                     ctx.get("turn_number") if ctx else None,
                     ctx.get("parent_id") if ctx else None,
                 )
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            try:
+                logger.exception("Unhandled error in agent loop: %s", exc)
+                log_error(f"{type(exc).__name__}: {exc}", source="loop.py:run(unhandled)")
+            except Exception:
+                pass
+            try:
+                yield f"data: {json.dumps({'type': 'error', 'content': 'En este momento no se puede ejecutar la solicitud. Por favor, intentá más tarde.'}, ensure_ascii=False)}\n\n"
+            except Exception:
+                pass
+            try:
+                yield "data: [DONE]\n\n"
+            except Exception:
+                pass
+            return
 
         finally:
             # Ensure the background title task completes (or is cancelled) so
