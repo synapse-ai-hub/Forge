@@ -399,6 +399,31 @@ async def _validation_error_handler(request: Request, exc: RequestValidationErro
     return JSONResponse(status_code=422, content={"detail": jsonable_encoder(exc.errors())})
 
 
+@app.exception_handler(Exception)
+async def _unhandled_error_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Persist any unhandled exception in error_log and return a generic 500.
+
+    Args:
+        request: The request that raised the exception.
+        exc: The unhandled exception.
+
+    Returns:
+        A generic 500 JSON response (never leaks internals).
+    """
+    try:
+        log_error(
+            f"{type(exc).__name__}: {exc}",
+            source=f"main.py:unhandled:{request.method} {request.url.path}",
+        )
+    except Exception:
+        pass
+    logging.exception("Unhandled error %s %s: %s", request.method, request.url.path, exc)
+    return JSONResponse(
+        status_code=500,
+        content={"status": "error", "message": "Error interno. Intentá más tarde.", "data": None, "usage": None},
+    )
+
+
 # ---------------------------------------------------------------------------
 # CORS middleware
 # ---------------------------------------------------------------------------
