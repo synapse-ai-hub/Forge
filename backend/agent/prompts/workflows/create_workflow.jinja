@@ -102,7 +102,7 @@ archivos = ["repo/README.md"]
 devolver = "<qué datos o análisis devolver>"
 ```
 
-- Opcionales en cualquier nodo: `retries` (0-10). `final: true` va en un solo nodo: el último que produce datos.
+- Opcionales en cualquier nodo: `retries` (0-10).
 - Los nodos del mismo `step` corren en paralelo: ninguno puede usar el resultado de otro nodo del mismo `step`.
 
 ## PARALELISMO
@@ -132,17 +132,20 @@ El YAML lleva además este bloque, al mismo nivel que `name` y `nodes`, **exacta
 ### Cómo diseñar los nodos
 
 - Armá el workflow **más chico que cumpla lo que pidió el usuario**: apuntá a 1-3 nodos; más de 3 solo si el pedido lo exige. Cada nodo cuesta tiempo y plata: no agregues nodos para que quede prolijo.
-- Lo que se resuelve con un comando o una tool va en un nodo `run`, `tool` o `rag`, **no en un agente**: clonar, descargar, listar, leer, `git log`, contar, filtrar. Un nodo `agent` se usa solo cuando hay que **razonar, analizar o redactar** algo que un comando no resuelve.
-- **Un solo nodo `agent` por cada tarea de razonamiento.** No encadenes agentes que se pasan el texto uno al otro (uno analiza, otro "arma el reporte", otro "lo mejora"): un agente hace todo eso en una pasada.
+- Lo que se resuelve con un comando o una tool va en un nodo `run`, `tool` o `rag`, **no en un agente**: clonar, descargar, listar, leer, `git log`, contar, filtrar, traer una página y extraer datos.
+- Filtrar, resumir, analizar u ordenar para el reporte final NO va en ningún nodo: lo hace la salida con todos los resultados. No crees un `agent` para eso.
+- Un nodo `agent` se usa solo cuando el flujo necesita razonar en el medio (decidir, llamar tools, producir un dato intermedio que otro nodo usa). Nunca para redactar la salida.
+- **Un solo nodo `agent` por cada tarea de razonamiento.** No encadenes agentes que se pasan el texto uno al otro.
 - Dos nodos van en paralelo (mismo `step`) solo si son **independientes de verdad**: ninguno necesita lo que produce el otro.
-- Usá un agente cuyo `.md` corresponda a la tarea. Si el agente que eligió el usuario es de otro dominio (por ejemplo, uno de análisis de CSV para revisar un repositorio), decíselo al usuario y proponé otro agente o crear uno, en vez de forzarlo.
+- Usá un agente solo si su `.md` corresponde a la tarea. Si ninguno corresponde, no uses ningún `agent`: resolvé con `tool`/`run`/`rag`. Si el usuario eligió un agente de otro dominio, avisale y no lo fuerces.
 
-### La salida final la genera el motor
+### Salida del workflow
 
-- Cuando terminan todos los nodos, synapseForge hace **una llamada a un LLM** con la `description` del workflow y los resultados de todos los nodos, y genera la salida (un reporte, un resumen o el estado de lo ejecutado); después un modelo la valida. **No crees un nodo para armar el reporte, resumir, filtrar lo que hay que omitir o unir resultados**: eso ya lo hace el motor.
-- Por eso la `description` tiene que decir qué se espera de la salida: qué resumir (tema), qué omitir y en qué forma (lista, tabla, párrafos). Si el pedido es traer datos y resumirlos (por ejemplo, un resumen de mails), alcanza con el nodo que trae los datos (`tool`, `run` o `rag`), con `final: true`.
-- `final: true` marca el último nodo que produce datos. Su resultado se usa como salida solo si el motor no puede generarla. No tiene que ser un agente que redacte.
-- En el prompt de un agente pedile los datos y el análisis, no "el reporte final".
+- La salida se genera después con todos los resultados (`description` + cada nodo). No crees nodo para armar reporte, resumir ni unir resultados.
+- La `description` define la salida esperada: tema, qué omitir, forma (lista, tabla, párrafos).
+- Si el pedido es traer datos y resumirlos, alcanza con el nodo que trae los datos (`tool`, `run` o `rag`).
+- Si el reporte necesita instrucciones propias, creá `{{ carpeta_prompts }}/<nombre>_output.toml` con `formato`, `incluir`, `omitir`.
+- En el prompt de un agente pedí solo el dato intermedio que el flujo necesita, nunca el reporte.
 
 ### Carpeta de trabajo de los nodos `run`
 
@@ -159,7 +162,6 @@ El YAML lleva además este bloque, al mismo nivel que `name` y `nodes`, **exacta
 - `nodes` con al menos un nodo; `type` en `agent|tool|rag|run`; `step` entero desde 1, contiguos.
 - `prompt_file` es el nombre del toml sin extensión ni rutas.
 - `retries` entero 0-10. `on_failure` en `continue|abort`.
-- Exactamente un nodo con `final: true`.
 {% if programada %}
 - Incluí el bloque `schedule` exactamente como se indica arriba.
 {% endif %}
@@ -181,10 +183,9 @@ El YAML lleva además este bloque, al mismo nivel que `name` y `nodes`, **exacta
 
 - **PROHIBIDO declarar el workflow creado sin haberlo validado.**
 - **PROHIBIDO** inventar agentes/tools/colecciones: usá solo los que existen o los que el usuario nombró.
-- **PROHIBIDO** dejar más de un `final: true` o ninguno.
 - **PROHIBIDO** dejar huecos en los `step`.
-- **PROHIBIDO** crear un nodo `agent` para armar el reporte final, resumir o unir los resultados de otros nodos: la salida la genera el motor.
+- **PROHIBIDO** crear un nodo `agent` para armar el reporte final, resumir, analizar, filtrar o unir resultados.
 - **PROHIBIDO** usar un nodo `agent` para algo que resuelve un comando o una tool.
-- **PROHIBIDO** encadenar nodos `agent` que solo se pasan el texto.
+- **PROHIBIDO** usar un `agent` de otro dominio: si ninguno corresponde, el workflow va sin `agent`.
 
 {% include "recursos_creador.jinja" %}

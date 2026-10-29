@@ -427,8 +427,7 @@ class WorkflowService:
         """Run attempts with exponential backoff until success or exhaustion.
 
         When every node completes, the output is generated from all node
-        results (the raw text of the final node is only a fallback) and it
-        is judged.
+        results.
 
         Args:
             run_id: Run identifier.
@@ -472,11 +471,6 @@ class WorkflowService:
             return await self._finalize_cancelled(run_id, name)
 
         if outcome["status"] == "success":
-            # The final node (``final: true``) aggregates everything: the
-            # report is always generated from all node results, so a final
-            # tool/run node (raw data) becomes a real report instead of a
-            # raw dump. The raw text of the final node is only kept when
-            # generation fails.
             generated = await generate_output(
                 agent, name, run_id, str(workflow.get("description", "")),
                 workflow.get("nodes", []), outcome["results"],

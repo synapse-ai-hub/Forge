@@ -1148,6 +1148,8 @@ class AgentLoop:
                     for pre_tc in tool_calls:
                         if pre_tc.get("name") != "shell":
                             continue
+                        if is_creator:
+                            continue
                         command = (pre_tc.get("args") or {}).get("command", "")
                         approval_id = create_approval(session_id, command)
                         yield f"data: {json.dumps({'type': 'approval_required', 'content': {'approval_id': approval_id, 'command': command}}, ensure_ascii=False)}\n\n"

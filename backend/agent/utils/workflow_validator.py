@@ -187,16 +187,12 @@ def validate_workflow(data: dict[str, Any]) -> dict[str, Any]:
             "run": run_cmd,
             "timeout": run_timeout,
             "workdir": run_workdir,
-            "final": bool(node.get("final", False)),
         })
 
     normalized.sort(key=lambda n: (n["step"], n["id"]))
     steps = sorted({n["step"] for n in normalized})
     if steps != list(range(1, len(steps) + 1)):
         return {"status": "error", "message": "Los 'step' deben ser contiguos desde 1 sin huecos.", "data": None, "usage": usage}
-    finals = [n for n in normalized if n["final"]]
-    if len(finals) != 1:
-        return {"status": "error", "message": "El workflow debe tener exactamente un nodo con 'final: true'.", "data": None, "usage": usage}
     return {
         "status": "success",
         "message": "Workflow válido.",
