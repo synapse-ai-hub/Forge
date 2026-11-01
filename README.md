@@ -84,7 +84,7 @@ The Forge turns those definitions into autonomous systems.
 - **Security** — rules against prompt injection, data leaks and dangerous commands or SQL; they go in the router prompt or, with the decision model enabled, the decision model enforces them as a guardrail on the user message
 - **Agent loop** — iterative reasoning → tool calling → execution → continuation, with streaming SSE
 - **Workflows** — deterministic DAG execution started with a play button: sequential steps, same-step nodes in parallel, background runs with retries, persisted results and notifications
-- **Memory** — persistent conversation indexing and cross-session retrieval
+- **Memory** — persistent conversation indexing and cross-session retrieval, plus user preferences (`user_memory`): the router saves explicit preferences via `save_user_memory`, injects them into every turn, and they are managed from Config
 - **Multi-provider LLM** — Ollama (local), curated cloud providers (OpenAI-compatible + Google)
 - **MCP integration** — connect external tool servers via the Model Context Protocol (stdio, HTTP or SSE), with an on/off switch per server
 - **Scheduler** — workflows with a `schedule` block run on a schedule, notify via UI and Telegram
@@ -143,7 +143,7 @@ On first launch, configure an API key from any curated cloud provider (all offer
 
 FastAPI application with REST/SSE routers. The agent framework lives in `backend/agent/`: AgentLoop with native tool calling, tools registry (native + external + MCP), SQLite sessions, per-agent permissions, skills, RAG (ChromaDB) and long-term memory.
 
-**Native tools**: `read`, `write`, `edit`, `glob`, `grep`, `list_dir`, `webfetch`, `websearch`, `shell`, `task` (sub-agent delegation), `skill`, `reference`, `rag`, `search_memory`, `check_email`, `send_email`, `query_model_capabilities`.
+**Native tools**: `read`, `write`, `edit`, `glob`, `grep`, `list_dir`, `webfetch`, `websearch`, `shell`, `task` (sub-agent delegation), `skill`, `reference`, `rag`, `search_memory`, `save_user_memory`, `check_email`, `send_email`, `query_model_capabilities`.
 
 ### Workflows
 
@@ -173,7 +173,7 @@ Cloud providers are curated in-app: each API key is validated live against its o
 
 ### Knowledge base (RAG)
 
-ChromaDB with Gemini embeddings (`gemini-embedding-2`) via the Google provider. Upload files and web pages — content is extracted, chunked and indexed for semantic retrieval. Chunking (chunk size and overlap, in characters) is configurable per upload from the UI (defaults: chunk 500, overlap 60). Requires a Google API key: without it, the knowledge base stays disabled and everything else runs normally. Long-term memory: every conversation turn is automatically indexed and searchable across sessions via `search_memory`.
+ChromaDB with Gemini embeddings (`gemini-embedding-2`) via the Google provider. Upload files and web pages — content is extracted, chunked and indexed for semantic retrieval. Chunking (chunk size and overlap, in characters) is configurable per upload from the UI (defaults: chunk 500, overlap 60). Requires a Google API key: without it, the knowledge base stays disabled and everything else runs normally. Long-term memory: every conversation turn is automatically indexed and searchable across sessions via `search_memory`. User preferences: explicit preferences (language, tone, format, timezone, company, role) are stored in the internal `user_memory` collection via the `save_user_memory` tool or from Config, injected into every router turn, and managed (view/add/delete) from Config — they never appear as RAG collections.
 
 ### Telegram
 

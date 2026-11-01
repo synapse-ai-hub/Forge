@@ -84,7 +84,7 @@ La fábrica transforma esas definiciones en sistemas autónomos.
 - **Seguridad** — reglas contra prompt injection, fuga de datos y comandos o SQL peligrosos; van en el prompt del router o, con el modelo de decisión habilitado, las aplica el modelo de decisión como guardrail sobre el mensaje del usuario
 - **Agent loop** — razonamiento iterativo → tool calling → ejecución → continuación, con streaming SSE
 - **Workflows** — ejecución determinista de DAGs con un botón play: steps secuenciales, nodos del mismo step en paralelo, ejecución en segundo plano con reintentos, resultados persistidos y notificaciones
-- **Memoria** — indexación persistente de conversaciones y recuperación cross-sesión
+- **Memoria** — indexación persistente de conversaciones y recuperación cross-sesión, más preferencias del usuario (`user_memory`): el router guarda preferencias explícitas vía `save_user_memory`, las inyecta en cada turno y se gestionan desde Config
 - **LLM multi-proveedor** — Ollama (local), providers cloud curados (OpenAI-compatibles + Google)
 - **Integración MCP** — conectá servidores de herramientas externos vía Model Context Protocol (stdio, HTTP o SSE), con un interruptor por servidor
 - **Scheduler** — workflows con bloque `schedule` que corren en un horario, notifican vía UI y Telegram
@@ -143,7 +143,7 @@ En el primer inicio, configurá una API key de cualquier proveedor cloud curado 
 
 Aplicación FastAPI con routers REST/SSE. El framework de agentes vive en `backend/agent/`: AgentLoop con tool calling nativo, registro de tools (nativos + externos + MCP), sesiones SQLite, permisos por agente, skills, RAG (ChromaDB) y memoria de largo plazo.
 
-**Tools nativos**: `read`, `write`, `edit`, `glob`, `grep`, `list_dir`, `webfetch`, `websearch`, `shell`, `task` (delegación a sub-agentes), `skill`, `reference`, `rag`, `search_memory`, `check_email`, `send_email`, `query_model_capabilities`.
+**Tools nativos**: `read`, `write`, `edit`, `glob`, `grep`, `list_dir`, `webfetch`, `websearch`, `shell`, `task` (delegación a sub-agentes), `skill`, `reference`, `rag`, `search_memory`, `save_user_memory`, `check_email`, `send_email`, `query_model_capabilities`.
 
 ### Workflows
 
@@ -173,7 +173,7 @@ Los providers cloud están curados en la app: cada API key se valida en vivo con
 
 ### Base de conocimiento (RAG)
 
-ChromaDB con embeddings de Gemini (`gemini-embedding-2`) vía el proveedor Google. Subí archivos y páginas web — el contenido se extrae, se divide en chunks y se indexa para recuperación semántica. El chunking (tamaño de chunk y overlap, en caracteres) se configura por subida desde la interfaz (por defecto: chunk 500, overlap 60). Requiere una API key de Google: sin ella, la base de conocimiento queda deshabilitada y el resto de la app funciona normalmente. Memoria de largo plazo: cada turno de conversación se indexa automáticamente y se puede buscar cross-sesión vía `search_memory`.
+ChromaDB con embeddings de Gemini (`gemini-embedding-2`) vía el proveedor Google. Subí archivos y páginas web — el contenido se extrae, se divide en chunks y se indexa para recuperación semántica. El chunking (tamaño de chunk y overlap, en caracteres) se configura por subida desde la interfaz (por defecto: chunk 500, overlap 60). Requiere una API key de Google: sin ella, la base de conocimiento queda deshabilitada y el resto de la app funciona normalmente. Memoria de largo plazo: cada turno de conversación se indexa automáticamente y se puede buscar cross-sesión vía `search_memory`. Preferencias del usuario: las preferencias explícitas (idioma, tono, formato, zona horaria, empresa, rol) se guardan en la colección interna `user_memory` vía la tool `save_user_memory` o desde Config, se inyectan en cada turno del router y se gestionan (ver/agregar/eliminar) desde Config — nunca aparecen como colecciones RAG.
 
 ### Telegram
 
