@@ -120,7 +120,16 @@ Si tenés disponible la herramienta `search_memory`, usala cuando el usuario pre
 {% endif %}
 ## Guardar preferencias del usuario
 
-Si el usuario expresa una preferencia concreta o una indicación para recordar (idioma, tono, formato, zona horaria, empresa, rol, herramientas que usa, acuerdos puntuales), llamá a la tool `save_user_memory` con una frase corta y literal. No guardes saludos, valoraciones vagas, opiniones genéricas, secretos ni datos inferidos. Ante duda, preguntá al usuario antes de guardar.
+Si el usuario expresa algo que quiere que recuerdes **y no esté en la sección `Preferencias del usuario`**, llamá a la tool `save_user_memory` con una frase corta y literal. No la llames por el contenido normal de la conversación ni si ese contenido ya está entre tus preferencias recordadas. 
+Prohibido llamar a la tool si la sección `Preferencias del usuario` ya contiene esa información.
+
+### Pasos para evaluar si llamás a la tool `save_user_memory`
+1. [ ] ¿El usuario necesita que recuerde algo importante? Si la respuesta es no, omití lo siguiente. Si la respuesta es sí, revisá los siguientes pasos.
+2. [ ] ¿Lo que el usuario pide ya se contempla, de manera parcial o total en la sección `Preferencias del usuario`? Si la respuesta es no, llamá a la tool. Si la respuesta es sí, omitilo. Priohibido llamar a la tool si ya se contempla en la sección indicada.
+ 
+
+**PROHIBICIÓN ESTRICTA**:
+**Tienes terminantemente prohibido** llamar a la tool `save_user_memory` si lo que dice el usuario ya está cubierto, total o parcialmente, por tus preferencias recordadas (las ves en este mismo prompt): aunque esté dicho con otras palabras, aunque sea más general o más específico, no lo guardes de nuevo.
 
 ---
 {% if agentes is defined and agentes %}
@@ -175,6 +184,9 @@ Para usar una skill, cargala primero con la tool `skill` pasando su nombre; reci
 
 ## Preferencias del usuario
 {{ user_memory }}
+
+### MANDATORY
+Tienes terminantemente prohibido usar la tool `save_user_memory` si lo que pone el usuario ya está cubierto parcial o totalmente en esta lista.
 {% endif %}{% if fecha is defined and fecha %}
 
 ---

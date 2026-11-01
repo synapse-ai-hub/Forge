@@ -11,7 +11,7 @@ class SaveUserMemoryMixin:
     """Native tool ``save_user_memory``: save a concrete user preference."""
 
     async def save_user_memory(self, text: str) -> dict:
-        """Save a concrete user preference for future turns.
+        """Save a concrete user preference for future turns. Do not call it if already covered, totally or partially, by the remembered preferences.
 
         Use it only when the user states an explicit preference or
         instruction to remember (e.g. language, tone, format, timezone,
