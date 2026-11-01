@@ -6,9 +6,9 @@ from __future__ import annotations
 
 # Tool schema for the router agent (agent_name=None). Fallback only: the
 # router's tools are normally resolved from the tools registry via its
-# permissions (the floor tools task, search_memory, read, websearch and
-# webfetch without a stored selection; exactly the ones the selection lists
-# with it; rag on the internal collections is always added).
+# permissions (the floor tools task, search_memory, save_user_memory, read,
+# websearch and webfetch without a stored selection; exactly the ones the
+# selection lists with it; rag on the internal collections is always added).
 _ROUTER_TOOLS = [
     {
         "type": "function",
@@ -56,7 +56,27 @@ _ROUTER_TOOLS = [
                 "required": ["query"]
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "save_user_memory",
+            "description": (
+                "Guarda una preferencia concreta del usuario para futuros turnos. "
+                "Úsala solo cuando el usuario expresa una preferencia explícita."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "text": {
+                        "type": "string",
+                        "description": "Preferencia corta y literal a recordar (máx 500 chars)."
+                    }
+                },
+                "required": ["text"]
+            }
+        }
     }
 ]
 
-"""Tool schema list for the router agent (``task`` + ``search_memory``)."""
+"""Tool schema list for the router agent (``task`` + ``search_memory`` + ``save_user_memory``)."""
