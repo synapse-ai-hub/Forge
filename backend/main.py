@@ -161,6 +161,13 @@ except ImportError as e:
     approvals_router = None
     logging.warning("backend.routes.approvals could not be imported.")
 
+try:
+    from backend.routes.user_memory import router as user_memory_router
+except ImportError as e:
+    log_error(str(e), source="main.py:user_memory_import")
+    user_memory_router = None
+    logging.warning("backend.routes.user_memory could not be imported.")
+
 # ---------------------------------------------------------------------------
 # Logging configuration
 # ---------------------------------------------------------------------------
@@ -492,6 +499,9 @@ if notifications_router is not None:
 
 if approvals_router is not None:
     app.include_router(approvals_router, prefix="/api")
+
+if user_memory_router is not None:
+    app.include_router(user_memory_router, prefix="/api")
 
 
 # ---------------------------------------------------------------------------
