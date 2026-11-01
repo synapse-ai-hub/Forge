@@ -475,6 +475,16 @@ class AgentLoop:
                     if router_skills:
                         skills_section = format_skills_section(skill_permissions=router_skills)
 
+                user_memory_text = ""
+                if agent_name is None:
+                    try:
+                        from backend.agent.utils.rag_helpers import load_user_memory_text
+
+                        user_memory_text = await asyncio.to_thread(load_user_memory_text)
+                    except Exception as exc:
+                        log_error(str(exc), source="loop.py:run(user_memory)")
+                        user_memory_text = ""
+
                 system_prompt = build_system_prompt(
                     agent_name,
                     tools=(
@@ -490,6 +500,7 @@ class AgentLoop:
                     skills_section=skills_section,
                     agents_section=agents_section,
                     temp_dir=temp_path,
+                    user_memory=user_memory_text,
                 )
             
             # --- 4. Gate message: raw text + attachments (guardrail/gate input) ---

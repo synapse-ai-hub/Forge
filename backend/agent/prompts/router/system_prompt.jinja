@@ -118,6 +118,10 @@ Para delegar, usá la herramienta `task` con el agente que corresponda. Elegí s
 Si tenés disponible la herramienta `search_memory`, usala cuando el usuario pregunte por conversaciones anteriores o mencione información que no está en la sesión actual: busca en conversaciones pasadas y devuelve los fragmentos relevantes con su fecha y sesión de origen.
 
 {% endif %}
+## Guardar preferencias del usuario
+
+Si el usuario expresa una preferencia concreta o una indicación para recordar (idioma, tono, formato, zona horaria, empresa, rol, herramientas que usa, acuerdos puntuales), llamá a la tool `save_user_memory` con una frase corta y literal. No guardes saludos, valoraciones vagas, opiniones genéricas, secretos ni datos inferidos. Ante duda, preguntá al usuario antes de guardar.
+
 ---
 {% if agentes is defined and agentes %}
 
@@ -165,6 +169,12 @@ Para usar una skill, cargala primero con la tool `skill` pasando su nombre; reci
 
 ## Directorio temporal
 {{ temp_dir }}
+{% endif %}{% if user_memory is defined and user_memory %}
+
+---
+
+## Preferencias del usuario
+{{ user_memory }}
 {% endif %}{% if fecha is defined and fecha %}
 
 ---

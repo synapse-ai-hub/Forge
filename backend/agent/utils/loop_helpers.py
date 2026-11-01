@@ -283,6 +283,7 @@ def build_system_prompt(
     skills_section: str = "",
     agents_section: str = "",
     temp_dir: str = "",
+    user_memory: str = "",
 ) -> str:
     """Build the system prompt for an agent.
 
@@ -315,6 +316,7 @@ def build_system_prompt(
             (``agentes_disponibles.jinja`` output, header included). Empty
             means the section is left out.
         temp_dir: Temporary directory path. Empty means the section is left out.
+        user_memory: User preferences text. Empty means the section is left out.
 
     Returns:
         The system prompt string.
@@ -374,6 +376,7 @@ def build_system_prompt(
         fecha=fecha,
         skills_section=skills_section,
         temp_dir=temp_dir,
+        user_memory=user_memory,
     )
 
 
