@@ -6,6 +6,7 @@ import { Collapsible } from "./ui/collapsible";
 import configService from "../services/configService";
 import type { ProviderKeyStatus, AdvancedParams, DecisionProvider } from "../services/configService";
 import contextFilesService, { type ContextFile } from "../services/contextFilesService";
+import userMemoryService, { type UserPreference } from "../services/userMemoryService";
 
 interface ConfigTabProps {
   verboseMode: boolean;
@@ -66,6 +67,9 @@ export function ConfigTab({ verboseMode, onVerboseModeChange }: ConfigTabProps) 
   const [applyMessage, setApplyMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [contextFiles, setContextFiles] = useState<ContextFile[]>([]);
   const [uploadingContext, setUploadingContext] = useState(false);
+  const [preferences, setPreferences] = useState<UserPreference[]>([]);
+  const [newPreference, setNewPreference] = useState("");
+  const [savingPreference, setSavingPreference] = useState(false);
   const contextFileInputRef = useRef<HTMLInputElement>(null);
   const isFirstLoadRef = useRef(true);
 
@@ -301,6 +305,9 @@ export function ConfigTab({ verboseMode, onVerboseModeChange }: ConfigTabProps) 
     contextFilesService.list()
       .then((files) => setContextFiles(files || []))
       .catch((err) => console.error("Error cargando archivos de contexto:", err));
+    userMemoryService.list()
+      .then((prefs) => setPreferences(prefs || []))
+      .catch((err) => console.error("Error cargando preferencias:", err));
   }, []);
 
   const handleProviderChange = (value: string) => {
@@ -554,6 +561,31 @@ export function ConfigTab({ verboseMode, onVerboseModeChange }: ConfigTabProps) 
       setContextFiles((prev) => prev.filter((f) => f.id !== id));
     } catch (err) {
       console.error("Error eliminando archivo de contexto:", err);
+    }
+  };
+
+  const handleAddPreference = async () => {
+    const text = newPreference.trim();
+    if (!text) return;
+    try {
+      setSavingPreference(true);
+      await userMemoryService.add(text);
+      const prefs = await userMemoryService.list();
+      setPreferences(prefs || []);
+      setNewPreference("");
+    } catch (err) {
+      console.error("Error guardando preferencia:", err);
+    } finally {
+      setSavingPreference(false);
+    }
+  };
+
+  const handleDeletePreference = async (id: string) => {
+    try {
+      await userMemoryService.remove(id);
+      setPreferences((prev) => prev.filter((p) => p.id !== id));
+    } catch (err) {
+      console.error("Error eliminando preferencia:", err);
     }
   };
 
@@ -1218,6 +1250,48 @@ export function ConfigTab({ verboseMode, onVerboseModeChange }: ConfigTabProps) 
                   onClick={() => handleDeleteContextFile(f.id)}
                   className="ml-2 shrink-0 rounded p-0.5 text-app-text-secondary hover:text-red-500 hover:bg-red-50 transition-colors"
                   aria-label="Eliminar archivo de contexto"
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Preferencias del usuario */}
+      <div className="pt-2">
+        <div className="text-xs font-medium text-app-text-secondary">
+          Preferencias del usuario
+        </div>
+        <p className="text-[11px] text-app-text-secondary mt-1">
+          Cosas que el agente debe recordar (idioma, tono, formato, empresa, rol). Se inyectan en cada turno.
+        </p>
+        <div className="mt-2 flex gap-2">
+          <Input
+            value={newPreference}
+            onChange={(e) => setNewPreference(e.target.value)}
+            placeholder="Ej: Prefiero respuestas cortas"
+            className="flex-1"
+            maxLength={500}
+          />
+          <Button onClick={handleAddPreference} disabled={savingPreference || !newPreference.trim()}>
+            {savingPreference ? "Guardando..." : "Agregar"}
+          </Button>
+        </div>
+        {preferences.length > 0 && (
+          <div className="mt-3 space-y-1">
+            {preferences.map((p) => (
+              <div
+                key={p.id}
+                className="flex items-center justify-between rounded-md bg-white px-2 py-1.5 text-xs"
+              >
+                <span className="truncate text-app-text flex-1 min-w-0">{p.text}</span>
+                <button
+                  type="button"
+                  onClick={() => handleDeletePreference(p.id)}
+                  className="ml-2 shrink-0 rounded p-0.5 text-app-text-secondary hover:text-red-500 hover:bg-red-50 transition-colors"
+                  aria-label="Eliminar preferencia"
                 >
                   <Trash2 size={14} />
                 </button>
