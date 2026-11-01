@@ -109,7 +109,6 @@ from backend.agent.loop.constants import (
     MAX_SUBAGENT_DEPTH,
 )
 from backend.agent.llm.decision import _is_model_not_found
-from backend.agent.loop.router_tools import _ROUTER_TOOLS
 from backend.agent.loop.helpers import (
     _load_router_permissions,
     _read_param_override,
@@ -436,7 +435,7 @@ class AgentLoop:
                     tools = list(agent.tools.tools_registry(tool_permissions))
                 except AttributeError as e:
                     log_error(str(e), source="loop.py:run(tools)")
-                    tools = _ROUTER_TOOLS
+                    tools = []
             else:
                 try:
                     tools = list(agent.tools.tools_registry(tool_permissions))

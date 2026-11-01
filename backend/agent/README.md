@@ -68,7 +68,7 @@ Implementa el `while(true)` orquestador. Por cada mensaje del usuario:
 
 Expone el método `run(session_id, user_message, ...)` que retorna un `AsyncGenerator` de eventos SSE: `turn`, `chunk`, `reasoning`, `tool_call`, `tool_result`, `subagent_call`, `subagent_result`, `subagent_event`, `session_title`, `token_counter` y `decision`, seguidos de `[DONE]`.
 
-El paquete se reparte así: `agent_loop.py` (clase `AgentLoop`), `constants.py` (límites de iteraciones y reintentos), `router_tools.py` (schema de tools de respaldo del router) y `helpers.py` (tipo de API de las tools, permisos del router y overrides de parámetros). `__init__.py` re-exporta `AgentLoop`, así que `from backend.agent.loop import AgentLoop` sigue valiendo.
+El paquete se reparte así: `agent_loop.py` (clase `AgentLoop`), `constants.py` (límites de iteraciones y reintentos) y `helpers.py` (tipo de API de las tools, permisos del router y overrides de parámetros). `__init__.py` re-exporta `AgentLoop`, así que `from backend.agent.loop import AgentLoop` sigue valiendo.
 
 ### 2. `session.py` — Persistencia SQLite
 
