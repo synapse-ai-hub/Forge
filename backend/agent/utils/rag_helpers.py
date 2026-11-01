@@ -887,12 +887,25 @@ def add_user_memory(text: str, origin: str = "auto") -> dict:
             "date": datetime.now().isoformat(),
             "origin": origin,
         }
+        _mem_t0 = time.time()
         db.add_documents(
             USER_MEMORY_COLLECTION,
             ids=[doc_id],
             documents=[cleaned],
             metadatas=[metadata],
         )
+        _mem_duration = round(time.time() - _mem_t0, 2)
+        # Track the embedding-model call in SQLite. Never breaks the flow.
+        try:
+            from backend.agent.utils.spend_handler import record_external_usage
+
+            record_external_usage(
+                "embedding", "google", db.embed_func.model_name, 1,
+                duration=_mem_duration,
+                prompt_tokens=db.embed_func.count_tokens([cleaned]),
+            )
+        except Exception:
+            pass
         return make_success_response(
             message="Preferencia guardada.",
             data={"id": doc_id, "text": cleaned},
