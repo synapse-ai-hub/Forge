@@ -865,8 +865,6 @@ def add_user_memory(text: str, origin: str = "auto") -> dict:
         Contract response dict (``{status, message, data, usage}``).
     """
     try:
-        from datetime import datetime
-
         from backend.agent.utils.vector_db import get_vector_db
 
         cleaned = (text or "").strip()
@@ -954,5 +952,89 @@ def delete_user_memory(doc_id: str) -> dict:
         log_error(str(e), source="rag_helpers.py:delete_user_memory")
         return make_error_response(
             message=f"No se pudo eliminar la preferencia: {e}",
+            usage=zero_usage(),
+        )
+
+
+def update_user_memory(doc_id: str, text: str) -> dict:
+    """Update one user preference text (re-vectorized, never raises).
+
+    Replaces the document so Chroma computes a new embedding. The original
+    ``origin`` metadata is kept and an ``updated`` timestamp is added.
+    The embedding-model call is tracked in SQLite like every other
+    vectorization in this module.
+
+    Args:
+        doc_id: Document id in the ``user_memory`` collection.
+        text: New preference text.
+
+    Returns:
+        Contract response dict (``{status, message, data, usage}``).
+    """
+    try:
+        from backend.agent.utils.vector_db import get_vector_db
+
+        if not (doc_id or "").strip():
+            return make_error_response(
+                message="Falta el id.",
+                usage=zero_usage(),
+            )
+        cleaned = (text or "").strip()
+        if not cleaned:
+            return make_error_response(
+                message="La preferencia está vacía.",
+                usage=zero_usage(),
+            )
+        if len(cleaned) > 500:
+            return make_error_response(
+                message="La preferencia es demasiado larga (máx 500 caracteres).",
+                usage=zero_usage(),
+            )
+        db = get_vector_db()
+        col = db.get_collection(USER_MEMORY_COLLECTION)
+        try:
+            existing = col.get(ids=[doc_id.strip()])
+            if not (existing.get("ids") or []):
+                return make_error_response(
+                    message="No existe la preferencia.",
+                    usage=zero_usage(),
+                )
+            metadatas = existing.get("metadatas") or [{}]
+            metadata = dict(metadatas[0] or {})
+        except Exception as exc:
+            log_error(str(exc), source="rag_helpers.py:update_user_memory(exists)")
+            return make_error_response(
+                message=f"No se pudo verificar la preferencia: {exc}",
+                usage=zero_usage(),
+            )
+        metadata["updated"] = datetime.now().isoformat()
+        _mem_t0 = time.time()
+        db.update_documents(
+            USER_MEMORY_COLLECTION,
+            ids=[doc_id.strip()],
+            documents=[cleaned],
+            metadatas=[metadata],
+        )
+        _mem_duration = round(time.time() - _mem_t0, 2)
+        # Track the embedding-model call in SQLite. Never breaks the flow.
+        try:
+            from backend.agent.utils.spend_handler import record_external_usage
+
+            record_external_usage(
+                "embedding", "google", db.embed_func.model_name, 1,
+                duration=_mem_duration,
+                prompt_tokens=db.embed_func.count_tokens([cleaned]),
+            )
+        except Exception:
+            pass
+        return make_success_response(
+            message="Preferencia actualizada.",
+            data={"id": doc_id.strip(), "text": cleaned},
+            usage=zero_usage(),
+        )
+    except Exception as e:
+        log_error(str(e), source="rag_helpers.py:update_user_memory")
+        return make_error_response(
+            message=f"No se pudo actualizar la preferencia: {e}",
             usage=zero_usage(),
         )

@@ -3,6 +3,7 @@
 Endpoints:
 - ``GET /api/user-memory`` — List preferences.
 - ``POST /api/user-memory`` — Add a preference.
+- ``PUT /api/user-memory/{doc_id}`` — Update a preference (re-vectorized).
 - ``DELETE /api/user-memory/{doc_id}`` — Delete a preference.
 
 The collection is internal (never listed as RAG) and holds one document
@@ -24,13 +25,19 @@ if _project_root not in sys.path:
 
 from backend.agent.utils.contract import make_error_response, make_success_response, zero_usage
 from backend.agent.utils.error_logger import log_error
-from backend.agent.utils.rag_helpers import USER_MEMORY_COLLECTION, add_user_memory, delete_user_memory
+from backend.agent.utils.rag_helpers import USER_MEMORY_COLLECTION, add_user_memory, delete_user_memory, update_user_memory
 
 router = APIRouter(prefix="/user-memory", tags=["user-memory"])
 
 
 class AddPreferenceRequest(BaseModel):
     """Request to add a preference."""
+
+    text: str = Field(min_length=1, max_length=500)
+
+
+class UpdatePreferenceRequest(BaseModel):
+    """Request to update a preference."""
 
     text: str = Field(min_length=1, max_length=500)
 
@@ -92,6 +99,27 @@ async def add_preference(payload: AddPreferenceRequest) -> dict:
         log_error(str(e), source="user_memory.py:add")
         return make_error_response(
             message="Error guardando preferencia.",
+            usage=zero_usage(),
+        )
+
+
+@router.put("/{doc_id}")
+async def edit_preference(doc_id: str, payload: UpdatePreferenceRequest) -> dict:
+    """Update a user preference by id (re-vectorized).
+
+    Args:
+        doc_id: Document id.
+        payload: Request with the new ``text``.
+
+    Returns:
+        Contract dict with the updated preference.
+    """
+    try:
+        return update_user_memory(doc_id, payload.text)
+    except Exception as e:
+        log_error(str(e), source="user_memory.py:edit")
+        return make_error_response(
+            message="Error actualizando preferencia.",
             usage=zero_usage(),
         )
 

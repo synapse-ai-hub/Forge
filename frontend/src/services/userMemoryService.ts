@@ -42,6 +42,24 @@ export const userMemoryService = {
     return result.data;
   },
 
+  /** Update a user preference by id (re-vectorized). */
+  async update(id: string, text: string): Promise<UserPreference> {
+    const res = await fetch(`${API_BASE_URL}/api/user-memory/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    if (!res.ok) {
+      const txt = await res.text().catch(() => "");
+      throw new Error(`HTTP ${res.status}: ${txt}`);
+    }
+    const result = await res.json();
+    if (result.status === "error") {
+      throw new Error(result.message || "Error al actualizar preferencia");
+    }
+    return result.data;
+  },
+
   /** Delete a user preference by id. */
   async remove(id: string): Promise<void> {
     const res = await fetch(`${API_BASE_URL}/api/user-memory/${encodeURIComponent(id)}`, {
