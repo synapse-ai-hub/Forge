@@ -1098,6 +1098,10 @@ class AgentLoop:
                     # sequential execution. Cancellation, spend and LLM
                     # retries intact.
                     pending: list[tuple[int, dict[str, Any], dict | None, Any]] = []
+                    # Positions (in tool_calls) of save_user_memory calls the
+                    # user did NOT approve. They are skipped at execution
+                    # time with an omission result; the turn is NOT cut.
+                    denied_memory: set[int] = set()
                     # Wall-clock duration (seconds) of each block call, keyed
                     # by original call index. Used only for metrics
                     # (per-tool-call timing); never affects execution.
@@ -1135,6 +1139,8 @@ class AgentLoop:
                         try:
                             if stream_cancel_event is not None and stream_cancel_event.is_set():
                                 return {"status": "error", "message": "Ejecución cancelada por el usuario.", "data": ""}
+                            if btc.get("name") == "save_user_memory" and btc_idx in denied_memory:
+                                return {"status": "success", "message": "Preferencia no guardada: el usuario no la aprobó.", "data": ""}
                             return await execute_tool(agent, btc)
                         except asyncio.CancelledError:
                             return {"status": "error", "message": "Ejecución cancelada por el usuario.", "data": ""}
@@ -1155,7 +1161,18 @@ class AgentLoop:
                     # any tool_call is emitted (tasks included), so a deny
                     # never leaves a tool block without its tool_result.
                     # On deny or timeout the turn is cut here.
-                    for pre_tc in tool_calls:
+                    # save_user_memory calls go through the same modal, but
+                    # a deny only omits that save (the turn continues).
+                    for pre_idx, pre_tc in enumerate(tool_calls):
+                        if pre_tc.get("name") == "save_user_memory" and not is_creator:
+                            pref_text = ((pre_tc.get("args") or {}).get("text", "") or "")
+                            mem_approval_id = create_approval(session_id, pref_text)
+                            yield f"data: {json.dumps({'type': 'approval_required', 'content': {'approval_id': mem_approval_id, 'command': pref_text, 'kind': 'memory'}}, ensure_ascii=False)}\n\n"
+                            if not await wait_approval(mem_approval_id, cancel_event=stream_cancel_event):
+                                denied_memory.add(pre_idx)
+                                msg = "Omitido: la preferencia no fue aprobada y no se guardó."
+                                yield f"data: {json.dumps({'type': 'chunk', 'content': msg}, ensure_ascii=False)}\n\n"
+                            continue
                         if pre_tc.get("name") != "shell":
                             continue
                         if is_creator:

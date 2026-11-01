@@ -30,6 +30,7 @@ import chatService from "../services/chatService";
 import configService from "../services/configService";
 import approvalService from "../services/approvalService";
 import { ShellApprovalModal, type PendingShellApproval } from "../components/ShellApprovalModal";
+import { MemoryApprovalModal, type PendingMemoryApproval } from "../components/MemoryApprovalModal";
 import type { AppNotification } from "../services/notificationService";
 import { Button } from "../components/ui/button";
 import { FileChip, FileWarningBanner, MessageRow } from "../components/chatBlocks";
@@ -219,6 +220,7 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
   const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
   const [showScrollButton, setShowScrollButton] = useState(false);
   const [pendingApproval, setPendingApproval] = useState<PendingShellApproval | null>(null);
+  const [pendingMemoryApproval, setPendingMemoryApproval] = useState<PendingMemoryApproval | null>(null);
   const userInteractionRef = useRef(false);
   const wheelUpRef = useRef(false);
   const isProgrammaticScrollRef = useRef(false);
@@ -477,13 +479,17 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
     if (pendingApproval) {
       void approvalService.resolve(pendingApproval.approval_id, false).catch(() => {});
     }
+    if (pendingMemoryApproval) {
+      void approvalService.resolve(pendingMemoryApproval.approval_id, false).catch(() => {});
+    }
     setIsStreaming(false);
     setPendingApproval(null);
+    setPendingMemoryApproval(null);
     setInput("");
     setFiles([]);
     setFileWarning(null);
     onNewChat();
-  }, [onNewChat, setIsStreaming, pendingApproval]);
+  }, [onNewChat, setIsStreaming, pendingApproval, pendingMemoryApproval]);
 
   /* ---- send message ---- */
   const sendMessage = useCallback(
@@ -593,10 +599,17 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
                 ? event.content
                 : {};
             if (typeof payload.approval_id === "string") {
-              setPendingApproval({
-                approval_id: payload.approval_id,
-                command: typeof payload.command === "string" ? payload.command : "",
-              });
+              if (payload.kind === "memory") {
+                setPendingMemoryApproval({
+                  approval_id: payload.approval_id,
+                  text: typeof payload.command === "string" ? payload.command : "",
+                });
+              } else {
+                setPendingApproval({
+                  approval_id: payload.approval_id,
+                  command: typeof payload.command === "string" ? payload.command : "",
+                });
+              }
             }
             break;
           }
@@ -719,19 +732,29 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
 
             if (!childId) break;
 
-            // A subagent asking for shell approval: surface the modal at
+            // A subagent asking for approval: surface the modal at
             // top level (the nested event never hits "approval_required").
             if (
               innerEvent.type === "approval_required" &&
               typeof innerEvent.content?.approval_id === "string"
             ) {
-              setPendingApproval({
-                approval_id: innerEvent.content.approval_id,
-                command:
-                  typeof innerEvent.content.command === "string"
-                    ? innerEvent.content.command
-                    : "",
-              });
+              if (innerEvent.content?.kind === "memory") {
+                setPendingMemoryApproval({
+                  approval_id: innerEvent.content.approval_id,
+                  text:
+                    typeof innerEvent.content.command === "string"
+                      ? innerEvent.content.command
+                      : "",
+                });
+              } else {
+                setPendingApproval({
+                  approval_id: innerEvent.content.approval_id,
+                  command:
+                    typeof innerEvent.content.command === "string"
+                      ? innerEvent.content.command
+                      : "",
+                });
+              }
               break;
             }
 
@@ -991,8 +1014,12 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
     if (pendingApproval) {
       void approvalService.resolve(pendingApproval.approval_id, false).catch(() => {});
     }
+    if (pendingMemoryApproval) {
+      void approvalService.resolve(pendingMemoryApproval.approval_id, false).catch(() => {});
+    }
     setPendingApproval(null);
-  }, [pendingApproval]);
+    setPendingMemoryApproval(null);
+  }, [pendingApproval, pendingMemoryApproval]);
 
   /* ---- keyboard ---- */
   const handleKeyDown = useCallback(
@@ -1448,6 +1475,16 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
         </div>
       </div>
       <ShellApprovalModal approval={pendingApproval} onResolved={() => setPendingApproval(null)} />
+      <MemoryApprovalModal
+        approval={pendingMemoryApproval}
+        onResolved={(approved) => {
+          setPendingMemoryApproval(null);
+          // A saved preference must show up in Config immediately, even if
+          // the user is sitting there: same focus event refreshAll uses to
+          // force every panel to reload.
+          if (approved) window.dispatchEvent(new Event("focus"));
+        }}
+      />
     </div>
   );
   },

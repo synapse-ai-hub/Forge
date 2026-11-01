@@ -301,14 +301,32 @@ export function ConfigTab({ verboseMode, onVerboseModeChange }: ConfigTabProps) 
     return () => window.removeEventListener("model-changed", onModelChange);
   }, [load]);
 
-  useEffect(() => {
-    contextFilesService.list()
-      .then((files) => setContextFiles(files || []))
-      .catch((err) => console.error("Error cargando archivos de contexto:", err));
+  const reloadPreferences = useCallback(() => {
     userMemoryService.list()
       .then((prefs) => setPreferences(prefs || []))
       .catch((err) => console.error("Error cargando preferencias:", err));
   }, []);
+
+  useEffect(() => {
+    contextFilesService.list()
+      .then((files) => setContextFiles(files || []))
+      .catch((err) => console.error("Error cargando archivos de contexto:", err));
+    reloadPreferences();
+  }, [reloadPreferences]);
+
+  // The agent can save preferences from the chat (approval modal), so the
+  // list must refresh when Config regains visibility — not only on mount.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === "visible") reloadPreferences();
+    };
+    window.addEventListener("focus", reloadPreferences);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("focus", reloadPreferences);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [reloadPreferences]);
 
   const handleProviderChange = (value: string) => {
     setSelectedProvider(value);
