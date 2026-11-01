@@ -77,9 +77,14 @@ MEMORY_COLLECTION = "agent_conversations"
 # document per section.
 HELP_COLLECTION = "help"
 
+# Dedicated Chroma collection holding user preferences (one document per
+# preference, set by the user or saved by the agent when it detects a
+# concrete preference). Never shown as a RAG collection in the UI.
+USER_MEMORY_COLLECTION = "user_memory"
+
 # Internal collections: created at startup, never shown to the user as RAG
 # collections.
-INTERNAL_COLLECTIONS = (MEMORY_COLLECTION, HELP_COLLECTION)
+INTERNAL_COLLECTIONS = (MEMORY_COLLECTION, HELP_COLLECTION, USER_MEMORY_COLLECTION)
 
 # Turns are usually short, so a turn is a single document. Only when the
 # document exceeds this size is the existing chunking helper applied.
@@ -811,3 +816,143 @@ def index_turn_fire_and_forget(
         task.add_done_callback(_background_index_tasks.discard)
     except Exception as e:
         log_error(str(e), source="rag_helpers.py:index_turn_fire_and_forget")
+
+
+def load_user_memory_text(limit: int = 20) -> str:
+    """Load all user preferences as plain text for the system prompt.
+
+    Reads every document from the internal ``user_memory`` collection and
+    joins them with newlines. Returns an empty string when the collection
+    does not exist or has no documents. Never raises.
+
+    Args:
+        limit: Maximum number of preferences to load.
+
+    Returns:
+        Newline-joined preferences with leading bullets, or ``""`` when empty.
+    """
+    try:
+        from backend.agent.utils.vector_db import get_vector_db
+
+        db = get_vector_db()
+        try:
+            col = db.get_collection(USER_MEMORY_COLLECTION)
+        except ValueError:
+            return ""
+        stored = col.get(limit=max(1, int(limit)))
+        documents = stored.get("documents") or []
+        texts = [str(d).strip() for d in documents if str(d).strip()]
+        if not texts:
+            return ""
+        return "- " + "\n- ".join(texts[: max(1, int(limit))])
+    except Exception as exc:
+        log_error(str(exc), source="rag_helpers.py:load_user_memory_text")
+        return ""
+
+
+def add_user_memory(text: str, origin: str = "auto") -> dict:
+    """Save one user preference into the internal collection.
+
+    Each preference is a short literal sentence (e.g. "Prefiere respuestas
+    cortas"). Duplicates are not deduplicated here; the caller decides.
+    Never raises: failures are returned as an error contract.
+
+    Args:
+        text: Preference text to save.
+        origin: Where it comes from (``auto``, ``ui`` or ``modal``).
+
+    Returns:
+        Contract response dict (``{status, message, data, usage}``).
+    """
+    try:
+        from datetime import datetime
+
+        from backend.agent.utils.vector_db import get_vector_db
+
+        cleaned = (text or "").strip()
+        if not cleaned:
+            return make_error_response(
+                message="La preferencia está vacía.",
+                usage=zero_usage(),
+            )
+        if len(cleaned) > 500:
+            return make_error_response(
+                message="La preferencia es demasiado larga (máx 500 caracteres).",
+                usage=zero_usage(),
+            )
+        db = get_vector_db()
+        db.get_or_create_collection(USER_MEMORY_COLLECTION)
+        import uuid
+
+        doc_id = f"pref_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+        metadata = {
+            "date": datetime.now().isoformat(),
+            "origin": origin,
+        }
+        db.add_documents(
+            USER_MEMORY_COLLECTION,
+            ids=[doc_id],
+            documents=[cleaned],
+            metadatas=[metadata],
+        )
+        return make_success_response(
+            message="Preferencia guardada.",
+            data={"id": doc_id, "text": cleaned},
+            usage=zero_usage(),
+        )
+    except Exception as e:
+        log_error(str(e), source="rag_helpers.py:add_user_memory")
+        return make_error_response(
+            message=f"No se pudo guardar la preferencia: {e}",
+            usage=zero_usage(),
+        )
+
+
+def delete_user_memory(doc_id: str) -> dict:
+    """Delete one user preference by id (never raises).
+
+    Checks existence first so unknown ids return an error instead of a
+    false success. Chroma ``delete`` does not validate.
+
+    Args:
+        doc_id: Document id in the ``user_memory`` collection.
+
+    Returns:
+        Contract response dict (``{status, message, data, usage}``).
+    """
+    try:
+        from backend.agent.utils.vector_db import get_vector_db
+
+        if not (doc_id or "").strip():
+            return make_error_response(
+                message="Falta el id.",
+                usage=zero_usage(),
+            )
+        cleaned = doc_id.strip()
+        db = get_vector_db()
+        col = db.get_collection(USER_MEMORY_COLLECTION)
+        try:
+            existing = col.get(ids=[cleaned])
+            if not (existing.get("ids") or []):
+                return make_error_response(
+                    message="No existe la preferencia.",
+                    usage=zero_usage(),
+                )
+        except Exception as exc:
+            log_error(str(exc), source="rag_helpers.py:delete_user_memory(exists)")
+            return make_error_response(
+                message=f"No se pudo verificar la preferencia: {exc}",
+                usage=zero_usage(),
+            )
+        col.delete(ids=[cleaned])
+        return make_success_response(
+            message="Preferencia eliminada.",
+            data={"id": cleaned},
+            usage=zero_usage(),
+        )
+    except Exception as e:
+        log_error(str(e), source="rag_helpers.py:delete_user_memory")
+        return make_error_response(
+            message=f"No se pudo eliminar la preferencia: {e}",
+            usage=zero_usage(),
+        )
