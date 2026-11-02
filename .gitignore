@@ -75,6 +75,6 @@ tests/workflows/reports/
 tests/creators/reports/
 
 # Pruebas embeddings
-pruebas_chroma.ipynb
+*.ipynb
 
 
