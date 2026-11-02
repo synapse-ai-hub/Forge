@@ -406,7 +406,7 @@ Elimina un archivo de contexto por id.
 
 ---
 
-### 5. Metrics (`backend/routes/metrics.py`)
+### 5. Metrics (`backend/routes/metrics/`)
 
 Todos los endpoints aceptan `time_range` (Query): `1h`, `6h`, `1d`, `1w`, `1m` o `all`. Default `1m`; un valor inválido se trata como `1m`. Los datos se agregan desde `agent.db`.
 
