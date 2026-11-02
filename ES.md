@@ -159,7 +159,7 @@ Un **modelo de decisión** opcional (System One) se puede habilitar en **Config*
 
 ### Frontend
 
-SPA React/Vite/TypeScript con Tailwind v4 y shadcn/ui. Multi-página: chat, creación de skills, tools, agentes y workflows, gestión de RAG, documentación. Streaming SSE, visualización de tool calls, indicador de contexto, tareas programadas, uso y facturación, dashboard de métricas, toggle de Telegram.
+SPA React/Vite/TypeScript con Tailwind v4 y shadcn/ui. Multi-página: chat, creación de skills, tools, agentes y workflows, gestión de RAG, documentación. Streaming SSE, visualización de tool calls, indicador de contexto, tareas programadas, uso y facturación, dashboard de métricas (sesiones, mensajes, herramientas, modelos, gastos, errores, workflows, creadores y calidad, con filtros de tiempo y exportación CSV/JSON), toggle de Telegram.
 
 ### Proveedores
 
