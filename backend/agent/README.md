@@ -151,7 +151,6 @@ Contiene módulos de soporte genéricos para el funcionamiento del agente:
 - `scheduler_helpers.py` — Agenda: las tareas programadas son workflows cuyo YAML tiene un bloque `schedule` (`enabled` y una lista de `slots` con `time` y `days`). El loop revisa cada 20 segundos qué horarios coinciden con el minuto actual y arranca el workflow con `source = "schedule"` en el mismo motor; también arma la vista de tareas que usan las rutas y Telegram.
 - `spend_handler.py` — Registro de gasto y límites de presupuesto por proveedor y modelo.
 - `rate_limit_handler.py` — Clasificación de errores de rate limit y mensajes por proveedor.
-- `eda_figure.py` — Figuras de distribución de métricas en memoria (base64).
 - `create_helpers.py` — Helpers de creación vía LLM (skills, tools, agentes, workflows).
 - `approvals.py` — Aprobaciones de comandos shell (crear, esperar y resolver).
 - `prompt_loader.py` — Búsqueda jerárquica de plantillas Jinja en el árbol de `prompts/`.

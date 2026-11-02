@@ -12,6 +12,12 @@ async function downloadFile(url: string, filename: string): Promise<void> {
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}: ${response.statusText}`);
   }
+  const contentType = response.headers.get("content-type") || "";
+  if (contentType.includes("application/json")) {
+    const result = await response.json().catch(() => null);
+    const msg = (result as { message?: string } | null)?.message || "Error descargando archivo";
+    throw new Error(msg);
+  }
   const blob = await response.blob();
   const href = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
@@ -71,6 +77,28 @@ export interface CostMetrics {
   total_cost: number;
   total_input: number;
   total_output: number;
+}
+
+export interface WorkflowMetrics {
+  total_runs: number;
+  by_workflow: { name: string; count: number }[];
+  by_source: { name: string; count: number }[];
+  by_status: { name: string; count: number }[];
+}
+
+export interface CreatorMetrics {
+  total_requests: number;
+  by_kind: { name: string; count: number }[];
+  by_status: { name: string; count: number }[];
+}
+
+export interface FeedbackMetrics {
+  total: number;
+  up: number;
+  down: number;
+  quality_rate: number;
+  by_type: { name: string; count: number }[];
+  by_model: { provider: string; model: string; type: string; count: number }[];
 }
 
 export interface MetricsOverview {
@@ -152,7 +180,7 @@ const metricsService = {
 
   /** Get tool usage metrics with optional time range filter. */
   async getToolMetrics(timeRange?: string): Promise<ToolMetrics> {
-    const query = timeRange && timeRange !== "all" ? `?time_range=${timeRange}` : "";
+    const query = timeRange ? `?time_range=${timeRange}` : "";
     return fetchMetric<ToolMetrics>(
       `/api/metrics/tools${query}`,
       "Error fetching tool metrics",
@@ -170,7 +198,7 @@ const metricsService = {
 
   /** Get error metrics with optional time range filter. */
   async getErrorMetrics(timeRange?: string): Promise<ErrorMetrics> {
-    const query = timeRange && timeRange !== "all" ? `?time_range=${timeRange}` : "";
+    const query = timeRange ? `?time_range=${timeRange}` : "";
     return fetchMetric<ErrorMetrics>(
       `/api/metrics/errors${query}`,
       "Error fetching error metrics",
@@ -186,6 +214,33 @@ const metricsService = {
     );
   },
 
+  /** Get workflow run metrics with optional time range filter. */
+  async getWorkflowMetrics(timeRange?: string): Promise<WorkflowMetrics> {
+    const query = timeRange ? `?time_range=${timeRange}` : "";
+    return fetchMetric<WorkflowMetrics>(
+      `/api/metrics/workflows${query}`,
+      "Error fetching workflow metrics",
+    );
+  },
+
+  /** Get creator request metrics with optional time range filter. */
+  async getCreatorMetrics(timeRange?: string): Promise<CreatorMetrics> {
+    const query = timeRange ? `?time_range=${timeRange}` : "";
+    return fetchMetric<CreatorMetrics>(
+      `/api/metrics/creators${query}`,
+      "Error fetching creator metrics",
+    );
+  },
+
+  /** Get response quality metrics with optional time range filter. */
+  async getFeedbackMetrics(timeRange?: string): Promise<FeedbackMetrics> {
+    const query = timeRange ? `?time_range=${timeRange}` : "";
+    return fetchMetric<FeedbackMetrics>(
+      `/api/metrics/feedback${query}`,
+      "Error fetching feedback metrics",
+    );
+  },
+
   /** Get a combined overview of all metrics with optional time range filter. */
   async getOverview(timeRange?: string): Promise<MetricsOverview> {
     const query = timeRange ? `?time_range=${timeRange}` : "";
@@ -195,16 +250,17 @@ const metricsService = {
     );
   },
 
-  /** Render a metric query with synapse_tools.eda.outliers (base64 image). */
-  async getOutliersFigure(body: {
+  /** Get binned distribution + stats (lightweight, no image). */
+  async getDistributionFigure(body: {
     query_file: string;
     value_column: string;
     time_range?: string;
     percentile?: number;
     model?: string;
     provider?: string;
-  }): Promise<{ image: string; stats: Record<string, number> }> {
-    const response = await fetch(`${API_BASE_URL}/api/metrics/eda/outliers-image`, {
+    filter_column?: string;
+  }): Promise<{ bins: { label: string; count: number; low?: number; high?: number }[]; stats: Record<string, number | string> }> {
+    const response = await fetch(`${API_BASE_URL}/api/metrics/eda/distribution`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -214,9 +270,9 @@ const metricsService = {
     }
     const result = await response.json();
     if (result.status === "error") {
-      throw new Error(result.message || "Error generando figura");
+      throw new Error(result.message || "Error generando distribución");
     }
-    return result.data as { image: string; stats: Record<string, number> };
+    return result.data as { bins: { label: string; count: number; low?: number; high?: number }[]; stats: Record<string, number | string> };
   },
 
   /** Download the sessions table (CSV) for the given time range. */
@@ -252,6 +308,34 @@ const metricsService = {
     const range = timeRange || "1m";
     const query = timeRange ? `?time_range=${timeRange}` : "";
     return downloadFile(`${API_BASE_URL}/api/metrics/costs/export${query}`, `gastos_${range}.csv`);
+  },
+
+  /** Download the agent errors table (CSV) for the given time range. */
+  async downloadErrorsCsv(timeRange?: string): Promise<void> {
+    const range = timeRange || "1m";
+    const query = timeRange ? `?time_range=${timeRange}` : "";
+    return downloadFile(`${API_BASE_URL}/api/metrics/errors/export${query}`, `errores_${range}.csv`);
+  },
+
+  /** Download the workflow runs table (CSV) for the given time range. */
+  async downloadWorkflowsCsv(timeRange?: string): Promise<void> {
+    const range = timeRange || "1m";
+    const query = timeRange ? `?time_range=${timeRange}` : "";
+    return downloadFile(`${API_BASE_URL}/api/metrics/workflows/export${query}`, `workflows_${range}.csv`);
+  },
+
+  /** Download the creator requests table (CSV) for the given time range. */
+  async downloadCreatorsCsv(timeRange?: string): Promise<void> {
+    const range = timeRange || "1m";
+    const query = timeRange ? `?time_range=${timeRange}` : "";
+    return downloadFile(`${API_BASE_URL}/api/metrics/creators/export${query}`, `creadores_${range}.csv`);
+  },
+
+  /** Download the quality votes table (CSV) for the given time range. */
+  async downloadFeedbackCsv(timeRange?: string): Promise<void> {
+    const range = timeRange || "1m";
+    const query = timeRange ? `?time_range=${timeRange}` : "";
+    return downloadFile(`${API_BASE_URL}/api/metrics/feedback/export${query}`, `calidad_${range}.csv`);
   },
 };
 

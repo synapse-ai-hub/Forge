@@ -226,7 +226,7 @@ Configuración: selector de proveedor/modelo, sección de modelo de decisión (h
 Panel de agentes con 6 sub-paneles: Tools, Skills, Agentes, MCP (estado de cada servidor, interruptor para activarlo o desactivarlo y borrado), RAG y Workflows (una tarjeta por workflow con un botón play que lo ejecuta en segundo plano y un botón de eliminar con confirmación, ambos visibles al pasar el mouse; mientras corre muestra "Ejecutando…" con un botón para cancelar y el play queda bloqueado).
 
 ### `MetricsModal.tsx`
-Dashboard de métricas con filtro de rango de tiempo (`1h`, `6h`, `1d`, `1w`, `1m`, todo) y tarjetas de Sesiones, Mensajes, Uso de herramientas, Modelos, Gasto y Errores. Cada tarjeta muestra sus gráficos, incluida la figura de outliers que renderiza el backend, y permite descargar los datos.
+Dashboard de métricas con filtro de rango de tiempo (`1h`, `6h`, `1d`, `1w`, `1m`, todo) y tarjetas de Sesiones, Mensajes, Uso de herramientas, Modelos, Gasto y Errores. Cada tarjeta muestra sus gráficos de distribución que renderiza el frontend y permite descargar los datos.
 
 ### `UsageTab.tsx` y `BillingTab.tsx`
 Se abren desde los botones **Usage** y **Billing** del header. Usage muestra el consumo del mes (requests, tokens y gasto) por proveedor; Billing el gasto por proveedor y modelo, con filtros, y permite configurar límites de gasto.

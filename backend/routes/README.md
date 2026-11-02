@@ -406,7 +406,7 @@ Elimina un archivo de contexto por id.
 
 ---
 
-### 5. Metrics (`backend/routes/metrics.py`)
+### 5. Metrics (`backend/routes/metrics/`)
 
 Todos los endpoints aceptan `time_range` (Query): `1h`, `6h`, `1d`, `1w`, `1m` o `all`. Default `1m`; un valor inválido se trata como `1m`. Los datos se agregan desde `agent.db`.
 
@@ -457,14 +457,6 @@ Costos por proveedor y modelo.
 Descarga la tabla correspondiente del rango como CSV (un registro por línea).
 
 **Respuesta:** `text/csv` como adjunto.
-
-#### `POST /api/metrics/eda/outliers-image`
-
-Genera la figura de outliers de una métrica con `synapse_tools.eda`. No escribe archivos.
-
-**Body (JSON):** `{"query_file", "value_column", "time_range", "placeholder", "filter_column", "percentile", "model", "provider"}`. Los dos últimos filtran por modelo.
-
-**Respuesta:** contrato con `data: {image, stats}`, donde `image` es PNG en base64.
 
 ---
 
