@@ -267,7 +267,7 @@ Deploy the app as a container. Two targets are available in `docker-compose.yml`
 
 ```bash
 docker compose up --build -d
-# App at http://localhost:8000
+# App at http://localhost:8080
 ```
 
 ---

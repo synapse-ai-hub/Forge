@@ -268,7 +268,7 @@ Desplegá la app como contenedor. Hay dos targets disponibles en `docker-compose
 
 ```bash
 docker compose up --build -d
-# App en http://localhost:8000
+# App en http://localhost:8080
 ```
 
 ---

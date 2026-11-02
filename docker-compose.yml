@@ -9,12 +9,12 @@ services:
       args:
         VITE_MODE: prod
         # Set these if the frontend needs to reach the API at a different origin
-        # VITE_URL_DEV: "http://localhost:8000"
-        # VITE_URL_PROD: "http://localhost:8000"
+        # VITE_URL_DEV: "http://localhost:8080"
+        # VITE_URL_PROD: "http://localhost:8080"
     ports:
-      - "8000:8000"
+      - "8080:8000"
     volumes:
-      - synapseforge-config:/root/.config/synapseForge
+      - ${USERPROFILE}\.config\synapseForge:/root/.config/synapseForge
     restart: unless-stopped
 
   # ────────────────────────────────────────────────────────────────────────────
@@ -25,9 +25,9 @@ services:
       context: .
       target: backend-only
     ports:
-      - "8000:8000"
+      - "8080:8000"
     volumes:
-      - synapseforge-config:/root/.config/synapseForge
+      - ${USERPROFILE}\.config\synapseForge:/root/.config/synapseForge
     restart: unless-stopped
 
 volumes:
