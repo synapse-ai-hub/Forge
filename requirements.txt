@@ -49,7 +49,3 @@ pytest>=9.0.0
 # --- MCP (Model Context Protocol) ---
 mcp>=2.0.0
 
-# Installed by tools
-google-auth==2.58.0
-google-auth-httplib2==0.4.4
-google-api-python-client==2.201.0
