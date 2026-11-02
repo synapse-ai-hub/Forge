@@ -10,16 +10,12 @@ from __future__ import annotations
 import csv
 import io
 import os
+import sqlite3
 import sys
 from datetime import datetime
 from typing import Any
 
 from fastapi import Response
-
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    import sqlite3
 
 # ---------------------------------------------------------------------------
 # Ensure the project root is in sys.path so absolute imports (backend.*)

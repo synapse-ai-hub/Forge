@@ -458,14 +458,6 @@ Descarga la tabla correspondiente del rango como CSV (un registro por línea).
 
 **Respuesta:** `text/csv` como adjunto.
 
-#### `POST /api/metrics/eda/outliers-image`
-
-Genera la figura de outliers de una métrica con `synapse_tools.eda`. No escribe archivos.
-
-**Body (JSON):** `{"query_file", "value_column", "time_range", "placeholder", "filter_column", "percentile", "model", "provider"}`. Los dos últimos filtran por modelo.
-
-**Respuesta:** contrato con `data: {image, stats}`, donde `image` es PNG en base64.
-
 ---
 
 ### 6. RAG (`backend/routes/rag.py`)
