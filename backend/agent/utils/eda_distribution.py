@@ -39,7 +39,7 @@ def _to_float(value: Any) -> float | None:
 def _is_integer_series(vals: list[float]) -> bool:
     try:
         return len(vals) > 0 and all(abs(v - round(v)) < 1e-9 for v in vals)
-    except Exception:
+    except (TypeError, ValueError):
         return False
 
 
@@ -52,7 +52,7 @@ def render_distribution(
     percentile: float | None = None,
     model_clause: str = "",
     model_params: tuple[Any, ...] = (),
-) -> dict:
+) -> dict[str, Any]:
     """Run a metric query and return binned histogram + stats.
 
     Args:
@@ -114,16 +114,16 @@ def render_distribution(
     try:
         modes = statistics.multimode(values)
         v_mode: Any = modes[0] if modes else "No mode"
-    except Exception:
+    except (statistics.StatisticsError, ValueError, TypeError):
         v_mode = "No mode"
     try:
         v_std = statistics.pstdev(values) if n > 1 else 0.0
-    except Exception:
+    except (statistics.StatisticsError, ValueError, TypeError):
         v_std = 0.0
     try:
         qs = statistics.quantiles(values, n=4, method="exclusive") if n >= 4 else [v_min, v_median, v_max]
         q1, _, q3 = qs[0], qs[1] if len(qs) > 1 else v_median, qs[2] if len(qs) > 2 else v_max
-    except Exception:
+    except (statistics.StatisticsError, ValueError, TypeError):
         q1, q3 = v_min, v_max
     q2 = v_median
     q4 = v_max
@@ -138,7 +138,7 @@ def render_distribution(
         try:
             threshold = statistics.quantiles(values, n=100, method="exclusive")[int(percentile * 100) - 1] if n >= 100 else values[min(n - 1, int(n * percentile))]
             display = [v for v in values if v <= threshold]
-        except Exception:
+        except (statistics.StatisticsError, ValueError, TypeError):
             display = values
     if not display:
         display = values
@@ -168,7 +168,7 @@ def render_distribution(
                     n_bins = 10
             else:
                 n_bins = min(12, max(5, math.ceil(math.log2(max(len(display), 2))) + 1))
-        except Exception:
+        except (ValueError, OverflowError, TypeError):
             n_bins = 10 if is_int else 12
         bin_width = span / n_bins
         if is_int:
@@ -176,7 +176,7 @@ def render_distribution(
         else:
             try:
                 decimals = max(2, min(6, -math.floor(math.log10(bin_width)) + 1)) if bin_width > 0 else 2
-            except Exception:
+            except (ValueError, OverflowError, TypeError):
                 decimals = 2
         counts = [0] * n_bins
         for v in display:
@@ -197,7 +197,7 @@ def render_distribution(
     def _r(x: Any) -> Any:
         try:
             return round(float(x), 4)
-        except Exception:
+        except (TypeError, ValueError):
             return x
 
     # Outlier values for display (up to 10 smallest + 10 largest beyond limits)
@@ -205,7 +205,7 @@ def render_distribution(
         lows = sorted([v for v in values if v < blo])[:10] if not (blo < 0 and min(values or [0]) >= 0) else []
         highs = sorted([v for v in values if v > tlo])[-10:]
         outlier_vals = lows + highs
-    except Exception:
+    except (TypeError, ValueError):
         outlier_vals = []
 
     stats = {
