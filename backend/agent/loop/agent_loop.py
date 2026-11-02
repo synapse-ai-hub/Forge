@@ -484,6 +484,14 @@ class AgentLoop:
                         log_error(str(exc), source="loop.py:run(user_memory)")
                         user_memory_text = ""
 
+                # Instrucciones y documentos globales: van al system (router y
+                # subagentes). Seccion omitida cuando no hay archivos.
+                try:
+                    context_text = await asyncio.to_thread(load_context_text)
+                except Exception as exc:
+                    log_error(str(exc), source="loop.py:run(context)")
+                    context_text = ""
+
                 system_prompt = build_system_prompt(
                     agent_name,
                     tools=(
@@ -500,12 +508,12 @@ class AgentLoop:
                     agents_section=agents_section,
                     temp_dir=temp_path,
                     user_memory=user_memory_text,
+                    context=context_text,
                 )
             
             # --- 4. Gate message: raw text + attachments (guardrail/gate input) ---
-            # Variable per-turn data (context files, pending frontier) is NOT
-            # part of the gate input: the guardrail and the continuity gate
-            # see exactly what they saw before (message + attachments).
+            # Solo mensaje + adjuntos: el contexto estable ya esta en el system,
+            # el frontier se agrega despues al contenido del usuario.
             gate_message = build_user_message(
                 user_message, file_contents=file_contents
             )
@@ -566,20 +574,11 @@ class AgentLoop:
 
             # --- 5b. Build initial messages array (history does NOT include current message) ---
             # The current user content is rendered via user_prompt.jinja:
-            # message + context files (router only, sub-agents stay isolated)
-            # + attachments + pending frontier. Only the raw message is
-            # persisted below, so the history stays clean.
-            try:
-                context_text = (
-                    await asyncio.to_thread(load_context_text)
-                    if agent_name is None else ""
-                )
-            except Exception as exc:
-                log_error(str(exc), source="loop.py:run(context)")
-                context_text = ""
+            # message + attachments + pending frontier. El contexto estable
+            # (instrucciones y documentos) ya viaja en el system prompt.
+            # Only the raw message is persisted below, so the history stays clean.
             user_content = build_user_message(
                 user_message,
-                context=context_text,
                 file_contents=file_contents,
                 frontier=resume_text or "",
             )

@@ -151,6 +151,11 @@ Prohibido llamar a la tool si la sección `Preferencias del usuario` ya contiene
 
 ## Behavior
 {{ behavior }}
+{% endif %}{% if context is defined and context %}
+
+---
+
+{% include "contexto.jinja" %}
 {% endif %}{% if mandatory is defined and mandatory %}
 
 ---

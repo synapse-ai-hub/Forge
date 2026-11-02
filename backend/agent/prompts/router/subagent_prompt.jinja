@@ -8,6 +8,11 @@
 
 ## Behavior
 {{ behavior }}
+{% endif %}{% if context is defined and context %}
+
+---
+
+{% include "contexto.jinja" %}
 {% endif %}{% if mandatory is defined and mandatory %}
 
 ---

@@ -119,19 +119,25 @@ class TaskMixin:
                     build_subagent_sections,
                     build_system_prompt,
                     get_temp_dir,
+                    load_context_text,
                 )
 
                 # Same sections a sub-agent gets when invoked via loop.run():
-                # its skills, the agents its ``task`` permission allows, and
-                # the shared temp directory.
+                # its skills, the agents its ``task`` permission allows, the
+                # shared temp directory and the global context files.
                 skills_section, agents_section = build_subagent_sections(
                     tool_perms, skill_perms
                 )
+                try:
+                    context_text = load_context_text()
+                except Exception:
+                    context_text = ""
                 system_prompt = build_system_prompt(
                     agent_name,
                     skills_section=skills_section,
                     agents_section=agents_section,
                     temp_dir=get_temp_dir(),
+                    context=context_text,
                 )
                 # print(f'Agente: {agent_name}\n\nPrompt:\n{system_prompt}')
             except Exception as exc:

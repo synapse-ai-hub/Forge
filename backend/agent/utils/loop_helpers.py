@@ -284,6 +284,7 @@ def build_system_prompt(
     agents_section: str = "",
     temp_dir: str = "",
     user_memory: str = "",
+    context: str = "",
 ) -> str:
     """Build the system prompt for an agent.
 
@@ -317,6 +318,9 @@ def build_system_prompt(
             means the section is left out.
         temp_dir: Temporary directory path. Empty means the section is left out.
         user_memory: User preferences text. Empty means the section is left out.
+        context: Context-files text (``contexto.jinja``). Router and
+            sub-agents alike (pass ``""`` when empty). Empty means the
+            section is left out.
 
     Returns:
         The system prompt string.
@@ -337,6 +341,8 @@ def build_system_prompt(
                 base=base,
                 # AGENT.md (comportamiento general) se inyecta antes de MANDATORY.
                 behavior=_read_agent_md(),
+                # Instrucciones y documentos globales: router y subagentes.
+                context=context or "",
                 mandatory=_mandatory_block(tools),
                 seguridad=_security_block(tools),
                 fecha=fecha,
@@ -369,6 +375,8 @@ def build_system_prompt(
         paralelizacion=paralelizacion,
         # AGENT.md (comportamiento general) se inyecta antes de MANDATORY.
         behavior=_read_agent_md(),
+        # Instrucciones y documentos globales (context files).
+        context=context or "",
         mandatory=_mandatory_block(tools),
         # Reglas de seguridad al final (después de lo que viene del usuario/admin).
         # Con el modelo de decisión habilitado las reglas van a él, no al prompt.
@@ -382,21 +390,19 @@ def build_system_prompt(
 
 def build_user_message(
     user_message: str,
-    context: str = "",
     file_contents: list[tuple[str, str]] | None = None,
     frontier: str = "",
 ) -> str:
     """Render the current user content via ``user_prompt.jinja``.
 
-    Variable per-turn data (context files, attachments, pending frontier)
-    travels in the user message, never in the system prompt. The system
-    prompt keeps only stable instructions. History keeps traveling as the
-    messages array with its roles (see ``build_initial_messages``).
+    Variable per-turn data (attachments, pending frontier) travels in
+    the user message, never in the system prompt. The system prompt
+    keeps only stable instructions (context files, behavior, memory).
+    History keeps traveling as the messages array with its roles
+    (see ``build_initial_messages``).
 
     Args:
         user_message: Raw current message (router text or delegation prompt).
-        context: Context-files text. Router only; sub-agents stay isolated
-            (pass ``""``).
         file_contents: Optional list of ``(filename, text)`` attachments,
             rendered as the ``<inicio_adjuntos>`` block.
         frontier: Pending-work resume text (``build_resume_message`` output).
@@ -420,7 +426,6 @@ def build_user_message(
         return agent.prompt(
             "user_prompt",
             user_message=user_message,
-            context=context or "",
             attachments_section=attachments_section,
             frontier=frontier or "",
         )

@@ -2,7 +2,7 @@
 
 Provides endpoints to upload, list, and delete context files.
 Context files are stored in SQLite and their content is injected
-into the system prompt for both the main agent and sub-agents.
+into the system prompt (router and sub-agents) via ``contexto.jinja``.
 """
 
 from __future__ import annotations

@@ -521,9 +521,15 @@ class WorkflowRunner:
         tool_perms.pop("task", None)
 
         try:
+            from backend.agent.utils.loop_helpers import load_context_text
+
+            try:
+                context_text = load_context_text()
+            except Exception:
+                context_text = ""
             system = self._agent.prompt(
                 "system_agent_node",
-                base=build_system_prompt(agent_name),
+                base=build_system_prompt(agent_name, context=context_text),
                 skills=format_skills_section(skill_permissions=skill_perms) if skill_perms else "",
             )
             tools = list(self._agent.tools.tools_registry(tool_perms))
