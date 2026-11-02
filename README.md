@@ -84,7 +84,7 @@ The Forge turns those definitions into autonomous systems.
 - **Security** — rules against prompt injection, data leaks and dangerous commands or SQL; they go in the router prompt or, with the decision model enabled, the decision model enforces them as a guardrail on the user message
 - **Agent loop** — iterative reasoning → tool calling → execution → continuation, with streaming SSE
 - **Workflows** — deterministic DAG execution started with a play button: sequential steps, same-step nodes in parallel, background runs with retries, persisted results and notifications
-- **Memory** — persistent conversation indexing and cross-session retrieval, plus user preferences (`user_memory`): the router saves explicit preferences via `save_user_memory`, injects them into every turn, and they are managed from Config
+- **Memory** — persistent conversation indexing and cross-session retrieval, plus user preferences (`user_memory`): the router saves explicit preferences via `save_user_memory` (each save asks for confirmation in a modal), injects them into every turn, and they are managed (view/add/edit/delete) from Config
 - **Multi-provider LLM** — Ollama (local), curated cloud providers (OpenAI-compatible + Google)
 - **MCP integration** — connect external tool servers via the Model Context Protocol (stdio, HTTP or SSE), with an on/off switch per server
 - **Scheduler** — workflows with a `schedule` block run on a schedule, notify via UI and Telegram
@@ -173,7 +173,7 @@ Cloud providers are curated in-app: each API key is validated live against its o
 
 ### Knowledge base (RAG)
 
-ChromaDB with Gemini embeddings (`gemini-embedding-2`) via the Google provider. Upload files and web pages — content is extracted, chunked and indexed for semantic retrieval. Chunking (chunk size and overlap, in characters) is configurable per upload from the UI (defaults: chunk 500, overlap 60). Requires a Google API key: without it, the knowledge base stays disabled and everything else runs normally. Long-term memory: every conversation turn is automatically indexed and searchable across sessions via `search_memory`. User preferences: explicit preferences (language, tone, format, timezone, company, role) are stored in the internal `user_memory` collection via the `save_user_memory` tool or from Config, injected into every router turn, and managed (view/add/delete) from Config — they never appear as RAG collections.
+ChromaDB with Gemini embeddings (`gemini-embedding-2`) via the Google provider. Upload files and web pages — content is extracted, chunked and indexed for semantic retrieval. Chunking (chunk size and overlap, in characters) is configurable per upload from the UI (defaults: chunk 500, overlap 60). Requires a Google API key: without it, the knowledge base stays disabled and everything else runs normally. Long-term memory: every conversation turn is automatically indexed and searchable across sessions via `search_memory`. User preferences: explicit preferences (language, tone, format, timezone, company, role) are stored in the internal `user_memory` collection via the `save_user_memory` tool or from Config, injected into every router turn, and managed (view/add/edit/delete) from Config — every agent-initiated save asks for confirmation in a modal, and they never appear as RAG collections.
 
 ### Telegram
 
