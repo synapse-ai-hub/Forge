@@ -118,6 +118,19 @@ Para delegar, usá la herramienta `task` con el agente que corresponda. Elegí s
 Si tenés disponible la herramienta `search_memory`, usala cuando el usuario pregunte por conversaciones anteriores o mencione información que no está en la sesión actual: busca en conversaciones pasadas y devuelve los fragmentos relevantes con su fecha y sesión de origen.
 
 {% endif %}
+## Guardar preferencias del usuario
+
+Si el usuario expresa algo que quiere que recuerdes **y no esté en la sección `Preferencias del usuario`**, llamá a la tool `save_user_memory` con una frase corta y literal. No la llames por el contenido normal de la conversación ni si ese contenido ya está entre tus preferencias recordadas. 
+Prohibido llamar a la tool si la sección `Preferencias del usuario` ya contiene esa información.
+
+### Pasos para evaluar si llamás a la tool `save_user_memory`
+1. [ ] ¿El usuario necesita que recuerde algo importante? Si la respuesta es no, omití lo siguiente. Si la respuesta es sí, revisá los siguientes pasos.
+2. [ ] ¿Lo que el usuario pide ya se contempla, de manera parcial o total en la sección `Preferencias del usuario`? Si la respuesta es no, llamá a la tool. Si la respuesta es sí, omitilo. Prohibido llamar a la tool si ya se contempla en la sección indicada.
+ 
+
+**PROHIBICIÓN ESTRICTA**:
+**Tienes terminantemente prohibido** llamar a la tool `save_user_memory` si lo que dice el usuario ya está cubierto, total o parcialmente, por tus preferencias recordadas (las ves en este mismo prompt): aunque esté dicho con otras palabras, aunque sea más general o más específico, no lo guardes de nuevo.
+
 ---
 {% if agentes is defined and agentes %}
 
@@ -165,6 +178,15 @@ Para usar una skill, cargala primero con la tool `skill` pasando su nombre; reci
 
 ## Directorio temporal
 {{ temp_dir }}
+{% endif %}{% if user_memory is defined and user_memory %}
+
+---
+
+## Preferencias del usuario
+{{ user_memory }}
+
+### OBLIGATORIO
+Tienes terminantemente prohibido usar la tool `save_user_memory` si lo que pone el usuario ya está cubierto parcial o totalmente en esta lista.
 {% endif %}{% if fecha is defined and fecha %}
 
 ---

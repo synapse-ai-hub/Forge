@@ -200,6 +200,7 @@ def _router_tool_permissions(router_perms: dict[str, Any] | None) -> dict[str, A
         tool_permissions: dict[str, Any] = {
             "task": "allow",
             "search_memory": "allow",
+            "save_user_memory": "allow",
             "read": "allow",
             "websearch": "allow",
             "webfetch": "allow",
@@ -226,6 +227,9 @@ def _router_tool_permissions(router_perms: dict[str, Any] | None) -> dict[str, A
     # The skill loader is floor too: always available to the router, never
     # shown in the UI (hidden) and never toggled by the stored selection.
     tool_permissions["skill"] = "allow"
+    # User memory saver is floor too: preferences must work even with a
+    # stored router selection that does not list the tool.
+    tool_permissions["save_user_memory"] = "allow"
     return tool_permissions
 
 def _read_param_override(key: str) -> Any:

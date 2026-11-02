@@ -27,7 +27,6 @@ if REPO_ROOT not in sys.path:
 
 from backend.agent.agent import Agent
 from backend.agent.loop import (
-    _ROUTER_TOOLS,
     _load_router_permissions,
     _router_tool_permissions,
 )
@@ -55,7 +54,7 @@ def build_parent_tools(agent: Agent) -> list[dict[str, Any]]:
     try:
         return list(agent.tools.tools_registry(tool_permissions))
     except AttributeError:
-        return _ROUTER_TOOLS
+        return []
 
 
 def build_parent_system_prompt() -> str:

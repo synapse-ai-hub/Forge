@@ -87,6 +87,7 @@ from backend.agent.tools.query_model_capabilities import QueryModelCapabilitiesM
 from backend.agent.tools.rag import RagMixin
 from backend.agent.tools.read import ReadMixin
 from backend.agent.tools.reference import ReferenceMixin
+from backend.agent.tools.save_user_memory import SaveUserMemoryMixin
 from backend.agent.tools.search_memory import SearchMemoryMixin
 from backend.agent.tools.send_email import SendEmailMixin
 from backend.agent.tools.shell import ShellMixin
@@ -732,6 +733,7 @@ class Tools(
     RagMixin,
     ReadMixin,
     ReferenceMixin,
+    SaveUserMemoryMixin,
     SearchMemoryMixin,
     SendEmailMixin,
     ShellMixin,

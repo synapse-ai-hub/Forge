@@ -1,9 +1,10 @@
-"""Pending shell approvals: pause-and-ask gate for the agent loop.
+"""Pending approvals: pause-and-ask gate for the agent loop.
 
-Every ``shell`` call made by the agent loop requires explicit user
-approval. The loop creates a pending approval, yields an
+Every ``shell`` call and every ``save_user_memory`` call made by the agent
+loop requires explicit user approval. The loop creates a pending approval, yields an
 ``approval_required`` SSE event (the frontend shows a modal), and waits
-for the user's decision. On deny or timeout the turn is cut.
+for the user's decision. On deny or timeout a shell command cuts the
+turn; a denied memory save is only omitted and the turn continues.
 
 State lives in memory (per backend process): approvals are ephemeral
 and never survive a restart, which is the safe default.
@@ -26,11 +27,11 @@ _pending: dict[str, dict] = {}
 
 
 def create_approval(session_id: str, command: str) -> str:
-    """Register a pending shell approval.
+    """Register a pending approval.
 
     Args:
-        session_id: Chat session that triggered the command.
-        command: The shell command awaiting approval.
+        session_id: Chat session that triggered the call.
+        command: The shell command or preference text awaiting approval.
 
     Returns:
         The approval id the frontend resolves.

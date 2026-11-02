@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Settings, Server, Cpu, Database, Globe, Trash2, Upload, KeyRound } from "lucide-react";
+import { Settings, Server, Cpu, Database, Globe, Trash2, Upload, KeyRound, Pencil, Check, X } from "lucide-react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Collapsible } from "./ui/collapsible";
 import configService from "../services/configService";
 import type { ProviderKeyStatus, AdvancedParams, DecisionProvider } from "../services/configService";
 import contextFilesService, { type ContextFile } from "../services/contextFilesService";
+import userMemoryService, { type UserPreference } from "../services/userMemoryService";
 
 interface ConfigTabProps {
   verboseMode: boolean;
@@ -66,6 +67,13 @@ export function ConfigTab({ verboseMode, onVerboseModeChange }: ConfigTabProps) 
   const [applyMessage, setApplyMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [contextFiles, setContextFiles] = useState<ContextFile[]>([]);
   const [uploadingContext, setUploadingContext] = useState(false);
+  const [preferences, setPreferences] = useState<UserPreference[]>([]);
+  const [newPreference, setNewPreference] = useState("");
+  const [savingPreference, setSavingPreference] = useState(false);
+  const [expandedPreferenceId, setExpandedPreferenceId] = useState<string | null>(null);
+  const [editingPreferenceId, setEditingPreferenceId] = useState<string | null>(null);
+  const [editPreferenceText, setEditPreferenceText] = useState("");
+  const [savingEditPreference, setSavingEditPreference] = useState(false);
   const contextFileInputRef = useRef<HTMLInputElement>(null);
   const isFirstLoadRef = useRef(true);
 
@@ -297,11 +305,32 @@ export function ConfigTab({ verboseMode, onVerboseModeChange }: ConfigTabProps) 
     return () => window.removeEventListener("model-changed", onModelChange);
   }, [load]);
 
+  const reloadPreferences = useCallback(() => {
+    userMemoryService.list()
+      .then((prefs) => setPreferences(prefs || []))
+      .catch((err) => console.error("Error cargando preferencias:", err));
+  }, []);
+
   useEffect(() => {
     contextFilesService.list()
       .then((files) => setContextFiles(files || []))
       .catch((err) => console.error("Error cargando archivos de contexto:", err));
-  }, []);
+    reloadPreferences();
+  }, [reloadPreferences]);
+
+  // The agent can save preferences from the chat (approval modal), so the
+  // list must refresh when Config regains visibility — not only on mount.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === "visible") reloadPreferences();
+    };
+    window.addEventListener("focus", reloadPreferences);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("focus", reloadPreferences);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [reloadPreferences]);
 
   const handleProviderChange = (value: string) => {
     setSelectedProvider(value);
@@ -554,6 +583,58 @@ export function ConfigTab({ verboseMode, onVerboseModeChange }: ConfigTabProps) 
       setContextFiles((prev) => prev.filter((f) => f.id !== id));
     } catch (err) {
       console.error("Error eliminando archivo de contexto:", err);
+    }
+  };
+
+  const handleAddPreference = async () => {
+    const text = newPreference.trim();
+    if (!text) return;
+    try {
+      setSavingPreference(true);
+      await userMemoryService.add(text);
+      const prefs = await userMemoryService.list();
+      setPreferences(prefs || []);
+      setNewPreference("");
+    } catch (err) {
+      console.error("Error guardando preferencia:", err);
+    } finally {
+      setSavingPreference(false);
+    }
+  };
+
+  const handleDeletePreference = async (id: string) => {
+    try {
+      await userMemoryService.remove(id);
+      setPreferences((prev) => prev.filter((p) => p.id !== id));
+    } catch (err) {
+      console.error("Error eliminando preferencia:", err);
+    }
+  };
+
+  const handleStartEditPreference = (id: string, text: string) => {
+    setEditingPreferenceId(id);
+    setEditPreferenceText(text);
+    setExpandedPreferenceId(null);
+  };
+
+  const handleCancelEditPreference = () => {
+    setEditingPreferenceId(null);
+    setEditPreferenceText("");
+  };
+
+  const handleSaveEditPreference = async (id: string) => {
+    const text = editPreferenceText.trim();
+    if (!text) return;
+    try {
+      setSavingEditPreference(true);
+      const updated = await userMemoryService.update(id, text);
+      setPreferences((prev) => prev.map((p) => (p.id === id ? { ...p, text: updated.text } : p)));
+      setEditingPreferenceId(null);
+      setEditPreferenceText("");
+    } catch (err) {
+      console.error("Error actualizando preferencia:", err);
+    } finally {
+      setSavingEditPreference(false);
     }
   };
 
@@ -1221,6 +1302,94 @@ export function ConfigTab({ verboseMode, onVerboseModeChange }: ConfigTabProps) 
                 >
                   <Trash2 size={14} />
                 </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Preferencias del usuario */}
+      <div className="pt-2">
+        <div className="text-xs font-medium text-app-text-secondary">
+          Preferencias del usuario
+        </div>
+        <p className="text-[11px] text-app-text-secondary mt-1">
+          Cosas que el agente debe recordar (idioma, tono, formato, empresa, rol). Se inyectan en cada turno.
+        </p>
+        <div className="mt-2 flex gap-2">
+          <Input
+            value={newPreference}
+            onChange={(e) => setNewPreference(e.target.value)}
+            placeholder="Ej: Prefiero respuestas cortas"
+            className="flex-1"
+            maxLength={500}
+          />
+          <Button onClick={handleAddPreference} disabled={savingPreference || !newPreference.trim()}>
+            {savingPreference ? "Guardando..." : "Agregar"}
+          </Button>
+        </div>
+        {preferences.length > 0 && (
+          <div className="mt-3 space-y-1">
+            {preferences.map((p) => (
+              <div
+                key={p.id}
+                className="flex items-center justify-between rounded-md bg-white px-2 py-1.5 text-xs"
+              >
+                {editingPreferenceId === p.id ? (
+                  <div className="flex flex-1 items-center gap-1 min-w-0">
+                    <Input
+                      value={editPreferenceText}
+                      onChange={(e) => setEditPreferenceText(e.target.value)}
+                      className="flex-1 text-xs"
+                      maxLength={500}
+                      autoFocus
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void handleSaveEditPreference(p.id)}
+                      disabled={savingEditPreference || !editPreferenceText.trim()}
+                      className="shrink-0 rounded p-0.5 text-app-text-secondary hover:text-green-600 transition-colors disabled:opacity-40"
+                      aria-label="Guardar edición"
+                    >
+                      <Check size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleCancelEditPreference}
+                      disabled={savingEditPreference}
+                      className="shrink-0 rounded p-0.5 text-app-text-secondary hover:text-app-text transition-colors disabled:opacity-40"
+                      aria-label="Cancelar edición"
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <span
+                      onClick={() => setExpandedPreferenceId((prev) => (prev === p.id ? null : p.id))}
+                      title="Click para ver completo"
+                      className={`text-app-text flex-1 min-w-0 cursor-pointer ${expandedPreferenceId === p.id ? "whitespace-pre-wrap break-words" : "truncate"}`}
+                    >
+                      {p.text}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleStartEditPreference(p.id, p.text)}
+                      className="ml-2 shrink-0 rounded p-0.5 text-app-text-secondary hover:text-app-primary transition-colors"
+                      aria-label="Editar preferencia"
+                    >
+                      <Pencil size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDeletePreference(p.id)}
+                      className="ml-1 shrink-0 rounded p-0.5 text-app-text-secondary hover:text-red-500 hover:bg-red-50 transition-colors"
+                      aria-label="Eliminar preferencia"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </>
+                )}
               </div>
             ))}
           </div>
