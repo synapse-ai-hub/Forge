@@ -1196,7 +1196,7 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
                               <p className="text-xs text-app-text-secondary">
                                 {formatNotificationDate(n.created_at)}
                                 {" · "}
-                                {n.kind === "workflow" ? "Workflow" : "Tarea programada"}
+                                {n.kind === "workflow" ? "Workflow" : n.kind === "webhook" ? "Webhook" : "Tarea programada"}
                                 {" · "}
                                 {n.status === "success" ? "Ejecutado con éxito" : "Falló"}
                               </p>

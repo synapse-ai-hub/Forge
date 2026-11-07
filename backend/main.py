@@ -168,6 +168,20 @@ except ImportError as e:
     user_memory_router = None
     logging.warning("backend.routes.user_memory could not be imported.")
 
+try:
+    from backend.routes.webhooks import router as webhooks_router
+except ImportError as e:
+    log_error(str(e), source="main.py:webhooks_import")
+    webhooks_router = None
+    logging.warning("backend.routes.webhooks could not be imported.")
+
+try:
+    from backend.routes.triggers import router as triggers_router
+except ImportError as e:
+    log_error(str(e), source="main.py:triggers_import")
+    triggers_router = None
+    logging.warning("backend.routes.triggers could not be imported.")
+
 # ---------------------------------------------------------------------------
 # Logging configuration
 # ---------------------------------------------------------------------------
@@ -318,6 +332,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception as exc:
         log_error(str(exc), source="main.py:lifespan(workflows_resume)")
         logger.warning("Failed to resume workflow runs: %s", exc)
+
+    try:
+        from backend.agent.utils import trigger_runs_db
+
+        resumed_triggers = await asyncio.to_thread(trigger_runs_db.resume_interrupted)
+        if resumed_triggers:
+            logger.info("Resumed %d interrupted trigger deliveries.", resumed_triggers)
+    except Exception as exc:
+        log_error(str(exc), source="main.py:lifespan(triggers_resume)")
+        logger.warning("Failed to resume trigger deliveries: %s", exc)
 
     logger.info("<nombre>nombre_proyecto</nombre> API started successfully.")
 
@@ -502,6 +526,12 @@ if approvals_router is not None:
 
 if user_memory_router is not None:
     app.include_router(user_memory_router, prefix="/api")
+
+if webhooks_router is not None:
+    app.include_router(webhooks_router, prefix="/api")
+
+if triggers_router is not None:
+    app.include_router(triggers_router, prefix="/api")
 
 
 # ---------------------------------------------------------------------------

@@ -92,7 +92,8 @@ def add_notification(
     """Persist a notification.
 
     Args:
-        kind: ``"workflow"`` (played by the user) or ``"schedule"`` (started by the scheduler).
+        kind: ``"workflow"`` (played by the user), ``"schedule"`` (started by the scheduler)
+            or ``"webhook"`` (started by an inbound webhook trigger).
         title: Workflow name shown in the bell.
         status: ``"success"`` or ``"error"``.
         message: Plain-language result or explanation for the user.

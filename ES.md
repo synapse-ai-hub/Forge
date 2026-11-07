@@ -88,6 +88,7 @@ La fábrica transforma esas definiciones en sistemas autónomos.
 - **LLM multi-proveedor** — Ollama (local), providers cloud curados (OpenAI-compatibles + Google)
 - **Integración MCP** — conectá servidores de herramientas externos vía Model Context Protocol (stdio, HTTP o SSE), con un interruptor por servidor
 - **Scheduler** — workflows con bloque `schedule` que corren en un horario, notifican vía UI y Telegram
+- **Disparadores proactivos** — sistemas externos pueden disparar workflows vía webhooks, verificados e idempotentes, ejecutados en segundo plano con notificaciones
 
 ### Vos distribuís
 
@@ -182,6 +183,10 @@ Control remoto del agente. Mandá mensajes, cambiá modelos, creá skills/tools,
 ### Tareas programadas
 
 Una tarea programada es un workflow cuyo YAML tiene un bloque `schedule` (hora `HH:MM` + días de la semana). Las tareas se crean con el creador de workflows — desde la Agenda del header (nombre, descripción, horarios y los recursos que va a usar el workflow) o con `/agendar` en Telegram — y corren en el motor de workflows como cualquier ejecución (reintentos, juez, notificaciones). El panel de Agenda también edita horarios, ejecuta tareas con play, las cancela y las elimina (workflow + ejecuciones + notificaciones). El backend revisa cada 20 segundos si hay horarios que coinciden con el minuto actual; se usa la zona horaria del sistema, sin configuración.
+
+### Disparadores proactivos
+
+Un sistema externo puede disparar un workflow sin intervención manual. Cada disparador está mapeado a un workflow, protegido con su propio secreto y verificado en cada entrega. Las entregas duplicadas se ignoran, la respuesta es inmediata y el workflow corre en segundo plano como cualquier otra ejecución, con reintentos y notificaciones vía UI y Telegram. Los disparadores se pueden pausar, rotar y auditar sin perder historial.
 
 ### Uso y facturación
 
