@@ -196,14 +196,11 @@ def rotate_secret(slug: str) -> dict[str, Any] | None:
     Returns:
         Dict with ``slug`` and new plain ``secret`` shown once,
         or ``None`` when it could not be rotated.
+
+    Raises:
+        Nothing. It never raises.
     """
     try:
-        with get_connection() as conn:
-            row = conn.execute(
-                load_query("triggers/get_trigger.sql"), (slug,)
-            ).fetchone()
-            if row is None:
-                return None
         secret = secrets.token_urlsafe(32)
         secret_hash = _hash_secret(secret)
         with db_transaction() as conn:

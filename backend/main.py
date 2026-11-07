@@ -338,7 +338,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
         resumed_triggers = await asyncio.to_thread(trigger_runs_db.resume_interrupted)
         if resumed_triggers:
-            logger.info("Resumed %d interrupted trigger deliverie(s).", resumed_triggers)
+            logger.info("Resumed %d interrupted trigger deliveries.", resumed_triggers)
     except Exception as exc:
         log_error(str(exc), source="main.py:lifespan(triggers_resume)")
         logger.warning("Failed to resume trigger deliveries: %s", exc)

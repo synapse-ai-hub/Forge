@@ -6,6 +6,8 @@ creation and rotation time, never in listings.
 
 from __future__ import annotations
 
+import re
+
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -20,6 +22,27 @@ from backend.agent.utils.contract import (
 from backend.agent.utils.error_logger import log_error
 
 router = APIRouter(tags=["triggers"])
+
+_SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,99}$")
+"""Allowed trigger slug format: lowercase, digits, hyphen, underscore."""
+
+
+def _valid_slug(slug: str) -> bool:
+    """Check whether a slug has an allowed format.
+
+    Args:
+        slug: Trigger identifier already stripped.
+
+    Returns:
+        True when the slug matches the allowed pattern.
+
+    Raises:
+        Nothing. It never raises.
+    """
+    try:
+        return _SLUG_PATTERN.match(slug) is not None
+    except Exception:
+        return False
 
 
 class TriggerCreate(BaseModel):
@@ -52,7 +75,21 @@ async def create_trigger(payload: TriggerCreate) -> JSONResponse:
     try:
         slug = payload.slug.strip()
         workflow_name = payload.workflow_name.strip()
-        if not slug or not workflow_name:
+        if not slug:
+            return JSONResponse(
+                status_code=422,
+                content=validate_response(
+                    make_error_response("Falta el slug.", usage=zero_usage())
+                ),
+            )
+        if not _valid_slug(slug):
+            return JSONResponse(
+                status_code=422,
+                content=validate_response(
+                    make_error_response("Slug inválido.", usage=zero_usage())
+                ),
+            )
+        if not workflow_name:
             return JSONResponse(
                 status_code=422,
                 content=validate_response(
@@ -304,6 +341,17 @@ async def set_trigger_enabled(slug: str, payload: TriggerEnabled) -> JSONRespons
                     content=validate_response(
                         make_error_response(
                             "Trigger no encontrado.", usage=zero_usage()
+                        )
+                    ),
+                )
+            if bool(existing.get("enabled")) == bool(payload.enabled):
+                return JSONResponse(
+                    status_code=200,
+                    content=validate_response(
+                        make_success_response(
+                            message="Trigger actualizado.",
+                            data=existing,
+                            usage=zero_usage(),
                         )
                     ),
                 )

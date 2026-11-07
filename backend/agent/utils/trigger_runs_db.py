@@ -3,8 +3,8 @@
 Table ``trigger_runs`` holds one row per inbound delivery with ``status``
 received, verified, mapped, launched, notified or error. A backend stop
 leaves rows in progress; ``resume_interrupted`` fails their open stages
-and retries up to ``MAX_ATTEMPTS`` with backoff, closing as error when
-attempts run out.
+and retries up to ``MAX_ATTEMPTS``, closing as error when attempts
+run out.
 
 Every function manages its own connection, never raises and logs failures
 to ``error_log`` via ``log_error``. All timestamps are local time
@@ -13,7 +13,6 @@ to ``error_log`` via ``log_error``. All timestamps are local time
 
 from __future__ import annotations
 
-import time
 import uuid
 from datetime import datetime
 from typing import Any
@@ -218,12 +217,15 @@ def resume_interrupted() -> int:
     """Resume the deliveries a backend stop or crash left in progress.
 
     The stages that were in flight are marked as failed. A delivery with
-    attempts left goes back to ``received`` with ``attempt + 1`` after a
-    backoff; a delivery with all attempts consumed is closed as error
-    with a plain-language explanation.
+    attempts left goes back to ``received`` with ``attempt + 1``; a
+    delivery with all attempts consumed is closed as error with a
+    plain-language explanation.
 
     Returns:
         Number of deliveries resumed.
+
+    Raises:
+        Nothing. It never raises.
     """
     resumed = 0
     try:
@@ -247,7 +249,6 @@ def resume_interrupted() -> int:
                     error_text="La entrega se interrumpió y ya no quedaban intentos.",
                 )
                 continue
-            time.sleep(2 ** attempt)
             set_run_attempt(event_id, attempt + 1)
             resumed += 1
         except Exception as exc:
