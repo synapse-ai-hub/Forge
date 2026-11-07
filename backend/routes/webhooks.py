@@ -7,6 +7,7 @@ waiting for the workflow.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import json
@@ -114,6 +115,38 @@ def check_rate_limit(slug: str) -> tuple[bool, int]:
     hits.append(now)
     _rate_hits[slug] = hits
     return True, 0
+
+
+async def _launch_workflow(
+    event_id: str, workflow_name: str, workflow_input: dict[str, Any]
+) -> None:
+    """Launch the mapped workflow in the background.
+
+    Args:
+        event_id: Delivery identifier for tracing.
+        workflow_name: Workflow to execute.
+        workflow_input: Mapped payload (kept for tracing).
+
+    Returns:
+        Nothing. It never raises.
+    """
+    try:
+        from backend.agent.utils.workflow_service import workflow_service
+
+        result = await workflow_service.start_run(workflow_name, source="webhook")
+        if isinstance(result, dict) and result.get("ok"):
+            run_id = str(result.get("run_id") or "")
+            if run_id:
+                trigger_runs_db.set_workflow_run(event_id, run_id)
+        else:
+            message = (
+                str(result.get("message") or "No se pudo lanzar el workflow.")
+                if isinstance(result, dict)
+                else "No se pudo lanzar el workflow."
+            )
+            log_error(message, source="webhooks.py:_launch_workflow")
+    except Exception as exc:
+        log_error(str(exc), source="webhooks.py:_launch_workflow")
 
 
 @router.post("/webhooks/{slug}")
@@ -227,6 +260,7 @@ async def receive_webhook(slug: str, request: Request) -> JSONResponse:
                 status_code=500,
                 content=make_error_response("Error interno. Intentá más tarde."),
             )
+        asyncio.create_task(_launch_workflow(event_id, workflow_name, workflow_input))
         return JSONResponse(
             status_code=202,
             content=make_success_response(

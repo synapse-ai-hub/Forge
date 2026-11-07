@@ -168,6 +168,23 @@ def set_run_attempt(event_id: str, attempt: int) -> None:
         log_error(str(exc), source="trigger_runs_db.py:set_run_attempt")
 
 
+def set_workflow_run(event_id: str, workflow_run_id: str) -> None:
+    """Link a delivery with the launched workflow run.
+
+    Args:
+        event_id: Delivery identifier.
+        workflow_run_id: Workflow run launched.
+    """
+    try:
+        with db_transaction() as conn:
+            conn.execute(
+                load_query("trigger_steps/set_workflow_run.sql"),
+                (workflow_run_id, event_id),
+            )
+    except Exception as exc:
+        log_error(str(exc), source="trigger_runs_db.py:set_workflow_run")
+
+
 def finish_run(
     event_id: str,
     status: str,
