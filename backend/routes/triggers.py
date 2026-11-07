@@ -155,6 +155,73 @@ async def list_triggers(limit: int = 50, offset: int = 0) -> JSONResponse:
         )
 
 
+@router.delete("/triggers/{slug}")
+async def delete_trigger(slug: str, confirm: bool = False) -> JSONResponse:
+    """Delete a trigger keeping its runs for audit.
+
+    Args:
+        slug: Trigger identifier.
+        confirm: Must be True to confirm the deletion.
+
+    Returns:
+        200 when deleted, 400 when not confirmed, 404 when the
+        trigger does not exist, 500 on internal error. It never raises.
+
+    Raises:
+        Nothing. All errors are captured and returned as JSON.
+    """
+    try:
+        if not confirm:
+            return JSONResponse(
+                status_code=400,
+                content=validate_response(
+                    make_error_response(
+                        "Confirmá la acción.", usage=zero_usage()
+                    )
+                ),
+            )
+        normalized = slug.strip()
+        if trigger_db.get_trigger(normalized) is None:
+            return JSONResponse(
+                status_code=404,
+                content=validate_response(
+                    make_error_response(
+                        "Trigger no encontrado.", usage=zero_usage()
+                    )
+                ),
+            )
+        deleted = trigger_db.delete_trigger(normalized)
+        if not deleted:
+            return JSONResponse(
+                status_code=500,
+                content=validate_response(
+                    make_error_response(
+                        "Error interno. Intentá más tarde.", usage=zero_usage()
+                    )
+                ),
+            )
+        return JSONResponse(
+            status_code=200,
+            content=validate_response(
+                make_success_response(
+                    message="Trigger eliminado.",
+                    data={"slug": normalized},
+                    usage=zero_usage(),
+                )
+            ),
+        )
+    except Exception as exc:
+        log_error(str(exc), source="triggers.py:delete_trigger")
+        return JSONResponse(
+            status_code=500,
+            content=validate_response(
+                make_error_response(
+                    "Error interno. Intentá más tarde.", usage=zero_usage()
+                )
+            ),
+        )
+
+
 @router.get("/triggers/{slug}/runs")
 async def list_trigger_runs(
     slug: str, limit: int = 50, offset: int = 0
