@@ -62,6 +62,9 @@ def create_run(
             )
         return event_id
     except Exception as exc:
+        message = str(exc).lower()
+        if "unique" in message or "duplicate" in message or "already exists" in message:
+            return None
         log_error(str(exc), source="trigger_runs_db.py:create_run")
         return None
 

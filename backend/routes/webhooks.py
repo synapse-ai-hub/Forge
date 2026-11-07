@@ -21,6 +21,7 @@ from backend.agent.utils import trigger_db, trigger_runs_db
 from backend.agent.utils.contract import (
     make_error_response,
     make_success_response,
+    validate_response,
     zero_usage,
 )
 from backend.agent.utils.error_logger import log_error
@@ -38,34 +39,53 @@ _rate_hits: dict[str, list[float]] = {}
 
 
 def verify_signature(
-    secret_hash: str, timestamp: str, raw_body: bytes, signature: str
+    secret: str | None, timestamp: str | None, raw_body: bytes | None, signature: str | None
 ) -> bool:
     """Verify the HMAC signature of an inbound event.
 
+    The HMAC key is ``sha256(secret)``: the caller hashes the plain
+    secret shown once, then signs ``timestamp.body``. The server
+    stores only the hash and uses it directly as the key.
+
     Args:
-        secret_hash: Stored hash used as HMAC key.
+        secret: Stored secret hash used as HMAC key.
         timestamp: Unix seconds sent by the caller.
         raw_body: Raw request body.
         signature: Hex signature sent by the caller.
 
     Returns:
         ``True`` when the signature matches and the timestamp is fresh.
+        It never raises.
     """
     try:
-        ts = int(timestamp)
+        if not secret or not isinstance(secret, str):
+            return False
+        if not isinstance(signature, str) or not signature:
+            return False
+        if raw_body is None:
+            return False
+        if not isinstance(raw_body, (bytes, bytearray)):
+            return False
+        ts = int(timestamp)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return False
     if abs(int(time.time()) - ts) > _MAX_SKEW_SECONDS:
         return False
-    expected = hmac.new(
-        secret_hash.encode("utf-8"),
-        timestamp.encode("utf-8") + b"." + raw_body,
-        hashlib.sha256,
-    ).hexdigest()
-    return hmac.compare_digest(expected, signature)
+    try:
+        expected = hmac.new(
+            secret.encode("utf-8"),
+            str(timestamp).encode("utf-8") + b"." + bytes(raw_body),
+            hashlib.sha256,
+        ).hexdigest()
+    except Exception:
+        return False
+    try:
+        return hmac.compare_digest(expected, signature)
+    except Exception:
+        return False
 
 
-def map_payload(raw_body: bytes) -> dict[str, Any]:
+def map_payload(raw_body: bytes | None) -> dict[str, Any]:
     """Map the raw body to a workflow input dict.
 
     Convention: JSON object returns as-is; JSON array, string,
@@ -82,7 +102,9 @@ def map_payload(raw_body: bytes) -> dict[str, Any]:
     try:
         if not raw_body:
             return {"text": ""}
-        parsed: Any = json.loads(raw_body.decode("utf-8"))
+        if not isinstance(raw_body, (bytes, bytearray)):
+            return {"text": ""}
+        parsed: Any = json.loads(bytes(raw_body).decode("utf-8"))
         if isinstance(parsed, dict):
             return parsed
         return {"value": parsed}
@@ -108,12 +130,17 @@ def check_rate_limit(slug: str) -> tuple[bool, int]:
     now = time.time()
     hits = _rate_hits.get(slug, [])
     hits = [t for t in hits if now - t < _RATE_WINDOW_SECONDS]
+    if not hits and slug in _rate_hits and len(_rate_hits) > 1000:
+        _rate_hits.pop(slug, None)
+        return True, 0
     if len(hits) >= _RATE_LIMIT_PER_MINUTE:
         retry_after = int(_RATE_WINDOW_SECONDS - (now - hits[0])) + 1
         _rate_hits[slug] = hits
         return False, max(retry_after, 1)
     hits.append(now)
     _rate_hits[slug] = hits
+    if not hits:
+        _rate_hits.pop(slug, None)
     return True, 0
 
 
@@ -171,7 +198,7 @@ async def receive_webhook(slug: str, request: Request) -> JSONResponse:
         if not allowed:
             response = JSONResponse(
                 status_code=429,
-                content=make_error_response("Límite excedido. Intentá más tarde."),
+                content=validate_response(make_error_response("Límite excedido. Intentá más tarde.")),
             )
             response.headers["Retry-After"] = str(retry_after)
             return response
@@ -179,31 +206,31 @@ async def receive_webhook(slug: str, request: Request) -> JSONResponse:
         if trigger is None:
             return JSONResponse(
                 status_code=404,
-                content=make_error_response("Trigger no encontrado."),
+                content=validate_response(make_error_response("Trigger no encontrado.")),
             )
         secret_hash = trigger_db.get_trigger_secret(slug)
         if not secret_hash:
             return JSONResponse(
                 status_code=404,
-                content=make_error_response("Trigger no encontrado."),
+                content=validate_response(make_error_response("Trigger no encontrado.")),
             )
         if not trigger.get("enabled"):
             return JSONResponse(
                 status_code=403,
-                content=make_error_response("Trigger deshabilitado."),
+                content=validate_response(make_error_response("Trigger deshabilitado.")),
             )
         signature = request.headers.get(_SIGNATURE_HEADER, "")
         timestamp = request.headers.get(_TIMESTAMP_HEADER, "")
         if not verify_signature(secret_hash, timestamp, raw_body, signature):
             return JSONResponse(
                 status_code=401,
-                content=make_error_response("Firma inválida."),
+                content=validate_response(make_error_response("Firma inválida.")),
             )
         workflow_name = str(trigger.get("workflow_name") or "")
         if not workflow_name:
             return JSONResponse(
                 status_code=422,
-                content=make_error_response("Workflow del trigger inválido."),
+                content=validate_response(make_error_response("Workflow del trigger inválido.")),
             )
         try:
             from backend.agent.utils.workflow_loader import load_workflow
@@ -212,13 +239,13 @@ async def receive_webhook(slug: str, request: Request) -> JSONResponse:
             if loaded.get("status") != "success":
                 return JSONResponse(
                     status_code=422,
-                    content=make_error_response("Workflow del trigger inválido."),
+                    content=validate_response(make_error_response("Workflow del trigger inválido.")),
                 )
         except Exception as exc:
             log_error(str(exc), source="webhooks.py:receive_webhook")
             return JSONResponse(
                 status_code=422,
-                content=make_error_response("Workflow del trigger inválido."),
+                content=validate_response(make_error_response("Workflow del trigger inválido.")),
             )
         workflow_input = map_payload(raw_body)
         idempotency_key = request.headers.get(_IDEMPOTENCY_HEADER, "")
@@ -229,20 +256,24 @@ async def receive_webhook(slug: str, request: Request) -> JSONResponse:
                 if existing.get("payload_hash") != payload_hash:
                     return JSONResponse(
                         status_code=409,
-                        content=make_error_response(
-                            "Clave repetida con otro contenido."
+                        content=validate_response(
+                            make_error_response(
+                                "Clave repetida con otro contenido."
+                            )
                         ),
                     )
                 return JSONResponse(
                     status_code=202,
-                    content=make_success_response(
-                        message="Evento aceptado.",
-                        data={
-                            "slug": slug,
-                            "event_id": existing.get("event_id"),
-                            "duplicate": True,
-                        },
-                        usage=zero_usage(),
+                    content=validate_response(
+                        make_success_response(
+                            message="Evento aceptado.",
+                            data={
+                                "slug": slug,
+                                "event_id": existing.get("event_id"),
+                                "duplicate": True,
+                            },
+                            usage=zero_usage(),
+                        )
                     ),
                 )
             event_id = trigger_runs_db.create_run(
@@ -251,6 +282,32 @@ async def receive_webhook(slug: str, request: Request) -> JSONResponse:
                 idempotency_key,
                 payload_hash,
             )
+            if not event_id:
+                retry_existing = trigger_runs_db.get_run_by_key(slug, idempotency_key)
+                if retry_existing is not None:
+                    if retry_existing.get("payload_hash") != payload_hash:
+                        return JSONResponse(
+                            status_code=409,
+                            content=validate_response(
+                                make_error_response(
+                                    "Clave repetida con otro contenido."
+                                )
+                            ),
+                        )
+                    return JSONResponse(
+                        status_code=202,
+                        content=validate_response(
+                            make_success_response(
+                                message="Evento aceptado.",
+                                data={
+                                    "slug": slug,
+                                    "event_id": retry_existing.get("event_id"),
+                                    "duplicate": True,
+                                },
+                                usage=zero_usage(),
+                            )
+                        ),
+                    )
         else:
             event_id = trigger_runs_db.create_run(
                 slug, workflow_name, None, payload_hash
@@ -258,25 +315,27 @@ async def receive_webhook(slug: str, request: Request) -> JSONResponse:
         if not event_id:
             return JSONResponse(
                 status_code=500,
-                content=make_error_response("Error interno. Intentá más tarde."),
+                content=validate_response(make_error_response("Error interno. Intentá más tarde.")),
             )
         asyncio.create_task(_launch_workflow(event_id, workflow_name, workflow_input))
         return JSONResponse(
             status_code=202,
-            content=make_success_response(
-                message="Evento aceptado.",
-                data={
-                    "slug": slug,
-                    "event_id": event_id,
-                    "bytes": len(raw_body),
-                    "input": workflow_input,
-                },
-                usage=zero_usage(),
+            content=validate_response(
+                make_success_response(
+                    message="Evento aceptado.",
+                    data={
+                        "slug": slug,
+                        "event_id": event_id,
+                        "bytes": len(raw_body),
+                        "input": workflow_input,
+                    },
+                    usage=zero_usage(),
+                )
             ),
         )
     except Exception as exc:
         log_error(str(exc), source="webhooks.py:receive_webhook")
         return JSONResponse(
             status_code=500,
-            content=make_error_response("Error interno. Intentá más tarde."),
+            content=validate_response(make_error_response("Error interno. Intentá más tarde.")),
         )

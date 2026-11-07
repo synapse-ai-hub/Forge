@@ -32,6 +32,10 @@ def _now() -> str:
 def _hash_secret(secret: str) -> str:
     """Hash a trigger secret for storage.
 
+    The hash is also the HMAC key for inbound verification:
+    the caller computes ``sha256(secret)`` then
+    ``HMAC(hash, timestamp.body)``.
+
     Args:
         secret: Plain secret shown once to the user.
 
@@ -90,6 +94,9 @@ def create_trigger(slug: str, workflow_name: str) -> dict[str, Any] | None:
             )
         return {"slug": slug, "workflow_name": workflow_name, "secret": secret}
     except Exception as exc:
+        message = str(exc).lower()
+        if "unique" in message or "duplicate" in message or "already exists" in message:
+            return {"error": "duplicate"}
         log_error(str(exc), source="trigger_db.py:create_trigger")
         return None
 
