@@ -28,6 +28,10 @@ _SIGNATURE_HEADER = "x-trigger-signature"
 _TIMESTAMP_HEADER = "x-trigger-timestamp"
 _IDEMPOTENCY_HEADER = "x-idempotency-key"
 _MAX_SKEW_SECONDS = 300
+_RATE_LIMIT_PER_MINUTE = 60
+_RATE_WINDOW_SECONDS = 60
+
+_rate_hits: dict[str, list[float]] = {}
 
 
 def verify_signature(
@@ -58,6 +62,28 @@ def verify_signature(
     return hmac.compare_digest(expected, signature)
 
 
+def check_rate_limit(slug: str) -> tuple[bool, int]:
+    """Check the per-minute rate limit of a trigger.
+
+    Args:
+        slug: Trigger identifier.
+
+    Returns:
+        A tuple with whether the call is allowed and the seconds to
+        wait before retrying when it is not.
+    """
+    now = time.time()
+    hits = _rate_hits.get(slug, [])
+    hits = [t for t in hits if now - t < _RATE_WINDOW_SECONDS]
+    if len(hits) >= _RATE_LIMIT_PER_MINUTE:
+        retry_after = int(_RATE_WINDOW_SECONDS - (now - hits[0])) + 1
+        _rate_hits[slug] = hits
+        return False, max(retry_after, 1)
+    hits.append(now)
+    _rate_hits[slug] = hits
+    return True, 0
+
+
 @router.post("/webhooks/{slug}")
 async def receive_webhook(slug: str, request: Request) -> JSONResponse:
     """Receive an inbound event for a trigger.
@@ -73,6 +99,14 @@ async def receive_webhook(slug: str, request: Request) -> JSONResponse:
     """
     try:
         raw_body = await request.body()
+        allowed, retry_after = check_rate_limit(slug)
+        if not allowed:
+            response = JSONResponse(
+                status_code=429,
+                content=make_error_response("Límite excedido. Intentá más tarde."),
+            )
+            response.headers["Retry-After"] = str(retry_after)
+            return response
         trigger = trigger_db.get_trigger(slug)
         if trigger is None:
             return JSONResponse(
