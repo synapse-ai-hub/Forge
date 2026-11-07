@@ -158,13 +158,30 @@ async def _launch_workflow(
         Nothing. It never raises.
     """
     try:
+        from backend.agent.utils import trigger_steps_db
         from backend.agent.utils.workflow_service import workflow_service
 
+        attempt = 1
+        try:
+            existing = trigger_runs_db.get_run(event_id)
+            if isinstance(existing, dict):
+                attempt = int(existing.get("attempt") or 1)
+        except Exception:
+            attempt = 1
+        received_id = trigger_steps_db.open_step(event_id, attempt, 1, 0, "received", "received")
+        trigger_steps_db.commit_step(received_id, "received")
+        verified_id = trigger_steps_db.open_step(event_id, attempt, 2, 0, "verified", "verified")
+        trigger_steps_db.commit_step(verified_id, "verified")
+        mapped_id = trigger_steps_db.open_step(event_id, attempt, 3, 0, "mapped", "mapped")
+        trigger_steps_db.commit_step(mapped_id, "mapped")
+        launched_id = trigger_steps_db.open_step(event_id, attempt, 4, 0, "launched", "launched")
         result = await workflow_service.start_run(workflow_name, source="webhook")
         if isinstance(result, dict) and result.get("ok"):
             run_id = str(result.get("run_id") or "")
             if run_id:
                 trigger_runs_db.set_workflow_run(event_id, run_id)
+            trigger_steps_db.commit_step(launched_id, run_id or "launched")
+            trigger_runs_db.finish_run(event_id, "notified", run_id or "ok", None, run_id or None)
         else:
             message = (
                 str(result.get("message") or "No se pudo lanzar el workflow.")
@@ -172,6 +189,16 @@ async def _launch_workflow(
                 else "No se pudo lanzar el workflow."
             )
             log_error(message, source="webhooks.py:_launch_workflow")
+            trigger_steps_db.fail_step(launched_id, message)
+            trigger_runs_db.finish_run(event_id, "error", None, message)
+        try:
+            from backend.agent.utils import trigger_notify
+
+            notified_id = trigger_steps_db.open_step(event_id, attempt, 5, 0, "notified", "notified")
+            trigger_notify.notify_finished(event_id)
+            trigger_steps_db.commit_step(notified_id, "notified")
+        except Exception as exc:
+            log_error(str(exc), source="webhooks.py:_launch_workflow")
     except Exception as exc:
         log_error(str(exc), source="webhooks.py:_launch_workflow")
 
