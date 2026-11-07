@@ -103,3 +103,60 @@ async def create_trigger(payload: TriggerCreate) -> JSONResponse:
                 )
             ),
         )
+
+
+@router.post("/triggers/{slug}/rotate")
+async def rotate_trigger_secret(slug: str) -> JSONResponse:
+    """Rotate the secret of a trigger.
+
+    Args:
+        slug: Trigger identifier.
+
+    Returns:
+        200 with the new plain secret shown once, 404 when the
+        trigger does not exist, 500 on internal error. It never raises.
+
+    Raises:
+        Nothing. All errors are captured and returned as JSON.
+    """
+    try:
+        result = trigger_db.rotate_secret(slug.strip())
+        if result is None:
+            existing = trigger_db.get_trigger(slug.strip())
+            if existing is None:
+                return JSONResponse(
+                    status_code=404,
+                    content=validate_response(
+                        make_error_response(
+                            "Trigger no encontrado.", usage=zero_usage()
+                        )
+                    ),
+                )
+            return JSONResponse(
+                status_code=500,
+                content=validate_response(
+                    make_error_response(
+                        "Error interno. Intentá más tarde.", usage=zero_usage()
+                    )
+                ),
+            )
+        return JSONResponse(
+            status_code=200,
+            content=validate_response(
+                make_success_response(
+                    message="Secreto rotado.",
+                    data=result,
+                    usage=zero_usage(),
+                )
+            ),
+        )
+    except Exception as exc:
+        log_error(str(exc), source="triggers.py:rotate_trigger_secret")
+        return JSONResponse(
+            status_code=500,
+            content=validate_response(
+                make_error_response(
+                    "Error interno. Intentá más tarde.", usage=zero_usage()
+                )
+            ),
+        )
