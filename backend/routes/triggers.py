@@ -115,6 +115,46 @@ class TriggerEnabled(BaseModel):
     enabled: bool
 
 
+@router.get("/triggers")
+async def list_triggers(limit: int = 50, offset: int = 0) -> JSONResponse:
+    """List triggers without exposing secrets.
+
+    Args:
+        limit: Maximum number of triggers.
+        offset: Number of triggers to skip.
+
+    Returns:
+        200 with the triggers, 500 on internal error. It never raises.
+
+    Raises:
+        Nothing. All errors are captured and returned as JSON.
+    """
+    try:
+        safe_limit = max(1, min(limit, 100))
+        safe_offset = max(0, offset)
+        triggers = trigger_db.list_triggers(limit=safe_limit, offset=safe_offset)
+        return JSONResponse(
+            status_code=200,
+            content=validate_response(
+                make_success_response(
+                    message="Triggers.",
+                    data=triggers,
+                    usage=zero_usage(),
+                )
+            ),
+        )
+    except Exception as exc:
+        log_error(str(exc), source="triggers.py:list_triggers")
+        return JSONResponse(
+            status_code=500,
+            content=validate_response(
+                make_error_response(
+                    "Error interno. Intentá más tarde.", usage=zero_usage()
+                )
+            ),
+        )
+
+
 @router.patch("/triggers/{slug}")
 async def set_trigger_enabled(slug: str, payload: TriggerEnabled) -> JSONResponse:
     """Enable or disable a trigger without deleting its history.
