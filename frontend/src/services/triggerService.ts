@@ -32,6 +32,16 @@ async function list(): Promise<TriggerItem[]> {
   }
 }
 
+/** A delivery of a trigger for audit. */
+export interface TriggerRun {
+  event_id: string;
+  status: string;
+  workflow_run_id: string | null;
+  result: string | null;
+  started_at: string;
+  finished_at: string | null;
+}
+
 async function create(slug: string, workflowName: string): Promise<TriggerCreated> {
   try {
     const res = await fetch(`${API_BASE_URL}/api/triggers`, {
@@ -50,6 +60,55 @@ async function create(slug: string, workflowName: string): Promise<TriggerCreate
   }
 }
 
-const triggerService = { list, create };
+async function rotate(slug: string): Promise<TriggerCreated> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/triggers/${encodeURIComponent(slug)}/rotate`, {
+      method: "POST",
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok || data?.status === "error" || !data?.data?.secret) {
+      throw new Error(data?.message || "No se pudo rotar el secreto.");
+    }
+    return data.data as TriggerCreated;
+  } catch (exc) {
+    if (exc instanceof Error) throw exc;
+    throw new Error("No se pudo rotar el secreto.");
+  }
+}
+
+async function setEnabled(slug: string, enabled: boolean): Promise<TriggerItem> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/triggers/${encodeURIComponent(slug)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled }),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok || data?.status === "error" || !data?.data) {
+      throw new Error(data?.message || "No se pudo actualizar el trigger.");
+    }
+    return data.data as TriggerItem;
+  } catch (exc) {
+    if (exc instanceof Error) throw exc;
+    throw new Error("No se pudo actualizar el trigger.");
+  }
+}
+
+async function listRuns(slug: string): Promise<TriggerRun[]> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/triggers/${encodeURIComponent(slug)}/runs`);
+    const data = await res.json().catch(() => null);
+    if (!res.ok || data?.status === "error") {
+      throw new Error(data?.message || "Error obteniendo las entregas");
+    }
+    const items = data?.data;
+    return (Array.isArray(items) ? items : []) as TriggerRun[];
+  } catch (exc) {
+    if (exc instanceof Error) throw exc;
+    throw new Error("Error obteniendo las entregas");
+  }
+}
+
+const triggerService = { list, create, rotate, setEnabled, listRuns };
 
 export default triggerService;
