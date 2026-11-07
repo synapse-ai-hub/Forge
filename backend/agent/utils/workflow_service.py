@@ -342,20 +342,22 @@ class WorkflowService:
         """Notify the user that a run ended (not the runs called by an agent).
 
         A played run notifies as ``workflow``. A scheduled run notifies as
-        ``schedule`` and is also sent to Telegram.
+        ``schedule`` and is also sent to Telegram. A webhook run notifies
+        as ``webhook``.
 
         Args:
-            source: ``"play"``, ``"tool"`` or ``"schedule"``.
+            source: ``"play"``, ``"tool"``, ``"schedule"`` or ``"webhook"``.
             name: Workflow name.
             status: ``"success"`` or ``"error"``.
             message: Short text of the result or the explanation of the failure.
             run_id: Run identifier.
             description: Description of the workflow (what the task does).
         """
-        if source not in ("play", "schedule"):
+        if source not in ("play", "schedule", "webhook"):
             return
+        kind = "workflow" if source == "play" else source
         await notify(
-            kind="workflow" if source == "play" else "schedule",
+            kind=kind,
             workflow_name=name, title=name, status=status, message=message,
             run_id=run_id,
         )
