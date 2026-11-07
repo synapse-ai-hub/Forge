@@ -86,6 +86,30 @@ def get_run(event_id: str) -> dict[str, Any] | None:
         return None
 
 
+def get_run_by_key(
+    trigger_slug: str, idempotency_key: str
+) -> dict[str, Any] | None:
+    """Fetch a delivery by its idempotency key.
+
+    Args:
+        trigger_slug: Trigger identifier.
+        idempotency_key: Client key for duplicate detection.
+
+    Returns:
+        The delivery as a dict, or ``None`` when it does not exist.
+    """
+    try:
+        with get_connection() as conn:
+            row = conn.execute(
+                load_query("trigger_steps/get_run_by_key.sql"),
+                (trigger_slug, idempotency_key),
+            ).fetchone()
+            return dict(row) if row else None
+    except Exception as exc:
+        log_error(str(exc), source="trigger_runs_db.py:get_run_by_key")
+        return None
+
+
 def list_runs(
     trigger_slug: str, limit: int = 50, offset: int = 0
 ) -> list[dict[str, Any]]:

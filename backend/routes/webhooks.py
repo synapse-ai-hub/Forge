@@ -14,7 +14,7 @@ import time
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from backend.agent.utils import trigger_db
+from backend.agent.utils import trigger_db, trigger_runs_db
 from backend.agent.utils.contract import (
     make_error_response,
     make_success_response,
@@ -26,6 +26,7 @@ router = APIRouter(tags=["webhooks"])
 
 _SIGNATURE_HEADER = "x-trigger-signature"
 _TIMESTAMP_HEADER = "x-trigger-timestamp"
+_IDEMPOTENCY_HEADER = "x-idempotency-key"
 _MAX_SKEW_SECONDS = 300
 
 
@@ -67,7 +68,8 @@ async def receive_webhook(slug: str, request: Request) -> JSONResponse:
 
     Returns:
         202 JSON response acknowledging reception, 401 when the
-        signature is invalid, 404 when the trigger does not exist.
+        signature is invalid, 404 when the trigger does not exist,
+        409 when the idempotency key was used with another payload.
     """
     try:
         raw_body = await request.body()
@@ -90,11 +92,50 @@ async def receive_webhook(slug: str, request: Request) -> JSONResponse:
                 status_code=401,
                 content=make_error_response("Firma inválida."),
             )
+        idempotency_key = request.headers.get(_IDEMPOTENCY_HEADER, "")
+        payload_hash = hashlib.sha256(raw_body).hexdigest()
+        if idempotency_key:
+            existing = trigger_runs_db.get_run_by_key(slug, idempotency_key)
+            if existing is not None:
+                if existing.get("payload_hash") != payload_hash:
+                    return JSONResponse(
+                        status_code=409,
+                        content=make_error_response(
+                            "Clave repetida con otro contenido."
+                        ),
+                    )
+                return JSONResponse(
+                    status_code=202,
+                    content=make_success_response(
+                        message="Evento aceptado.",
+                        data={
+                            "slug": slug,
+                            "event_id": existing.get("event_id"),
+                            "duplicate": True,
+                        },
+                        usage=zero_usage(),
+                    ),
+                )
+            event_id = trigger_runs_db.create_run(
+                slug,
+                str(trigger.get("workflow_name") or ""),
+                idempotency_key,
+                payload_hash,
+            )
+        else:
+            event_id = trigger_runs_db.create_run(
+                slug, str(trigger.get("workflow_name") or ""), None, payload_hash
+            )
+        if not event_id:
+            return JSONResponse(
+                status_code=500,
+                content=make_error_response("Error interno. Intentá más tarde."),
+            )
         return JSONResponse(
             status_code=202,
             content=make_success_response(
                 message="Evento aceptado.",
-                data={"slug": slug, "bytes": len(raw_body)},
+                data={"slug": slug, "event_id": event_id, "bytes": len(raw_body)},
                 usage=zero_usage(),
             ),
         )
