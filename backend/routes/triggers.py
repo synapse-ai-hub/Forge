@@ -105,6 +105,76 @@ async def create_trigger(payload: TriggerCreate) -> JSONResponse:
         )
 
 
+class TriggerEnabled(BaseModel):
+    """Payload to enable or disable a trigger.
+
+    Attributes:
+        enabled: True to accept events, False to reject them.
+    """
+
+    enabled: bool
+
+
+@router.patch("/triggers/{slug}")
+async def set_trigger_enabled(slug: str, payload: TriggerEnabled) -> JSONResponse:
+    """Enable or disable a trigger without deleting its history.
+
+    Args:
+        slug: Trigger identifier.
+        payload: Desired enabled state.
+
+    Returns:
+        200 with the updated trigger, 404 when it does not exist,
+        500 on internal error. It never raises.
+
+    Raises:
+        Nothing. All errors are captured and returned as JSON.
+    """
+    try:
+        normalized = slug.strip()
+        updated = trigger_db.set_enabled(normalized, payload.enabled)
+        if not updated:
+            existing = trigger_db.get_trigger(normalized)
+            if existing is None:
+                return JSONResponse(
+                    status_code=404,
+                    content=validate_response(
+                        make_error_response(
+                            "Trigger no encontrado.", usage=zero_usage()
+                        )
+                    ),
+                )
+            return JSONResponse(
+                status_code=500,
+                content=validate_response(
+                    make_error_response(
+                        "Error interno. Intentá más tarde.", usage=zero_usage()
+                    )
+                ),
+            )
+        trigger = trigger_db.get_trigger(normalized)
+        return JSONResponse(
+            status_code=200,
+            content=validate_response(
+                make_success_response(
+                    message="Trigger actualizado.",
+                    data=trigger,
+                    usage=zero_usage(),
+                )
+            ),
+        )
+    except Exception as exc:
+        log_error(str(exc), source="triggers.py:set_trigger_enabled")
+        return JSONResponse(
+            status_code=500,
+            content=validate_response(
+                make_error_response(
+                    "Error interno. Intentá más tarde.", usage=zero_usage()
+                )
+            ),
+        )
+
+
 @router.post("/triggers/{slug}/rotate")
 async def rotate_trigger_secret(slug: str) -> JSONResponse:
     """Rotate the secret of a trigger.
