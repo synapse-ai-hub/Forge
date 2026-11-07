@@ -175,6 +175,13 @@ except ImportError as e:
     webhooks_router = None
     logging.warning("backend.routes.webhooks could not be imported.")
 
+try:
+    from backend.routes.triggers import router as triggers_router
+except ImportError as e:
+    log_error(str(e), source="main.py:triggers_import")
+    triggers_router = None
+    logging.warning("backend.routes.triggers could not be imported.")
+
 # ---------------------------------------------------------------------------
 # Logging configuration
 # ---------------------------------------------------------------------------
@@ -512,6 +519,9 @@ if user_memory_router is not None:
 
 if webhooks_router is not None:
     app.include_router(webhooks_router, prefix="/api")
+
+if triggers_router is not None:
+    app.include_router(triggers_router, prefix="/api")
 
 
 # ---------------------------------------------------------------------------
