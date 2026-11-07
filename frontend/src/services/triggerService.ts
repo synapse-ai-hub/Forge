@@ -17,9 +17,12 @@ export interface TriggerCreated {
   secret: string;
 }
 
-async function list(): Promise<TriggerItem[]> {
+/** List triggers with pagination. */
+async function list(limit: number = 50, offset: number = 0): Promise<TriggerItem[]> {
   try {
-    const res = await fetch(`${API_BASE_URL}/api/triggers`);
+    const res = await fetch(
+      `${API_BASE_URL}/api/triggers?limit=${limit}&offset=${offset}`
+    );
     const data = await res.json().catch(() => null);
     if (!res.ok || data?.status === "error") {
       throw new Error(data?.message || "Error obteniendo los triggers");
@@ -35,13 +38,20 @@ async function list(): Promise<TriggerItem[]> {
 /** A delivery of a trigger for audit. */
 export interface TriggerRun {
   event_id: string;
+  trigger_slug: string;
+  workflow_name: string;
   status: string;
+  attempt: number;
+  idempotency_key: string | null;
+  payload_hash: string | null;
   workflow_run_id: string | null;
   result: string | null;
+  error_text: string | null;
   started_at: string;
   finished_at: string | null;
 }
 
+/** Create a trigger mapped to a workflow. Returns the secret shown once. */
 async function create(slug: string, workflowName: string): Promise<TriggerCreated> {
   try {
     const res = await fetch(`${API_BASE_URL}/api/triggers`, {
@@ -60,6 +70,7 @@ async function create(slug: string, workflowName: string): Promise<TriggerCreate
   }
 }
 
+/** Rotate the secret of a trigger. Returns the new secret shown once. */
 async function rotate(slug: string): Promise<TriggerCreated> {
   try {
     const res = await fetch(`${API_BASE_URL}/api/triggers/${encodeURIComponent(slug)}/rotate`, {
@@ -76,6 +87,7 @@ async function rotate(slug: string): Promise<TriggerCreated> {
   }
 }
 
+/** Pause or reactivate a trigger. */
 async function setEnabled(slug: string, enabled: boolean): Promise<TriggerItem> {
   try {
     const res = await fetch(`${API_BASE_URL}/api/triggers/${encodeURIComponent(slug)}`, {
@@ -94,9 +106,12 @@ async function setEnabled(slug: string, enabled: boolean): Promise<TriggerItem> 
   }
 }
 
-async function listRuns(slug: string): Promise<TriggerRun[]> {
+/** List deliveries of a trigger with pagination. */
+async function listRuns(slug: string, limit: number = 50, offset: number = 0): Promise<TriggerRun[]> {
   try {
-    const res = await fetch(`${API_BASE_URL}/api/triggers/${encodeURIComponent(slug)}/runs`);
+    const res = await fetch(
+      `${API_BASE_URL}/api/triggers/${encodeURIComponent(slug)}/runs?limit=${limit}&offset=${offset}`
+    );
     const data = await res.json().catch(() => null);
     if (!res.ok || data?.status === "error") {
       throw new Error(data?.message || "Error obteniendo las entregas");
@@ -109,6 +124,24 @@ async function listRuns(slug: string): Promise<TriggerRun[]> {
   }
 }
 
-const triggerService = { list, create, rotate, setEnabled, listRuns };
+/** Delete a trigger with confirmation. */
+async function remove(slug: string): Promise<boolean> {
+  try {
+    const res = await fetch(
+      `${API_BASE_URL}/api/triggers/${encodeURIComponent(slug)}?confirm=true`,
+      { method: "DELETE" }
+    );
+    const data = await res.json().catch(() => null);
+    if (!res.ok || data?.status === "error") {
+      throw new Error(data?.message || "No se pudo borrar el trigger.");
+    }
+    return true;
+  } catch (exc) {
+    if (exc instanceof Error) throw exc;
+    throw new Error("No se pudo borrar el trigger.");
+  }
+}
+
+const triggerService = { list, create, rotate, setEnabled, listRuns, remove };
 
 export default triggerService;

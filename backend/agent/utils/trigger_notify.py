@@ -72,7 +72,7 @@ def notify_finished(event_id: str) -> dict[str, Any] | None:
         if not workflow_name:
             return None
         return add_notification(
-            kind="trigger",
+            kind="webhook",
             title=workflow_name,
             status="success" if ok else "error",
             message=summary,

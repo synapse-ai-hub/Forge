@@ -333,6 +333,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         log_error(str(exc), source="main.py:lifespan(workflows_resume)")
         logger.warning("Failed to resume workflow runs: %s", exc)
 
+    try:
+        from backend.agent.utils import trigger_runs_db
+
+        resumed_triggers = await asyncio.to_thread(trigger_runs_db.resume_interrupted)
+        if resumed_triggers:
+            logger.info("Resumed %d interrupted trigger deliverie(s).", resumed_triggers)
+    except Exception as exc:
+        log_error(str(exc), source="main.py:lifespan(triggers_resume)")
+        logger.warning("Failed to resume trigger deliveries: %s", exc)
+
     logger.info("<nombre>nombre_proyecto</nombre> API started successfully.")
 
     # Internal help collection, shipped already vectorized: it needs no API

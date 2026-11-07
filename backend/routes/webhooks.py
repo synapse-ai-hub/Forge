@@ -225,7 +225,7 @@ async def receive_webhook(slug: str, request: Request) -> JSONResponse:
         if not allowed:
             response = JSONResponse(
                 status_code=429,
-                content=validate_response(make_error_response("Límite excedido. Intentá más tarde.")),
+                content=validate_response(make_error_response("Límite excedido, reintentá más tarde.")),
             )
             response.headers["Retry-After"] = str(retry_after)
             return response
@@ -248,6 +248,25 @@ async def receive_webhook(slug: str, request: Request) -> JSONResponse:
             )
         signature = request.headers.get(_SIGNATURE_HEADER, "")
         timestamp = request.headers.get(_TIMESTAMP_HEADER, "")
+        if not timestamp or not signature:
+            return JSONResponse(
+                status_code=401,
+                content=validate_response(make_error_response("Firma inválida.")),
+            )
+        try:
+            ts_value = int(timestamp)
+        except (TypeError, ValueError):
+            return JSONResponse(
+                status_code=401,
+                content=validate_response(make_error_response("Firma inválida.")),
+            )
+        import time as _time
+
+        if abs(int(_time.time()) - ts_value) > _MAX_SKEW_SECONDS:
+            return JSONResponse(
+                status_code=401,
+                content=validate_response(make_error_response("Evento expirado.")),
+            )
         if not verify_signature(secret_hash, timestamp, raw_body, signature):
             return JSONResponse(
                 status_code=401,
@@ -257,7 +276,7 @@ async def receive_webhook(slug: str, request: Request) -> JSONResponse:
         if not workflow_name:
             return JSONResponse(
                 status_code=422,
-                content=validate_response(make_error_response("Workflow del trigger inválido.")),
+                content=validate_response(make_error_response("Workflow no disponible.")),
             )
         try:
             from backend.agent.utils.workflow_loader import load_workflow
@@ -266,13 +285,13 @@ async def receive_webhook(slug: str, request: Request) -> JSONResponse:
             if loaded.get("status") != "success":
                 return JSONResponse(
                     status_code=422,
-                    content=validate_response(make_error_response("Workflow del trigger inválido.")),
+                    content=validate_response(make_error_response("Workflow no disponible.")),
                 )
         except Exception as exc:
             log_error(str(exc), source="webhooks.py:receive_webhook")
             return JSONResponse(
                 status_code=422,
-                content=validate_response(make_error_response("Workflow del trigger inválido.")),
+                content=validate_response(make_error_response("Workflow no disponible.")),
             )
         workflow_input = map_payload(raw_body)
         idempotency_key = request.headers.get(_IDEMPOTENCY_HEADER, "")
@@ -285,7 +304,7 @@ async def receive_webhook(slug: str, request: Request) -> JSONResponse:
                         status_code=409,
                         content=validate_response(
                             make_error_response(
-                                "Clave repetida con otro contenido."
+                                "Clave duplicada con distinto contenido."
                             )
                         ),
                     )
@@ -317,7 +336,7 @@ async def receive_webhook(slug: str, request: Request) -> JSONResponse:
                             status_code=409,
                             content=validate_response(
                                 make_error_response(
-                                    "Clave repetida con otro contenido."
+                                    "Clave duplicada con distinto contenido."
                                 )
                             ),
                         )
