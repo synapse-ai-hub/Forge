@@ -168,6 +168,13 @@ except ImportError as e:
     user_memory_router = None
     logging.warning("backend.routes.user_memory could not be imported.")
 
+try:
+    from backend.routes.webhooks import router as webhooks_router
+except ImportError as e:
+    log_error(str(e), source="main.py:webhooks_import")
+    webhooks_router = None
+    logging.warning("backend.routes.webhooks could not be imported.")
+
 # ---------------------------------------------------------------------------
 # Logging configuration
 # ---------------------------------------------------------------------------
@@ -502,6 +509,9 @@ if approvals_router is not None:
 
 if user_memory_router is not None:
     app.include_router(user_memory_router, prefix="/api")
+
+if webhooks_router is not None:
+    app.include_router(webhooks_router, prefix="/api")
 
 
 # ---------------------------------------------------------------------------
