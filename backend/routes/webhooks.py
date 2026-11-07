@@ -94,8 +94,10 @@ async def receive_webhook(slug: str, request: Request) -> JSONResponse:
 
     Returns:
         202 JSON response acknowledging reception, 401 when the
-        signature is invalid, 404 when the trigger does not exist,
-        409 when the idempotency key was used with another payload.
+        signature is invalid, 403 when the trigger is disabled,
+        404 when the trigger does not exist, 409 on idempotency
+        conflict, 429 when the rate limit is exceeded, 500 on
+        internal error. It never raises.
     """
     try:
         raw_body = await request.body()
@@ -118,6 +120,11 @@ async def receive_webhook(slug: str, request: Request) -> JSONResponse:
             return JSONResponse(
                 status_code=404,
                 content=make_error_response("Trigger no encontrado."),
+            )
+        if not trigger.get("enabled"):
+            return JSONResponse(
+                status_code=403,
+                content=make_error_response("Trigger deshabilitado."),
             )
         signature = request.headers.get(_SIGNATURE_HEADER, "")
         timestamp = request.headers.get(_TIMESTAMP_HEADER, "")
