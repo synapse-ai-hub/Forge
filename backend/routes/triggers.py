@@ -10,7 +10,7 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from backend.agent.utils import trigger_db
+from backend.agent.utils import trigger_db, trigger_runs_db
 from backend.agent.utils.contract import (
     make_error_response,
     make_success_response,
@@ -145,6 +145,62 @@ async def list_triggers(limit: int = 50, offset: int = 0) -> JSONResponse:
         )
     except Exception as exc:
         log_error(str(exc), source="triggers.py:list_triggers")
+        return JSONResponse(
+            status_code=500,
+            content=validate_response(
+                make_error_response(
+                    "Error interno. Intentá más tarde.", usage=zero_usage()
+                )
+            ),
+        )
+
+
+@router.get("/triggers/{slug}/runs")
+async def list_trigger_runs(
+    slug: str, limit: int = 50, offset: int = 0
+) -> JSONResponse:
+    """List the deliveries of a trigger for audit.
+
+    Args:
+        slug: Trigger identifier.
+        limit: Maximum number of deliveries.
+        offset: Number of deliveries to skip.
+
+    Returns:
+        200 with deliveries ordered by date, 404 when the trigger
+        does not exist, 500 on internal error. It never raises.
+
+    Raises:
+        Nothing. All errors are captured and returned as JSON.
+    """
+    try:
+        normalized = slug.strip()
+        if trigger_db.get_trigger(normalized) is None:
+            return JSONResponse(
+                status_code=404,
+                content=validate_response(
+                    make_error_response(
+                        "Trigger no encontrado.", usage=zero_usage()
+                    )
+                ),
+            )
+        safe_limit = max(1, min(limit, 100))
+        safe_offset = max(0, offset)
+        runs = trigger_runs_db.list_runs(
+            normalized, limit=safe_limit, offset=safe_offset
+        )
+        return JSONResponse(
+            status_code=200,
+            content=validate_response(
+                make_success_response(
+                    message="Entregas.",
+                    data=runs,
+                    usage=zero_usage(),
+                )
+            ),
+        )
+    except Exception as exc:
+        log_error(str(exc), source="triggers.py:list_trigger_runs")
         return JSONResponse(
             status_code=500,
             content=validate_response(
