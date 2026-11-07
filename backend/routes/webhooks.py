@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import time
+from typing import Any
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
@@ -62,6 +64,36 @@ def verify_signature(
     return hmac.compare_digest(expected, signature)
 
 
+def map_payload(raw_body: bytes) -> dict[str, Any]:
+    """Map the raw body to a workflow input dict.
+
+    Convention: JSON object returns as-is; JSON array, string,
+    number or null returns as ``{"value": parsed}``; non-JSON
+    text returns as ``{"text": raw}``; empty body returns as
+    ``{"text": ""}``.
+
+    Args:
+        raw_body: Raw request body.
+
+    Returns:
+        A dict ready to be used as workflow input. It never raises.
+    """
+    try:
+        if not raw_body:
+            return {"text": ""}
+        parsed: Any = json.loads(raw_body.decode("utf-8"))
+        if isinstance(parsed, dict):
+            return parsed
+        return {"value": parsed}
+    except (ValueError, UnicodeDecodeError) as exc:
+        log_error(str(exc), source="webhooks.py:map_payload")
+        try:
+            return {"text": raw_body.decode("utf-8", errors="replace")}
+        except Exception as inner_exc:
+            log_error(str(inner_exc), source="webhooks.py:map_payload")
+            return {"text": ""}
+
+
 def check_rate_limit(slug: str) -> tuple[bool, int]:
     """Check the per-minute rate limit of a trigger.
 
@@ -96,7 +128,8 @@ async def receive_webhook(slug: str, request: Request) -> JSONResponse:
         202 JSON response acknowledging reception, 401 when the
         signature is invalid, 403 when the trigger is disabled,
         404 when the trigger does not exist, 409 on idempotency
-        conflict, 429 when the rate limit is exceeded, 500 on
+        conflict, 422 when the mapped workflow is invalid,
+        429 when the rate limit is exceeded, 500 on
         internal error. It never raises.
     """
     try:
@@ -133,6 +166,28 @@ async def receive_webhook(slug: str, request: Request) -> JSONResponse:
                 status_code=401,
                 content=make_error_response("Firma inválida."),
             )
+        workflow_name = str(trigger.get("workflow_name") or "")
+        if not workflow_name:
+            return JSONResponse(
+                status_code=422,
+                content=make_error_response("Workflow del trigger inválido."),
+            )
+        try:
+            from backend.agent.utils.workflow_loader import load_workflow
+
+            loaded = load_workflow(workflow_name)
+            if loaded.get("status") != "success":
+                return JSONResponse(
+                    status_code=422,
+                    content=make_error_response("Workflow del trigger inválido."),
+                )
+        except Exception as exc:
+            log_error(str(exc), source="webhooks.py:receive_webhook")
+            return JSONResponse(
+                status_code=422,
+                content=make_error_response("Workflow del trigger inválido."),
+            )
+        workflow_input = map_payload(raw_body)
         idempotency_key = request.headers.get(_IDEMPOTENCY_HEADER, "")
         payload_hash = hashlib.sha256(raw_body).hexdigest()
         if idempotency_key:
@@ -159,13 +214,13 @@ async def receive_webhook(slug: str, request: Request) -> JSONResponse:
                 )
             event_id = trigger_runs_db.create_run(
                 slug,
-                str(trigger.get("workflow_name") or ""),
+                workflow_name,
                 idempotency_key,
                 payload_hash,
             )
         else:
             event_id = trigger_runs_db.create_run(
-                slug, str(trigger.get("workflow_name") or ""), None, payload_hash
+                slug, workflow_name, None, payload_hash
             )
         if not event_id:
             return JSONResponse(
@@ -176,7 +231,12 @@ async def receive_webhook(slug: str, request: Request) -> JSONResponse:
             status_code=202,
             content=make_success_response(
                 message="Evento aceptado.",
-                data={"slug": slug, "event_id": event_id, "bytes": len(raw_body)},
+                data={
+                    "slug": slug,
+                    "event_id": event_id,
+                    "bytes": len(raw_body),
+                    "input": workflow_input,
+                },
                 usage=zero_usage(),
             ),
         )
