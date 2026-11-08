@@ -171,6 +171,10 @@ React/Vite/TypeScript SPA with Tailwind v4 and shadcn/ui. Multi-page: chat, skil
 
 Cloud providers are curated in-app: each API key is validated live against its own API and stored encrypted (Fernet) in SQLite, and a provider is listed only while its key is saved. No environment variables needed. Models come from the models.dev catalog cached in SQLite — select provider + model explicitly and press **Apply**.
 
+### Email accounts
+
+Multiple IMAP/SMTP accounts stored encrypted in SQLite and managed from Config (email + password + optional alias). Tools `check_email` and `send_email` accept `account` (email or alias) to select which mailbox to use for flows.
+
 ### Knowledge base (RAG)
 
 ChromaDB with Gemini embeddings (`gemini-embedding-2`) via the Google provider. Upload files and web pages — content is extracted, chunked and indexed for semantic retrieval. Chunking (chunk size and overlap, in characters) is configurable per upload from the UI (defaults: chunk 500, overlap 60). Requires a Google API key: without it, the knowledge base stays disabled and everything else runs normally. Long-term memory: every conversation turn is automatically indexed and searchable across sessions via `search_memory`. User preferences: explicit preferences (language, tone, format, timezone, company, role) are stored in the internal `user_memory` collection via the `save_user_memory` tool or from Config, injected into every router turn, and managed (view/add/edit/delete) from Config — every agent-initiated save asks for confirmation in a modal, and they never appear as RAG collections.
