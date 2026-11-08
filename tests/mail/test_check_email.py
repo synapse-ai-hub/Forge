@@ -1,4 +1,4 @@
-"""Call the real check_email tool with environment variables.
+"""Call the real check_email tool.
 
 Run the fixed suite::
 
@@ -14,11 +14,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
-from pathlib import Path
-
-from dotenv import load_dotenv
-
-load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
 from backend.agent.tools import Tools
 
