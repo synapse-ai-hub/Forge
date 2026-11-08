@@ -49,6 +49,7 @@ docs/
 # Agente opencode
 .synapseAgents/
 .claude/
+AGENT.md
 
 # Templates
 template/
