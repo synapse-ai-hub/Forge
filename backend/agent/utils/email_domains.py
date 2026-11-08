@@ -15,7 +15,7 @@ import sqlite3
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any
 
 from backend.agent.utils.db import get_connection
@@ -158,7 +158,7 @@ def upsert_domain(domain: str, settings: dict[str, Any], source: str = "preset")
         cleaned = (domain or "").strip().lower()
         if not cleaned or not settings:
             return False
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now().isoformat()
         conn = _connect()
         if conn is None:
             return False

@@ -8,9 +8,10 @@ by the email tools can be either the alias or the email address.
 
 from __future__ import annotations
 
+import imaplib
 import logging
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any
 
 from backend.agent.utils.db import get_connection
@@ -45,17 +46,20 @@ def _load_fernet() -> Any:
 def _normalize_alias(alias: str | None, email: str) -> str:
     """Normalize the alias, generating it from the email when missing.
 
+    Alias is verbatim as typed by the user (only stripped, case kept).
+    Email local part fallback is lowercased.
+
     Args:
         alias: Optional alias provided from the UI.
         email: Full email address the account belongs to.
 
     Returns:
-        Lowercased alias stripped of whitespace.
+        Alias stripped of whitespace, case preserved.
 
     Raises:
         ValueError: If neither alias nor email provide a usable value.
     """
-    cleaned = (alias or "").strip().lower()
+    cleaned = (alias or "").strip()
     if cleaned:
         return cleaned
     local = (email or "").strip().lower().split("@")[0]
@@ -167,8 +171,25 @@ def save_account(email: str, password: str, alias: str | None = None) -> dict[st
                 "status": "error",
                 "message": "Cifrado no disponible (falta el paquete 'cryptography').",
             }
+        last_status = "pending"
+        last_error = None
+        try:
+            mail = imaplib.IMAP4_SSL(
+                str(settings.get("imap_server", "")), int(settings.get("imap_port", 993)), timeout=10
+            )
+            try:
+                mail.login(address, password.strip())
+                last_status = "ok"
+            finally:
+                try:
+                    mail.logout()
+                except Exception:
+                    pass
+        except Exception as conn_e:
+            last_status = "error"
+            last_error = str(conn_e)[:200]
         encrypted = fernet.encrypt(password.strip().encode("utf-8")).decode("ascii")
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now().isoformat()
         conn = _connect()
         if conn is None:
             return {"status": "error", "message": "No se pudo abrir la base de datos."}
@@ -192,8 +213,8 @@ def save_account(email: str, password: str, alias: str | None = None) -> dict[st
                         settings["smtp_server"],
                         int(settings["smtp_port"]),
                         str(settings["provider"]),
-                        "pending",
-                        None,
+                        last_status,
+                        last_error,
                         now,
                     ),
                 )
@@ -290,6 +311,30 @@ def list_accounts() -> list[dict[str, Any]]:
         return []
 
 
+def load_email_accounts_text() -> str:
+    """Format configured accounts as prompt lines (alias + email, no secrets).
+
+    Returns:
+        One ``- alias — email`` line per account, or ``""`` when none.
+        Failures return ``""``.
+
+    Raises:
+        No exception escapes: failures are logged and ``""`` returned.
+    """
+    try:
+        lines = []
+        for item in list_accounts():
+            alias = str(item.get("alias", "") or "").strip()
+            email = str(item.get("email", "") or "").strip()
+            if not email:
+                continue
+            lines.append(f"- {alias} — {email}" if alias else f"- {email}")
+        return "\n".join(lines)
+    except Exception as e:
+        log_error(str(e), source="email_accounts.py:load_email_accounts_text")
+        return ""
+
+
 def delete_account(alias: str) -> dict[str, Any]:
     """Delete an email account by alias or email.
 
@@ -303,7 +348,7 @@ def delete_account(alias: str) -> dict[str, Any]:
         No exception escapes: failures are returned as error dicts.
     """
     try:
-        cleaned = (alias or "").strip().lower()
+        cleaned = (alias or "").strip()
         if not cleaned:
             return {"status": "error", "message": "Alias requerido."}
         conn = _connect()

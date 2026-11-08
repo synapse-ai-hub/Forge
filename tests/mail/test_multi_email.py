@@ -44,7 +44,7 @@ def test_normalize_alias_optional() -> None:
         None.
     """
     assert email_accounts._normalize_alias("", "Forge@Dominio.com") == "forge"
-    assert email_accounts._normalize_alias("  Trabajo  ", "a@b.com") == "trabajo"
+    assert email_accounts._normalize_alias("  Trabajo  ", "a@b.com") == "Trabajo"
 
 
 def test_queries_load() -> None:
@@ -55,7 +55,7 @@ def test_queries_load() -> None:
     """
     assert "alias" in load_query("email_accounts/upsert.sql")
     assert "password_encrypted" not in load_query("email_accounts/list.sql")
-    assert "alias = ? OR email = ?" in load_query("email_accounts/get_by_alias_or_email.sql")
+    assert "COLLATE NOCASE" in load_query("email_accounts/get_by_alias_or_email.sql")
 
 
 def test_no_env_usage() -> None:

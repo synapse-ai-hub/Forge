@@ -9,6 +9,8 @@ _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
+from unittest.mock import patch
+
 from backend.agent.utils import email_domains
 
 
@@ -18,9 +20,14 @@ def test_preset_gmail() -> None:
     Returns:
         None.
     """
-    settings, source = email_domains.detect_domain_settings("gmail.com", "a@gmail.com")
+    with patch.object(email_domains, "get_domain", return_value=None), patch.object(
+        email_domains, "upsert_domain", return_value=True
+    ), patch.object(email_domains, "fetch_ispdb", return_value=None), patch.object(
+        email_domains, "fetch_provider_autoconfig", return_value=None
+    ):
+        settings, source = email_domains.detect_domain_settings("gmail.com", "a@gmail.com")
     assert settings["imap_server"] == "imap.gmail.com"
-    assert source in ("db", "ispdb", "preset")
+    assert source == "preset"
 
 
 def test_custom_fallback() -> None:
@@ -29,9 +36,14 @@ def test_custom_fallback() -> None:
     Returns:
         None.
     """
-    settings, source = email_domains.detect_domain_settings("midominio-test-xyz.com", "")
+    with patch.object(email_domains, "get_domain", return_value=None), patch.object(
+        email_domains, "upsert_domain", return_value=True
+    ), patch.object(email_domains, "fetch_ispdb", return_value=None), patch.object(
+        email_domains, "fetch_provider_autoconfig", return_value=None
+    ):
+        settings, source = email_domains.detect_domain_settings("midominio-test-xyz.com", "")
     assert settings["imap_server"] == "mail.midominio-test-xyz.com"
-    assert source in ("db", "preset", "custom")
+    assert source == "custom"
 
 
 def test_parse_ispdb_xml() -> None:

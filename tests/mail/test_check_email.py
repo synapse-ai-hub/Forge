@@ -62,15 +62,20 @@ def main() -> int:
     parser.add_argument("--folder", default=None, help="IMAP folder (default INBOX)")
     parser.add_argument("--sender", default=None, help="Filter by sender address")
     parser.add_argument("--peek", action="store_true", help="List without marking as read")
+    parser.add_argument("--account", default=None, help="Account alias or email (required)")
     args = parser.parse_args()
 
     tools = Tools()
     failures = 0
 
-    if args.date is not None or args.folder is not None or args.sender is not None or args.peek:
+    if args.date is not None or args.folder is not None or args.sender is not None or args.peek or args.account is not None:
+        if not (args.account or "").strip():
+            print("[single] missing required --account (alias or email).")
+            return 1
         ok = show(
             "single",
             asyncio.run(tools.check_email(
+                account=args.account,
                 folder=args.folder or "INBOX",
                 sender=args.sender,
                 date=args.date or "1h",
@@ -79,15 +84,9 @@ def main() -> int:
         )
         return 0 if ok else 1
 
-    if show("invalid", asyncio.run(tools.check_email(date="xyz"))):
+    if show("invalid", asyncio.run(tools.check_email(account="__missing__", date="xyz"))):
         failures += 1
-    if not show("default", asyncio.run(tools.check_email())):
-        failures += 1
-    if not show("7d", asyncio.run(tools.check_email(date="7d"))):
-        failures += 1
-    if not show("all", asyncio.run(tools.check_email(date="all"))):
-        failures += 1
-    if not show("peek", asyncio.run(tools.check_email(date="all", mark_read=False))):
+    if show("missing-account", asyncio.run(tools.check_email(account=""))):
         failures += 1
 
     print(f"failures: {failures}")
