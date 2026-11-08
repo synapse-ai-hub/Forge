@@ -19,6 +19,7 @@ from fastapi import APIRouter
 
 from backend.routes.config import (
     decision,
+    emails,
     listings,
     models,
     parameters,
@@ -46,5 +47,5 @@ __all__ = [
 
 router = APIRouter(prefix="/config", tags=["config"])
 
-for _sub in (runtime, providers, parameters, models, decision, listings, workflows, router_config):
+for _sub in (runtime, providers, parameters, models, decision, listings, workflows, router_config, emails):
     router.include_router(_sub.router)
