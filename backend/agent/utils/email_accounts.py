@@ -19,58 +19,6 @@ from backend.agent.utils.queries import load_query
 
 logger = logging.getLogger(__name__)
 
-_PRESETS: dict[str, dict[str, Any]] = {
-    "gmail.com": {
-        "imap_server": "imap.gmail.com",
-        "imap_port": 993,
-        "smtp_server": "smtp.gmail.com",
-        "smtp_port": 587,
-        "provider": "gmail",
-    },
-    "googlemail.com": {
-        "imap_server": "imap.gmail.com",
-        "imap_port": 993,
-        "smtp_server": "smtp.gmail.com",
-        "smtp_port": 587,
-        "provider": "gmail",
-    },
-    "outlook.com": {
-        "imap_server": "outlook.office365.com",
-        "imap_port": 993,
-        "smtp_server": "smtp.office365.com",
-        "smtp_port": 587,
-        "provider": "outlook",
-    },
-    "hotmail.com": {
-        "imap_server": "outlook.office365.com",
-        "imap_port": 993,
-        "smtp_server": "smtp.office365.com",
-        "smtp_port": 587,
-        "provider": "outlook",
-    },
-    "live.com": {
-        "imap_server": "outlook.office365.com",
-        "imap_port": 993,
-        "smtp_server": "smtp.office365.com",
-        "smtp_port": 587,
-        "provider": "outlook",
-    },
-    "yahoo.com": {
-        "imap_server": "imap.mail.yahoo.com",
-        "imap_port": 993,
-        "smtp_server": "smtp.mail.yahoo.com",
-        "smtp_port": 587,
-        "provider": "yahoo",
-    },
-    "icloud.com": {
-        "imap_server": "imap.mail.me.com",
-        "imap_port": 993,
-        "smtp_server": "smtp.mail.me.com",
-        "smtp_port": 587,
-        "provider": "icloud",
-    },
-}
-
 
 def _load_fernet() -> Any:
     """Return the shared Fernet instance used for secrets.
@@ -119,9 +67,9 @@ def _normalize_alias(alias: str | None, email: str) -> str:
 def detect_email_settings(email: str) -> dict[str, Any]:
     """Detect IMAP/SMTP settings for an email address without user input.
 
-    Known domains use presets. Unknown domains fall back to
-    ``mail.{domain}`` heuristics with standard ports.
-    No network call is made here; the connection is validated on save/use.
+    Single source of truth lives in ``email_domains._PRESETS`` (verified
+    against Thunderbird ISPDB). No network call is made here; the
+    connection is validated on save/use.
 
     Args:
         email: Full email address (e.g. ``"forge@tudominio.com"``).
@@ -133,13 +81,15 @@ def detect_email_settings(email: str) -> dict[str, Any]:
     Raises:
         ValueError: If the email has no valid domain part.
     """
+    from backend.agent.utils.email_domains import _PRESETS as _DOMAIN_PRESETS
+
     address = (email or "").strip().lower()
     if "@" not in address:
         raise ValueError(f"Email inválido: {email!r}")
     domain = address.split("@", 1)[1].strip()
     if not domain or "." not in domain:
         raise ValueError(f"Email inválido: {email!r}")
-    preset = _PRESETS.get(domain)
+    preset = _DOMAIN_PRESETS.get(domain)
     if preset is not None:
         return dict(preset)
     return {
@@ -200,7 +150,19 @@ def save_account(email: str, password: str, alias: str | None = None) -> dict[st
         if not password or not password.strip():
             return {"status": "error", "message": "La contraseña no puede estar vacía."}
         resolved_alias = _normalize_alias(alias, address)
-        settings = detect_email_settings(address)
+        domain = address.split("@", 1)[1]
+        try:
+            from backend.agent.utils.email_domains import detect_domain_settings, upsert_domain
+
+            settings, _source = detect_domain_settings(domain, address)
+        except Exception:
+            settings = detect_email_settings(address)
+            try:
+                from backend.agent.utils.email_domains import upsert_domain as _upsert_fallback
+
+                _upsert_fallback(domain, settings, "custom")
+            except Exception:
+                pass
         fernet = _load_fernet()
         if fernet is None:
             return {
