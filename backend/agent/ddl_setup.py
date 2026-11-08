@@ -36,6 +36,8 @@ _DDL_SCRIPTS: tuple[str, ...] = (
     "ddl/workflow_run_steps.sql",
     "ddl/notifications.sql",
     "ddl/router_config.sql",
+    "ddl/email_accounts.sql",
+    "ddl/email_domains.sql",
 )
 
 

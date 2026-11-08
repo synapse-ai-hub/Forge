@@ -2,10 +2,10 @@
 
 import imaplib
 import logging
-import os
 from typing import Any
 
 from backend.agent.utils.contract import make_error_response, make_success_response, zero_usage
+from backend.agent.utils.email_accounts import resolve_account
 from backend.agent.utils.email_parser import is_older_than, parse_email, parse_relative_date
 from backend.agent.utils.error_logger import log_error
 
@@ -14,16 +14,20 @@ logger = logging.getLogger(__name__)
 
 class CheckEmailMixin:
     """Native tool ``check_email``: check the IMAP mailbox for unseen emails."""
-    async def check_email(self, folder: str = "INBOX", sender: str | None = None, date: str = "1h", mark_read: bool = False) -> dict[str, Any]:
+    async def check_email(self, account: str, folder: str = "INBOX", sender: str | None = None, date: str = "1h", mark_read: bool = False) -> dict[str, Any]:
             """Check the IMAP mailbox for unseen emails and return them parsed.
 
             Connects via IMAP (SSL), searches for UNSEEN messages in the given
             folder (optionally filtered by sender and age), parses each one, and
             returns the structured results. This is a one-shot check — no polling
             loop. The agent calls this tool on demand; it does not run in the
-            background.
+            background. Accounts are stored encrypted in DB, never in ``.env``.
 
             Args:
+                account: Alias or email address of the configured account
+                    (required). Use the exact alias shown in
+                    Configuración → Mails (e.g. ``"Servicios"``) or the full
+                    email address. Never pass an IMAP folder here.
                 folder: IMAP folder to check (default ``"INBOX"``).
                 sender: Optional sender address to filter UNSEEN messages.
                 date: Relative age filter: ``1h``-``23h`` (hours), ``<n>d``
@@ -51,17 +55,35 @@ class CheckEmailMixin:
                         usage=zero_usage(),
                     )
 
-                server = os.getenv("EMAIL_IMAP_SERVER", "")
-                port = int(os.getenv("EMAIL_IMAP_PORT", "993"))
-                user = os.getenv("EMAIL_USER", "")
-                password = os.getenv("EMAIL_PASS", "")
+                if not (account or "").strip():
+                    from backend.agent.utils.email_accounts import list_accounts
+
+                    available = [a.get("alias", "") for a in list_accounts()]
+                    hint = f" Cuentas disponibles: {', '.join(available)}." if available else ""
+                    return make_error_response(
+                        message=(
+                            "Falta el parámetro 'account' (alias o email, requerido)."
+                            f"{hint} Nunca uses una carpeta IMAP como cuenta."
+                        ),
+                        usage=zero_usage(),
+                    )
+                creds = resolve_account(account)
+                if creds is None:
+                    return make_error_response(
+                        message=(
+                            "No hay cuentas de mail configuradas. "
+                            "Cargá mail + password + alias opcional desde Configuración → Mails."
+                        ),
+                        usage=zero_usage(),
+                    )
+                server = creds.get("imap_server", "")
+                port = int(creds.get("imap_port", 993))
+                user = creds.get("email", "")
+                password = creds.get("password", "")
 
                 if not all([server, user, password]):
                     return make_error_response(
-                        message=(
-                            "Faltan credenciales de email en .env "
-                            "(EMAIL_IMAP_SERVER, EMAIL_USER, EMAIL_PASS)."
-                        ),
+                        message="Cuenta de mail incompleta en DB.",
                         usage=zero_usage(),
                     )
 

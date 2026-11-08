@@ -117,7 +117,13 @@ async def post_create_skill_stream(
         parameters = {"model": resolved_model, "provider": resolved_provider}
 
     try:
-        system_prompt = agent.prompt("create_skill", carpeta=str(_SKILLS_DIR / (nombre or "skill")))
+        from backend.agent.utils.email_accounts import load_email_accounts_text
+
+        system_prompt = agent.prompt(
+            "create_skill",
+            carpeta=str(_SKILLS_DIR / (nombre or "skill")),
+            email_accounts=load_email_accounts_text(),
+        )
     except Exception:
         logger.exception("Prompt create_skill.jinja no encontrado.")
         return prompt_error_stream()

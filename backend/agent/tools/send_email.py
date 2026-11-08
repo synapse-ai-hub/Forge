@@ -13,6 +13,7 @@ from email.mime.text import MIMEText
 from email.utils import formatdate, make_msgid
 
 from backend.agent.utils.contract import make_error_response, make_success_response, zero_usage
+from backend.agent.utils.email_accounts import resolve_account
 from backend.agent.utils.error_logger import log_error
 
 logger = logging.getLogger(__name__)
@@ -33,22 +34,25 @@ class SendEmailMixin:
     """
 
     async def send_email(self, to: str, subject: str, body: str,
+                         account: str = "",
                          in_reply_to: str | None = None,
                          attachments: list[dict] | None = None) -> dict[str, Any]:
             """Send an email response via SMTP.
 
-            Reads SMTP credentials from ``.env`` (EMAIL_SMTP_SERVER,
-            EMAIL_SMTP_PORT, EMAIL_USER, EMAIL_PASS). The body is markdown and
-            is converted to HTML. If ``in_reply_to`` is provided, sets the
-            In-Reply-To header for threading. This is a one-shot send — the
-            agent calls it on demand; it does not run in the background.
-            Port 465 uses implicit SSL (``SMTP_SSL``); any other port uses
-            plain SMTP upgraded with STARTTLS.
+            Reads SMTP credentials from the encrypted DB accounts (never
+            from ``.env``). The body is markdown and is converted to HTML.
+            If ``in_reply_to`` is provided, sets the In-Reply-To header for
+            threading. This is a one-shot send — the agent calls it on
+            demand; it does not run in the background. Port 465 uses
+            implicit SSL (``SMTP_SSL``); any other port uses plain SMTP
+            upgraded with STARTTLS.
 
             Args:
                 to: Recipient email address.
                 subject: Email subject line.
                 body: Email body in markdown format.
+                account: Alias or email address of the configured account.
+                    When empty the first account ordered by alias is used.
                 in_reply_to: Optional Message-ID of the original email being replied to.
                 attachments: Optional list of binary attachments. Each item must
                     carry exactly one payload source: ``{"filename": str,
@@ -77,21 +81,23 @@ class SendEmailMixin:
                         usage=zero_usage(),
                     )
 
-                smtp_server = os.getenv("EMAIL_SMTP_SERVER")
-                raw_port = os.getenv("EMAIL_SMTP_PORT", "587")
-                email_user = os.getenv("EMAIL_USER")
-                email_pass = os.getenv("EMAIL_PASS")
-
-                missing = [
-                    name for name, val in (
-                        ("EMAIL_SMTP_SERVER", smtp_server),
-                        ("EMAIL_USER", email_user),
-                        ("EMAIL_PASS", email_pass),
-                    ) if not val
-                ]
-                if missing:
+                creds = resolve_account(account)
+                if creds is None:
                     return make_error_response(
-                        message=f"Faltan variables de entorno: {', '.join(missing)}",
+                        message=(
+                            "No hay cuentas de mail configuradas. "
+                            "Cargá mail + password + alias opcional desde Configuración → Mails."
+                        ),
+                        usage=zero_usage(),
+                    )
+                smtp_server = creds.get("smtp_server", "")
+                raw_port = str(creds.get("smtp_port", 587))
+                email_user = creds.get("email", "")
+                email_pass = creds.get("password", "")
+
+                if not all([smtp_server, email_user, email_pass]):
+                    return make_error_response(
+                        message="Cuenta de mail incompleta en DB.",
                         usage=zero_usage(),
                     )
 

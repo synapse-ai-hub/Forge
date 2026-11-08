@@ -171,6 +171,10 @@ SPA React/Vite/TypeScript con Tailwind v4 y shadcn/ui. Multi-página: chat, crea
 
 Los providers cloud están curados en la app: cada API key se valida en vivo contra su propia API y se guarda encriptada (Fernet) en SQLite, y un proveedor figura solo mientras su key está guardada. No se necesitan variables de entorno. Los modelos vienen del catálogo models.dev cacheado en SQLite — elegí proveedor + modelo explícitamente y presioná **Apply**.
 
+### Cuentas de mail
+
+Múltiples cuentas IMAP/SMTP guardadas cifradas en SQLite y gestionadas desde Config (mail + password + alias opcional). Las tools `check_email` y `send_email` aceptan `account` (mail o alias) para elegir qué buzón usar en los flujos.
+
 ### Base de conocimiento (RAG)
 
 ChromaDB con embeddings de Gemini (`gemini-embedding-2`) vía el proveedor Google. Subí archivos y páginas web — el contenido se extrae, se divide en chunks y se indexa para recuperación semántica. El chunking (tamaño de chunk y overlap, en caracteres) se configura por subida desde la interfaz (por defecto: chunk 500, overlap 60). Requiere una API key de Google: sin ella, la base de conocimiento queda deshabilitada y el resto de la app funciona normalmente. Memoria de largo plazo: cada turno de conversación se indexa automáticamente y se puede buscar cross-sesión vía `search_memory`. Preferencias del usuario: las preferencias explícitas (idioma, tono, formato, zona horaria, empresa, rol) se guardan en la colección interna `user_memory` vía la tool `save_user_memory` o desde Config, se inyectan en cada turno del router y se gestionan (ver/agregar/editar/eliminar) desde Config — cada guardado iniciado por el agente pide confirmación en un modal — nunca aparecen como colecciones RAG.

@@ -72,3 +72,7 @@ El usuario no eligió ningún recurso: decidí vos cuáles usar entre los dispon
 - {{ m.label }}
 {% endfor %}
 {% endif %}
+{% if email_accounts is defined and email_accounts %}
+
+{% include "cuentas_mail.jinja" %}
+{% endif %}

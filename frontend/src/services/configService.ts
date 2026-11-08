@@ -65,6 +65,18 @@ export interface ProviderKeysResponse {
   keys: ProviderKeyStatus[];
 }
 
+export interface EmailAccount {
+  alias: string;
+  email: string;
+  provider: string;
+  last_status: string;
+}
+
+export interface EmailsResponse {
+  status: string;
+  emails: EmailAccount[];
+}
+
 export interface SetupCompletedResponse {
   status: string;
   completed: boolean;
@@ -308,6 +320,46 @@ export const configService = {
     const result = await response.json();
     if (!response.ok || result.status === "error") {
       throw new Error(result.message || `HTTP ${response.status}`);
+    }
+  },
+
+  /** List configured email accounts (no passwords). */
+  async getEmails(): Promise<EmailsResponse> {
+    const response = await fetch(`${API_BASE_URL}/api/config/emails`, {
+      method: "GET",
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    return response.json();
+  },
+
+  /** Save an email account (email + password + optional alias). */
+  async saveEmail(email: string, password: string, alias?: string): Promise<void> {
+    const response = await fetch(`${API_BASE_URL}/api/config/emails`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password, alias: alias || "" }),
+    });
+    const result = await response.json().catch(() => null);
+    if (!response.ok || !result || result.status === "error") {
+      throw new Error((result && result.message) || `HTTP ${response.status}`);
+    }
+  },
+
+  /** Delete an email account by alias. */
+  async deleteEmail(alias: string): Promise<void> {
+    const cleaned = (alias || "").trim();
+    if (!cleaned) {
+      throw new Error("Alias requerido.");
+    }
+    const response = await fetch(
+      `${API_BASE_URL}/api/config/emails/${encodeURIComponent(cleaned)}`,
+      { method: "DELETE" }
+    );
+    const result = await response.json().catch(() => null);
+    if (!response.ok || !result || result.status === "error") {
+      throw new Error((result && result.message) || `HTTP ${response.status}`);
     }
   },
 

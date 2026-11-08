@@ -192,6 +192,11 @@ Para usar una skill, cargala primero con la tool `skill` pasando su nombre; reci
 
 ### OBLIGATORIO
 Tienes terminantemente prohibido usar la tool `save_user_memory` si lo que pone el usuario ya está cubierto parcial o totalmente en esta lista.
+{% endif %}{% if email_accounts is defined and email_accounts %}
+
+---
+
+{% include "cuentas_mail.jinja" %}
 {% endif %}{% if fecha is defined and fecha %}
 
 ---

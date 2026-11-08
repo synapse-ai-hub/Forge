@@ -590,7 +590,7 @@ Las API keys de los proveedores cloud no se leen del entorno: se guardan cifrada
 | `CONFIG_BASE_URL` | URL base de la API de configuración que usa el loop | `http://127.0.0.1:8000/api/config` |
 | `FRONTIER_TTL_HOURS` | Horas que se conservan las filas `done` de `step_frontier` | `24` |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_CHAT_IDS` | Bot de Telegram y chats autorizados | — |
-| `EMAIL_IMAP_SERVER`, `EMAIL_IMAP_PORT`, `EMAIL_SMTP_SERVER`, `EMAIL_SMTP_PORT`, `EMAIL_USER`, `EMAIL_PASS` | Tools `check_email` y `send_email` | puertos `993` y `587` |
+| — | Cuentas de mail (`check_email` y `send_email` con `account` por mail o alias) | se configuran desde Configuración → Mails, cifradas en DB |
 | `FILE_UPLOAD_MAX_MB`, `FILE_UPLOAD_OCR_MAX_PAGES`, `FILE_UPLOAD_PDF_TEXT_THRESHOLD`, `FILE_UPLOAD_OCR_DPI` | Extracción de texto de archivos subidos | `50`, `10`, `80`, `200` |
 | `AGENT_COMPACTION_*` | Parámetros de `CompactionConfig` | ver `utils/config.py` |
 

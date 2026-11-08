@@ -111,7 +111,9 @@ async def post_create_tool_stream(req: CreateToolRequest):
         parameters = {"model": model, "provider": provider}
 
     try:
-        system_prompt = agent.prompt("create_tool")
+        from backend.agent.utils.email_accounts import load_email_accounts_text
+
+        system_prompt = agent.prompt("create_tool", email_accounts=load_email_accounts_text())
     except Exception:
         logger.exception("Prompt create_tool.jinja no encontrado.")
         return prompt_error_stream()
