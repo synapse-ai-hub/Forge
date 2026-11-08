@@ -174,6 +174,10 @@ def _connect() -> sqlite3.Connection | None:
 def save_account(email: str, password: str, alias: str | None = None) -> dict[str, Any]:
     """Encrypt and persist an email account from the UI.
 
+    One row per mailbox (``email`` is the primary key). When the requested
+    alias is already used by another mailbox it is suffixed with the email
+    domain to avoid overwriting a different account.
+
     Args:
         email: Full email address of the mailbox.
         password: Plain-text password or app password (never stored clear).
@@ -188,6 +192,8 @@ def save_account(email: str, password: str, alias: str | None = None) -> dict[st
         No exception escapes: failures are returned as error dicts.
     """
     try:
+        from datetime import timezone
+
         address = (email or "").strip().lower()
         if not address or "@" not in address:
             return {"status": "error", "message": f"Email inválido: {email!r}."}
@@ -202,17 +208,24 @@ def save_account(email: str, password: str, alias: str | None = None) -> dict[st
                 "message": "Cifrado no disponible (falta el paquete 'cryptography').",
             }
         encrypted = fernet.encrypt(password.strip().encode("utf-8")).decode("ascii")
-        now = datetime.now().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         conn = _connect()
         if conn is None:
             return {"status": "error", "message": "No se pudo abrir la base de datos."}
         try:
             with conn:
+                existing = conn.execute(
+                    load_query("email_accounts/get_by_alias_or_email.sql"),
+                    (resolved_alias, resolved_alias),
+                ).fetchone()
+                if existing is not None and str(existing["email"]).lower() != address:
+                    domain = address.split("@", 1)[1].split(".", 1)[0]
+                    resolved_alias = f"{resolved_alias}-{domain}"
                 conn.execute(
                     load_query("email_accounts/upsert.sql"),
                     (
-                        resolved_alias,
                         address,
+                        resolved_alias,
                         encrypted,
                         settings["imap_server"],
                         int(settings["imap_port"]),
@@ -318,10 +331,10 @@ def list_accounts() -> list[dict[str, Any]]:
 
 
 def delete_account(alias: str) -> dict[str, Any]:
-    """Delete an email account by alias.
+    """Delete an email account by alias or email.
 
     Args:
-        alias: Alias of the account to delete.
+        alias: Alias or email address of the account to delete.
 
     Returns:
         Contract dict ``{"status": "success"|"error", "message": ...}``.
@@ -338,7 +351,7 @@ def delete_account(alias: str) -> dict[str, Any]:
             return {"status": "error", "message": "No se pudo abrir la base de datos."}
         try:
             with conn:
-                cursor = conn.execute(load_query("email_accounts/delete.sql"), (cleaned,))
+                cursor = conn.execute(load_query("email_accounts/delete.sql"), (cleaned, cleaned))
                 deleted = cursor.rowcount > 0
         finally:
             conn.close()

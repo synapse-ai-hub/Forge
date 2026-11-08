@@ -1,7 +1,7 @@
 -- Email accounts configured from the UI. One row per mailbox, no .env usage.
 CREATE TABLE IF NOT EXISTS email_accounts (
-    alias TEXT PRIMARY KEY,
-    email TEXT NOT NULL UNIQUE,
+    email TEXT PRIMARY KEY,
+    alias TEXT NOT NULL UNIQUE,
     password_encrypted TEXT NOT NULL,
     imap_server TEXT,
     imap_port INTEGER DEFAULT 993,

@@ -1,2 +1,2 @@
--- Delete an email account by alias.
-DELETE FROM email_accounts WHERE alias = ?;
+-- Delete an email account by alias or email.
+DELETE FROM email_accounts WHERE alias = ? OR email = ?;
