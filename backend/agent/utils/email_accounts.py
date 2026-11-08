@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from backend.agent.utils.db import get_connection
@@ -142,8 +142,6 @@ def save_account(email: str, password: str, alias: str | None = None) -> dict[st
         No exception escapes: failures are returned as error dicts.
     """
     try:
-        from datetime import timezone
-
         address = (email or "").strip().lower()
         if not address or "@" not in address:
             return {"status": "error", "message": f"Email inválido: {email!r}."}
@@ -181,8 +179,8 @@ def save_account(email: str, password: str, alias: str | None = None) -> dict[st
                     (resolved_alias, resolved_alias),
                 ).fetchone()
                 if existing is not None and str(existing["email"]).lower() != address:
-                    domain = address.split("@", 1)[1].split(".", 1)[0]
-                    resolved_alias = f"{resolved_alias}-{domain}"
+                    full_domain = address.split("@", 1)[1]
+                    resolved_alias = f"{resolved_alias}-{full_domain}"
                 conn.execute(
                     load_query("email_accounts/upsert.sql"),
                     (

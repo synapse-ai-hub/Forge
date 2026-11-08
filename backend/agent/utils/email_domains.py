@@ -197,6 +197,21 @@ def _fetch_xml(url: str, timeout: int = 8) -> str | None:
         No exception escapes: failures return ``None``.
     """
     try:
+        import ipaddress
+
+        parsed = urllib.parse.urlparse(url)
+        hostname = parsed.hostname or ""
+        if hostname.lower() in ("localhost", "127.0.0.1", "::1", "0.0.0.0"):
+            return None
+        try:
+            ip = ipaddress.ip_address(hostname)
+            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast:
+                return None
+        except ValueError:
+            pass
+    except Exception:
+        return None
+    try:
         req = urllib.request.Request(url, headers={"User-Agent": "synapseForge/1.0"})
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             if resp.status != 200:
