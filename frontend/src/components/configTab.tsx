@@ -152,6 +152,14 @@ export function ConfigTab({ verboseMode, onVerboseModeChange }: ConfigTabProps) 
   const [savingKeyProvider, setSavingKeyProvider] = useState<string | null>(null);
   const [keysError, setKeysError] = useState<string | null>(null);
 
+  /* ---- email accounts (mail + password + optional alias) ---- */
+  const [emails, setEmails] = useState<Array<{ alias: string; email: string; provider: string; last_status: string }>>([]);
+  const [mailEmail, setMailEmail] = useState<string>("");
+  const [mailPassword, setMailPassword] = useState<string>("");
+  const [mailAlias, setMailAlias] = useState<string>("");
+  const [savingMail, setSavingMail] = useState<boolean>(false);
+  const [emailsError, setEmailsError] = useState<string | null>(null);
+
   /* All key providers in one dropdown: chat + decision-only (same table). */
   const keyOptions: Array<{ provider: string; label: string }> = [
     ...KEY_PROVIDER_OPTIONS,
@@ -220,6 +228,55 @@ export function ConfigTab({ verboseMode, onVerboseModeChange }: ConfigTabProps) 
       setKeysError(err instanceof Error ? err.message : "Error eliminando la API key.");
     } finally {
       setSavingKeyProvider(null);
+    }
+  };
+
+  const loadEmails = useCallback(async () => {
+    try {
+      setEmailsError(null);
+      const resp = await configService.getEmails();
+      setEmails(resp.emails || []);
+    } catch (err) {
+      console.error("Error cargando mails:", err);
+      setEmailsError(err instanceof Error ? err.message : "Error cargando mails.");
+    }
+  }, []);
+
+  useEffect(() => {
+    loadEmails();
+  }, [loadEmails]);
+
+  const handleSaveMail = async () => {
+    const email = mailEmail.trim().toLowerCase();
+    const password = mailPassword;
+    const alias = mailAlias.trim().toLowerCase();
+    if (!email || !password || savingMail) return;
+    try {
+      setEmailsError(null);
+      setSavingMail(true);
+      await configService.saveEmail(email, password, alias);
+      setMailEmail("");
+      setMailPassword("");
+      setMailAlias("");
+      await loadEmails();
+    } catch (err) {
+      setEmailsError(err instanceof Error ? err.message : "Error guardando el mail.");
+    } finally {
+      setSavingMail(false);
+    }
+  };
+
+  const handleDeleteMail = async (alias: string) => {
+    if (savingMail) return;
+    try {
+      setEmailsError(null);
+      setSavingMail(true);
+      await configService.deleteEmail(alias);
+      await loadEmails();
+    } catch (err) {
+      setEmailsError(err instanceof Error ? err.message : "Error eliminando el mail.");
+    } finally {
+      setSavingMail(false);
     }
   };
 
@@ -1205,6 +1262,74 @@ export function ConfigTab({ verboseMode, onVerboseModeChange }: ConfigTabProps) 
                   ? "Modificar"
                   : "Guardar"}
             </Button>
+          </div>
+        </div>
+      </Collapsible>
+
+      {/* Cuentas de mail */}
+      <Collapsible title="Cuentas de mail">
+        <p className="text-[11px] text-app-text-secondary mb-2">
+          Carg&aacute; mail + password + alias opcional (ej. forge, personal). Queda cifrado en la base local.
+        </p>
+        {emailsError && (
+          <div className="mb-2 text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+            {emailsError}
+          </div>
+        )}
+        <div className="space-y-2">
+          {emails.map((m) => (
+            <div key={m.alias} className="flex items-center justify-between rounded-lg border border-app-border bg-white px-2 py-1.5">
+              <div className="min-w-0">
+                <div className="text-xs text-app-text truncate">{m.alias} — {m.email}</div>
+                <div className="text-[10px] text-app-text-secondary">{m.provider} · {m.last_status}</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => handleDeleteMail(m.alias)}
+                disabled={savingMail}
+                className="text-app-text-secondary hover:text-red-500 transition-colors disabled:opacity-50 ml-2 shrink-0"
+                aria-label={`Eliminar ${m.alias}`}
+                title={`Eliminar ${m.alias}`}
+              >
+                <Trash2 size={14} />
+              </button>
+            </div>
+          ))}
+          <div className="rounded-lg border border-app-border bg-white p-2.5 space-y-2">
+            <Input
+              type="email"
+              value={mailEmail}
+              onChange={(e) => setMailEmail(e.target.value)}
+              placeholder="mail@ejemplo.com"
+              className="flex-1 text-xs"
+              autoComplete="off"
+            />
+            <Input
+              type="password"
+              value={mailPassword}
+              onChange={(e) => setMailPassword(e.target.value)}
+              placeholder="contraseña o app password"
+              className="flex-1 text-xs"
+              autoComplete="off"
+            />
+            <div className="flex gap-1.5">
+              <Input
+                type="text"
+                value={mailAlias}
+                onChange={(e) => setMailAlias(e.target.value)}
+                placeholder="alias opcional (forge, personal)"
+                className="flex-1 text-xs"
+                autoComplete="off"
+              />
+              <Button
+                onClick={handleSaveMail}
+                disabled={savingMail || !mailEmail.trim() || !mailPassword.trim()}
+                variant="gradient"
+                className="px-4 text-xs shrink-0"
+              >
+                {savingMail ? "..." : "Guardar"}
+              </Button>
+            </div>
           </div>
         </div>
       </Collapsible>
