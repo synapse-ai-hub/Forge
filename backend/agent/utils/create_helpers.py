@@ -72,6 +72,7 @@ async def build_resource_context(
         ``rag_disponibles`` and ``mcp_disponibles`` (everything that exists).
     """
     from backend.agent.utils.agent_helpers import get_agents_list, get_mcp_list, get_skills_list, get_tools_list
+    from backend.agent.utils.email_accounts import load_email_accounts_text
     from backend.agent.utils.rag_helpers import list_collections
 
     agentes_disponibles = []
@@ -100,6 +101,7 @@ async def build_resource_context(
         "skills_disponibles": get_skills_list() if with_skills else [],
         "rag_disponibles": list_collections(),
         "mcp_disponibles": mcp_disponibles,
+        "email_accounts": load_email_accounts_text(),
     }
 
 

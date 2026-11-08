@@ -110,3 +110,9 @@ Tercero: MOSTRÁ el resultado al usuario y pedí aprobación. No la declares cre
 ## PROHIBICIONES
 
 - **PROHIBIDO declarar la skill creada sin haber escrito el SKILL.md.**
+{% if email_accounts is defined and email_accounts %}
+
+---
+
+{% include "cuentas_mail.jinja" %}
+{% endif %}

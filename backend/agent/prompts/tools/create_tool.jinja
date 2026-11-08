@@ -173,3 +173,9 @@ NO declares en el código los valores de los secretos. Usá `os.getenv("API_KEY"
 - **PROHIBIDO hardcodear secretos o API keys.**
 - **PROHIBIDO** omitir type hints o el `-> dict`.
 - **PROHIBIDO** olvidar el bloque `if __name__ == "__main__"`.
+{% if email_accounts is defined and email_accounts %}
+
+---
+
+{% include "cuentas_mail.jinja" %}
+{% endif %}

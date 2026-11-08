@@ -45,6 +45,11 @@ Para usar una skill, cargala primero con la tool `skill` pasando su nombre; reci
 
 ## Directorio temporal
 {{ temp_dir }}
+{% endif %}{% if email_accounts is defined and email_accounts %}
+
+---
+
+{% include "cuentas_mail.jinja" %}
 {% endif %}{% if fecha is defined and fecha %}
 
 ---

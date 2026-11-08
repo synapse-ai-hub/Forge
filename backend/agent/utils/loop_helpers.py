@@ -328,8 +328,17 @@ def build_system_prompt(
 
     # Date
     fecha = datetime.now().strftime("%d/%m/%Y %H:%M")
-  
-    
+
+    # Email accounts (alias + email, no secrets): injected after the user
+    # preferences section. Empty means the section is left out.
+    try:
+        from backend.agent.utils.email_accounts import load_email_accounts_text
+
+        email_accounts = load_email_accounts_text()
+    except Exception:
+        email_accounts = ""
+
+
     if agent_name is not None:
         result = get_agent_prompt(agent_name)
         if result.get("status") == "success":
@@ -350,6 +359,7 @@ def build_system_prompt(
                 agents_section=agents_section,
                 temp_dir=temp_dir,
                 tools=tools,
+                email_accounts=email_accounts,
             )
         logger.warning(
             "Agent '%s' no encontrado; usando system prompt del router.", agent_name
@@ -385,6 +395,7 @@ def build_system_prompt(
         skills_section=skills_section,
         temp_dir=temp_dir,
         user_memory=user_memory,
+        email_accounts=email_accounts,
     )
 
 
