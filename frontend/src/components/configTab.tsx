@@ -249,7 +249,7 @@ export function ConfigTab({ verboseMode, onVerboseModeChange }: ConfigTabProps) 
   const handleSaveMail = async () => {
     const email = mailEmail.trim().toLowerCase();
     const password = mailPassword;
-    const alias = mailAlias.trim().toLowerCase();
+    const alias = mailAlias.trim();
     if (!email || !password || savingMail) return;
     try {
       setEmailsError(null);
@@ -1279,8 +1279,8 @@ export function ConfigTab({ verboseMode, onVerboseModeChange }: ConfigTabProps) 
         <div className="space-y-2">
           {emails.map((m) => (
             <div key={m.alias} className="flex items-center justify-between rounded-lg border border-app-border bg-white px-2 py-1.5">
-              <div className="min-w-0">
-                <div className="text-xs text-app-text truncate">{m.alias} — {m.email}</div>
+              <div className="min-w-0 flex-1">
+                <div className="text-xs text-app-text break-all" title={`${m.alias} — ${m.email}`}>{m.alias} — {m.email}</div>
                 <div className="text-[10px] text-app-text-secondary">{m.provider} · {m.last_status}</div>
               </div>
               <button
