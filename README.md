@@ -173,7 +173,7 @@ Cloud providers are curated in-app: each API key is validated live against its o
 
 ### Email accounts
 
-Multiple IMAP/SMTP accounts stored encrypted in SQLite and managed from Config (email + password + optional alias). Tools `check_email` and `send_email` accept `account` (email or alias) to select which mailbox to use for flows.
+Multiple IMAP/SMTP accounts stored encrypted in SQLite and managed from Config (email + password + optional alias). Servers and ports are auto-detected per domain (Thunderbird ISPDB → provider autoconfig → MX → port probing) and cached per domain, so no technical data is ever entered. Tools `check_email` and `send_email` accept `account` (email or alias) to select which mailbox to use for flows.
 
 ### Knowledge base (RAG)
 

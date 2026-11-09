@@ -173,7 +173,7 @@ Los providers cloud están curados en la app: cada API key se valida en vivo con
 
 ### Cuentas de mail
 
-Múltiples cuentas IMAP/SMTP guardadas cifradas en SQLite y gestionadas desde Config (mail + password + alias opcional). Las tools `check_email` y `send_email` aceptan `account` (mail o alias) para elegir qué buzón usar en los flujos.
+Múltiples cuentas IMAP/SMTP guardadas cifradas en SQLite y gestionadas desde Config (mail + password + alias opcional). Los servidores y puertos se detectan solos por dominio (ISPDB de Thunderbird → autoconfig del proveedor → MX → sondeo de puertos) y se cachean por dominio, sin ingresar ningún dato técnico. Las tools `check_email` y `send_email` aceptan `account` (mail o alias) para elegir qué buzón usar en los flujos.
 
 ### Base de conocimiento (RAG)
 
