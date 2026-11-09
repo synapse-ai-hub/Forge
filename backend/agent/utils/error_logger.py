@@ -17,6 +17,8 @@ import logging
 import os
 import sqlite3
 import sys
+import threading
+import time
 from datetime import datetime, timezone
 
 # ---------------------------------------------------------------------------
@@ -37,6 +39,7 @@ _DB_PATH = os.path.join(
 
 _conn: sqlite3.Connection | None = None
 _initialized: bool = False
+_lock = threading.RLock()
 
 # Context variable to hold error logging context (session_id, turn_number, parent_id, depth, agent_name)
 # This is set by AgentLoop.run() at the start of each turn and read by log_error()
@@ -102,19 +105,22 @@ def _get_connection() -> sqlite3.Connection:
         An open ``sqlite3.Connection``.
     """
     global _conn, _initialized
-    if _conn is None:
-        db_dir = os.path.dirname(_DB_PATH)
-        if db_dir:
-            os.makedirs(db_dir, exist_ok=True)
+    with _lock:
+        if _conn is None:
+            db_dir = os.path.dirname(_DB_PATH)
+            if db_dir:
+                os.makedirs(db_dir, exist_ok=True)
 
-        conn = sqlite3.connect(_DB_PATH, check_same_thread=False)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA foreign_keys=ON")
-        _ensure_error_table(conn)
-        _conn = conn
-        _initialized = True
-    return _conn
+            conn = sqlite3.connect(_DB_PATH, check_same_thread=False, timeout=10.0)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA foreign_keys=ON")
+            conn.execute("PRAGMA busy_timeout=10000")
+            _ensure_error_table(conn)
+            conn.commit()
+            _conn = conn
+            _initialized = True
+        return _conn
 
 
 def _ensure_error_table(conn: sqlite3.Connection) -> None:
@@ -182,12 +188,24 @@ def log_error(
         # an import cycle (backend.agent.utils -> spend_handler -> error_logger).
         from backend.agent.utils.queries import load_query
 
-        conn = _get_connection()
+        query = load_query("errors/insert_error.sql")
         now = datetime.now().isoformat()
-        conn.execute(
-            load_query("errors/insert_error.sql"),
-            (session_id, parent_id, turn_number, exception, source, now),
-        )
-        conn.commit()
+        params = (session_id, parent_id, turn_number, exception, source, now)
+        with _lock:
+            conn = _get_connection()
+            for attempt in range(3):
+                try:
+                    conn.execute(query, params)
+                    conn.commit()
+                    break
+                except sqlite3.OperationalError as op_err:
+                    if "locked" in str(op_err).lower() and attempt < 2:
+                        try:
+                            conn.rollback()
+                        except Exception:
+                            pass
+                        time.sleep(0.1 * (attempt + 1))
+                        continue
+                    raise
     except Exception as e:
         _logger.exception("Failed to log error to database: %s", e)

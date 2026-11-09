@@ -430,34 +430,16 @@ class CreatorSessionManager:
     def save_turn_latency(self, session_id: str, turn_number: int) -> dict:
         """Compute and store the latency of a single creator turn.
 
+        Creator conversations live in the ``creators`` table and have no
+        row in ``sessions``, so they must never write to ``turn_latency``
+        (its ``session_id`` has a FOREIGN KEY to ``sessions``). The latency
+        of a creator turn already lives in its ``call``/``result`` rows.
+
         Args:
             session_id: The creator conversation id.
             turn_number: The turn number to measure.
 
         Returns:
-            A contract response dict indicating success or failure.
+            A contract response dict indicating success (always, no-op).
         """
-        conn = self._get_connection()
-        try:
-            with self._lock:
-                row = conn.execute(
-                    load_query("creators/turn_latency.sql"),
-                    (session_id, turn_number, session_id, turn_number,
-                     session_id, turn_number),
-                ).fetchone()
-                latency = float(row[0]) if row and row[0] is not None else None
-                conn.execute(
-                    load_query("turn_latency/insert.sql"),
-                    (session_id, turn_number, latency),
-                )
-                conn.commit()
-            return make_success_response(message="Latency saved.", usage=zero_usage())
-        except Exception as e:
-            log_error(str(e), source="backend/agent/creator_session.py")
-            logger.exception("Failed to save creator latency for '%s'", session_id)
-            return make_error_response(
-                message="Failed to save creator latency.",
-                usage=zero_usage(),
-            )
-        finally:
-            conn.close()
+        return make_success_response(message="Latency saved.", usage=zero_usage())
