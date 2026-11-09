@@ -243,7 +243,7 @@ export function ToolInterface() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            descripcion,
+            descripcion: texto,
             name: nombre || null,
             creator_id: creatorIdRef.current,
             parametros: parametros.filter((p) => p.name.trim()),
@@ -474,7 +474,7 @@ export function ToolInterface() {
         setHistoryKey((k) => k + 1);
       }
     },
-    [isStreaming, descripcion, nombre, parametros, datos, createModel, createProvider],
+    [isStreaming, nombre, parametros, datos, createModel, createProvider],
   );
 
   /* ---- enviar desde el chat ---- */

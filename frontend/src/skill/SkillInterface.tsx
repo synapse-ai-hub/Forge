@@ -262,7 +262,7 @@ export function SkillInterface() {
 
       try {
         const formData = new FormData();
-        formData.append("descripcion", descripcion);
+        formData.append("descripcion", texto);
         if (nombre) formData.append("name", nombre);
         formData.append("creator_id", creatorIdRef.current);
         if (createModel) formData.append("model", createModel);
@@ -512,7 +512,7 @@ export function SkillInterface() {
         setHistoryKey((k) => k + 1);
       }
     },
-    [isStreaming, descripcion, nombre, createModel, createProvider],
+    [isStreaming, nombre, createModel, createProvider],
   );
 
   /* ---- enviar desde el chat ---- */
@@ -589,12 +589,21 @@ export function SkillInterface() {
    */
   const restoreConversation = useCallback((c: CreatorConversation): void => {
     abortRef.current?.abort();
-    const setup = c.setup as Record<string, any>;
+    const setup = (c.setup ?? {}) as Record<string, any>;
     creatorIdRef.current = c.creator_id;
     setNombre(typeof setup.name === "string" ? setup.name : "");
     setDescripcion(typeof setup.descripcion === "string" ? setup.descripcion : "");
     setFiles([]);
-    setMessages(c.messages.map((m) => ({ ...m, id: generateId(), isStreaming: false }) as Message));
+    const setupFiles = Array.isArray(setup.files) ? setup.files : [];
+    let filesAttached = false;
+    setMessages(c.messages.map((m) => {
+      const base = { ...m, id: generateId(), isStreaming: false } as Message;
+      if (!filesAttached && (m as any).type === "user" && setupFiles.length > 0) {
+        (base as any).files = setupFiles;
+        filesAttached = true;
+      }
+      return base;
+    }));
     setInput("");
     setChatError(null);
     setSetupDone(true);
@@ -753,7 +762,19 @@ export function SkillInterface() {
             >
               <div className="relative max-w-full sm:max-w-3xl lg:max-w-4xl mx-auto space-y-4 sm:space-y-6">
                 {messages.map((msg) => (
-                  <MessageRow key={msg.id} message={msg} verboseMode={true} showCopyButton={false} autoCloseBlocks />
+                  <MessageRow
+                    key={msg.id}
+                    message={msg}
+                    verboseMode={true}
+                    showCopyButton={false}
+                    autoCloseBlocks
+                    downloadForFile={(file) => {
+                      const name = typeof file === "string" ? file : file?.name;
+                      const cid = creatorIdRef.current;
+                      if (!cid || !name) return undefined;
+                      return `${API}/create/history/${encodeURIComponent(cid)}/attachments/${encodeURIComponent(name)}`;
+                    }}
+                  />
                 ))}
               </div>
             </div>

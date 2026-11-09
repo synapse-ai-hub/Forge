@@ -202,7 +202,7 @@ export function AgentInterface() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            descripcion,
+            descripcion: texto,
             name: nombre || null,
             creator_id: creatorIdRef.current,
             model: createModel,
@@ -427,7 +427,7 @@ export function AgentInterface() {
         setHistoryKey((k) => k + 1);
       }
     },
-    [isStreaming, descripcion, nombre, createModel, createProvider, seleccion],
+    [isStreaming, nombre, createModel, createProvider, seleccion],
   );
 
   /* ---- enviar desde el chat ---- */
