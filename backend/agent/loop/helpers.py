@@ -227,6 +227,9 @@ def _router_tool_permissions(router_perms: dict[str, Any] | None) -> dict[str, A
     # The skill loader is floor too: always available to the router, never
     # shown in the UI (hidden) and never toggled by the stored selection.
     tool_permissions["skill"] = "allow"
+    # Reference files belong to skills: whenever skill is available,
+    # reference is too. Hidden from the UI, never toggled by selection.
+    tool_permissions["reference"] = "allow"
     # User memory saver is floor too: preferences must work even with a
     # stored router selection that does not list the tool.
     tool_permissions["save_user_memory"] = "allow"

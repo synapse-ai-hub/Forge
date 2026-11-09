@@ -40,12 +40,15 @@ _AGENT_TOOLS_PERMS: dict[str, Any] = {
     "webfetch": "allow",
     "query_model_capabilities": "allow",
     "skill": "allow",
+    "reference": "allow",
 }
 """Native tools enabled for the creators (read/explore + web + file edition).
 
 The ``skill`` tool is enabled so creators can load their internal skills
 (allowed list arrives later via ``skill_permissions``); without explicit
 skill permissions every ``skill()`` call is denied by name.
+``reference`` is always enabled with ``skill`` (hidden from the UI):
+it loads the reference files listed in a skill.
 """
 
 _TOOLS_DIR = get_tools_dir()

@@ -492,6 +492,19 @@ def is_tool_allowed(
     if not tool_perms or not tool_name:
         return False
 
+    # Reference belongs to skill: whenever skill is allowed, reference is
+    # too. Hidden from the UI, never toggled separately.
+    if tool_name == "reference":
+        ruleset = dict_to_ruleset({k: v for k, v in tool_perms.items() if not isinstance(v, dict)})
+        if ruleset and evaluate("skill", "*", ruleset) == "allow":
+            return True
+        # Nested skill grant with any allow also implies reference.
+        skill_sub = tool_perms.get("skill")
+        if isinstance(skill_sub, dict):
+            for action in skill_sub.values():
+                if action == "allow":
+                    return True
+
     # --- Internal tools (context7docs_*): explicit nested grant only ---
     # Mirrors the filter_tools gate: a flat "*" never admits them.
     if is_internal_mcp_tool(tool_name):
@@ -683,6 +696,15 @@ def filter_tools(
             else:
                 logger.debug("Tool '%s' filtered out by flat permission (%s).", name, action)
         # else: no flat rules and no nested rules → deny (deny-by-default)
+
+    # Reference belongs to skill: whenever skill is available, reference is
+    # too. Hidden from the UI, never toggled separately.
+    names = {t.get("function", {}).get("name", "") for t in filtered}
+    if "skill" in names and "reference" not in names:
+        for tool in tools:
+            if tool.get("function", {}).get("name", "") == "reference":
+                filtered.append(tool)
+                break
 
     return filtered
 
