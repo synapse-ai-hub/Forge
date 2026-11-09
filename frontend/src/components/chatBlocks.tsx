@@ -15,6 +15,7 @@ import {
   ThumbsDown,
   ChevronDown,
   Loader2,
+  Paperclip,
   X,
 } from "lucide-react";
 import { marked } from "marked";
@@ -130,7 +131,7 @@ function FileWarningBanner({
 /*  FileChip                                                          */
 /* ------------------------------------------------------------------ */
 
-/** File chip preview above the textarea. */
+/** File chip preview above the textarea. Click opens the local file. */
 function FileChip({
   file,
   onRemove,
@@ -143,12 +144,29 @@ function FileChip({
       ? `${(file.size / 1024).toFixed(0)} KB`
       : `${(file.size / (1024 * 1024)).toFixed(1)} MB`;
 
+  const openLocal = (): void => {
+    try {
+      const url = URL.createObjectURL(file);
+      window.open(url, "_blank", "noopener");
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch {
+      /* ignore */
+    }
+  };
+
   return (
     <div
       className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs
                  bg-app-primary/10 border border-app-primary/20 text-app-text"
     >
-      <span className="truncate max-w-[120px] sm:max-w-[200px]">{file.name}</span>
+      <button
+        type="button"
+        onClick={openLocal}
+        title={`Abrir ${file.name}`}
+        className="truncate max-w-[120px] sm:max-w-[200px] hover:underline cursor-pointer"
+      >
+        {file.name}
+      </button>
       <span className="text-app-text-secondary shrink-0">{sizeLabel}</span>
       <button
         onClick={onRemove}
@@ -167,11 +185,13 @@ function FileChip({
 
 /** Renders markdown content to HTML with XSS sanitization + Mermaid diagrams. */
 function MarkdownRenderer({ content }: { content: string }) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
   const sanitized = useMemo(() => {
     if (!content) return null;
     try {
       const html = marked.parse(content, { async: false }) as string;
-      return DOMPurify.sanitize(openLinksInNewTab(html), { ADD_ATTR: ["target"] });
+      const withDiff = colorDiffHtml(html);
+      return DOMPurify.sanitize(openLinksInNewTab(withDiff), { ADD_ATTR: ["target"] });
     } catch {
       return null;
     }
@@ -179,15 +199,69 @@ function MarkdownRenderer({ content }: { content: string }) {
 
   useLayoutEffect(() => {
     if (sanitized !== null) void renderMermaid();
+    const el = containerRef.current;
+    if (el) highlightDiffBlocks(el);
   }, [sanitized]);
 
   if (!content || sanitized === null) return <>{content}</>;
   return (
     <div
+      ref={containerRef}
       className="markdown-content text-sm leading-relaxed text-app-text"
       dangerouslySetInnerHTML={{ __html: sanitized }}
     />
   );
+}
+
+/** Pre-colorea diff en el HTML (antes de sanitizar) para no depender solo del post-proceso DOM. */
+function colorDiffHtml(html: string): string {
+  return html.replace(
+    /<code class="language-diff">([\s\S]*?)<\/code>/g,
+    (_m, inner: string) => {
+      const lines = inner.split("\n");
+      const colored = lines
+        .map((line) => {
+          // El contenido viene escapado (ej: &#43;), pero +/-/@@ quedan al inicio.
+          const t = line.replace(/^(<[^>]+>)*/, "");
+          let cls = "diff-ctx";
+          if (/^\+(?!\+)/.test(t)) cls = "diff-add";
+          else if (/^-(?!-)/.test(t)) cls = "diff-del";
+          else if (/^@@/.test(t)) cls = "diff-hunk";
+          return `<span class="${cls}">${line || " "}</span>`;
+        })
+        .join("\n");
+      return `<code class="language-diff">${colored}</code>`;
+    },
+  );
+}
+
+/** Colorea líneas +/- dentro de bloques ```diff (verde/rojo). */
+function highlightDiffBlocks(root: HTMLElement): void {
+  const blocks = root.querySelectorAll('code.language-diff');
+  blocks.forEach((code) => {
+    if ((code as HTMLElement).dataset.diffColored === "1") return;
+    (code as HTMLElement).dataset.diffColored = "1";
+    const text = code.textContent ?? "";
+    const lines = text.split("\n");
+    const frag = document.createDocumentFragment();
+    lines.forEach((line, i) => {
+      const span = document.createElement("span");
+      if (line.startsWith("+") && !line.startsWith("+++")) {
+        span.className = "diff-add";
+      } else if (line.startsWith("-") && !line.startsWith("---")) {
+        span.className = "diff-del";
+      } else if (line.startsWith("@@")) {
+        span.className = "diff-hunk";
+      } else {
+        span.className = "diff-ctx";
+      }
+      span.textContent = line;
+      frag.appendChild(span);
+      if (i < lines.length - 1) frag.appendChild(document.createTextNode("\n"));
+    });
+    code.textContent = "";
+    code.appendChild(frag);
+  });
 }
 
 /** Agrega target="_blank" rel="noopener noreferrer" a todos los links. */
@@ -556,6 +630,7 @@ function MessageRow({
   feedback = null,
   onFeedback,
   autoCloseBlocks = false,
+  downloadForFile,
 }: {
   message: Message;
   verboseMode: boolean;
@@ -567,6 +642,8 @@ function MessageRow({
   feedback?: FeedbackType | null;
   /** Called when a thumb is clicked; without it the thumbs are not shown. */
   onFeedback?: (turn: number, type: FeedbackType) => void;
+  /** Build a download URL for an attached file, when the backend stores it. */
+  downloadForFile?: (file: any, message: Message) => string | undefined;
 }) {
   const isAssistant = message.type === "assistant";
 
@@ -746,9 +823,10 @@ function MessageRow({
   /* ---- User message ---- */
   return (
     <div className="flex gap-3 items-start justify-end">
-      {/* Bubble */}
+      {/* Bubble + attached files */}
+      <div className="flex flex-col items-end gap-2 max-w-[85%] sm:max-w-[75%]">
       <div
-        className={`rounded-2xl border px-4 py-3 max-w-[85%] sm:max-w-[75%] shadow-sm ${
+        className={`rounded-2xl border px-4 py-3 w-full shadow-sm ${
           message.blocked
             ? "border-[#403F3F] bg-[#403F3F] text-red-400"
             : "border-app-border bg-white"
@@ -759,6 +837,40 @@ function MessageRow({
         ) : (
           <MarkdownRenderer content={message.content} />
         )}
+      </div>
+      {Array.isArray((message as any).files) && (message as any).files.length > 0 && (
+        <div className="flex flex-wrap justify-end gap-2">
+          {(message as any).files.map((file: any, idx: number) => {
+            const label = typeof file === "string" ? file : (typeof file?.name === "string" && file.name ? file.name : "archivo");
+            const url = downloadForFile ? downloadForFile(file, message) : undefined;
+            const inner = (
+              <>
+                <Paperclip size={14} className="shrink-0" />
+                <span className="truncate font-medium">{label}</span>
+              </>
+            );
+            return url ? (
+              <a
+                key={idx}
+                href={url}
+                target="_blank"
+                rel="noopener noreferrer"
+                title={`Abrir ${label}`}
+                className="flex items-center gap-2 px-2 py-1 rounded-lg text-sm max-w-48 bg-app-bg-tertiary text-app-text hover:underline cursor-pointer"
+              >
+                {inner}
+              </a>
+            ) : (
+              <div
+                key={idx}
+                className="flex items-center gap-2 px-2 py-1 rounded-lg text-sm max-w-48 bg-app-bg-tertiary text-app-text"
+              >
+                {inner}
+              </div>
+            );
+          })}
+        </div>
+      )}
       </div>
 
       {/* Avatar gradient */}

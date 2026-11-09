@@ -121,6 +121,32 @@ body {
   background: none;
   padding: 0;
 }
+/* Diff blocks (```diff): verde para + y rojo para - */
+.markdown-content pre:has(code.language-diff) {
+  background-color: #f6f8fa;
+  border: 1px solid var(--color-app-border);
+}
+.markdown-content code.language-diff {
+  display: block;
+}
+.markdown-content code.language-diff .diff-add {
+  display: block;
+  background-color: rgba(43, 125, 91, 0.15);
+  color: #1a5c42;
+}
+.markdown-content code.language-diff .diff-del {
+  display: block;
+  background-color: rgba(194, 65, 61, 0.12);
+  color: #8f2b28;
+}
+.markdown-content code.language-diff .diff-hunk {
+  display: block;
+  color: var(--color-app-text-secondary);
+  font-weight: 600;
+}
+.markdown-content code.language-diff .diff-ctx {
+  display: block;
+}
 .markdown-content a {
   background-color: var(--color-app-primary);
   color: var(--color-app-primary-text);

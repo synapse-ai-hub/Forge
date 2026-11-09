@@ -1326,6 +1326,11 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
                 verboseMode={verboseMode}
                 feedback={msg.turn != null ? feedback[msg.turn] ?? null : null}
                 onFeedback={vote}
+                downloadForFile={(file, m) => {
+                  const name = typeof file === "string" ? file : file?.name;
+                  if (!sessionId || !name) return undefined;
+                  return `${API_BASE_URL}/api/sessions/${encodeURIComponent(sessionId)}/attachments/by-name/${encodeURIComponent(name)}`;
+                }}
               />
             ))}
 
