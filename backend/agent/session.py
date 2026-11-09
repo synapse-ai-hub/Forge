@@ -584,6 +584,11 @@ class SessionManager:
                     (session_id,),
                 )
 
+                conn.execute(
+                    "DELETE FROM attachments WHERE session_id = ?",
+                    (session_id,),
+                )
+
                 cursor = conn.execute(
                     load_query("sessions/delete_session.sql"),
                     (session_id,),

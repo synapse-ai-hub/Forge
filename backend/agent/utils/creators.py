@@ -133,6 +133,7 @@ def delete_conversation(creator_id: str) -> bool:
     """
     try:
         with db_transaction() as conn:
+            conn.execute("DELETE FROM attachments WHERE session_id = ?", (creator_id,))
             cur = conn.execute(load_query("creators/delete_conversation.sql"), (creator_id,))
             return (cur.rowcount or 0) > 0
     except Exception as exc:

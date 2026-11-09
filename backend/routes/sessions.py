@@ -358,3 +358,92 @@ async def delete_session(session_id: str) -> dict:
         return make_error_response(message="Error al eliminar la sesión")
 
 
+@router.get("/sessions/{session_id}/attachments/by-name/{file_name}")
+async def open_attachment_by_name(session_id: str, file_name: str):
+    """Open the latest binary with this name, without requiring turn.
+
+    Lets just-sent messages (optimistic UI without turn yet) open the file.
+
+    Args:
+        session_id: Session (or creator_id) that owns the file.
+        file_name: Original file name.
+
+    Returns:
+        The file bytes inline, or 404 when missing.
+    """
+    import mimetypes
+
+    from fastapi.responses import JSONResponse, Response
+
+    try:
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT file_name, content FROM attachments WHERE session_id = ? AND file_name = ? ORDER BY id DESC LIMIT 1",
+                (session_id, file_name),
+            ).fetchone()
+        if row is None or row["content"] is None:
+            return JSONResponse(
+                status_code=404,
+                content=validate_response(make_error_response(message="Archivo no encontrado", usage=zero_usage())),
+            )
+        data = bytes(row["content"])
+        name = (row["file_name"] or "archivo").replace('"', "").replace("\r", "").replace("\n", "")
+        media, _ = mimetypes.guess_type(name)
+        return Response(
+            content=data,
+            media_type=media or "application/octet-stream",
+            headers={"Content-Disposition": f'inline; filename="{name}"'},
+        )
+    except Exception as exc:
+        log_error(str(exc), source="sessions.py:open_attachment_by_name")
+        logger.exception("Error opening attachment %s: %s", file_name, exc)
+        return JSONResponse(
+            status_code=500,
+            content=validate_response(make_error_response(message="Error al abrir el archivo", usage=zero_usage())),
+        )
+
+
+@router.get("/sessions/{session_id}/attachments/{turn_number}/{file_name}")
+async def download_attachment(session_id: str, turn_number: int, file_name: str):
+    """Open the binary of a file attached to a chat turn inline.
+
+    Args:
+        session_id: Session (or creator_id) that owns the file.
+        turn_number: Turn the file was attached to.
+        file_name: Original file name.
+
+    Returns:
+        The file bytes inline, or 404 when missing.
+    """
+    import mimetypes
+
+    from fastapi.responses import JSONResponse, Response
+
+    try:
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT file_name, content FROM attachments WHERE session_id = ? AND turn_number = ? AND file_name = ? ORDER BY id DESC LIMIT 1",
+                (session_id, int(turn_number), file_name),
+            ).fetchone()
+        if row is None or row["content"] is None:
+            return JSONResponse(
+                status_code=404,
+                content=validate_response(make_error_response(message="Archivo no encontrado", usage=zero_usage())),
+            )
+        data = bytes(row["content"])
+        name = (row["file_name"] or "archivo").replace('"', "").replace("\r", "").replace("\n", "")
+        media, _ = mimetypes.guess_type(name)
+        return Response(
+            content=data,
+            media_type=media or "application/octet-stream",
+            headers={"Content-Disposition": f'inline; filename="{name}"'},
+        )
+    except Exception as exc:
+        log_error(str(exc), source="sessions.py:download_attachment")
+        logger.exception("Error downloading attachment %s: %s", file_name, exc)
+        return JSONResponse(
+            status_code=500,
+            content=validate_response(make_error_response(message="Error al descargar el archivo", usage=zero_usage())),
+        )
+
+

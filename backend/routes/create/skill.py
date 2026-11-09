@@ -72,6 +72,7 @@ async def post_create_skill_stream(
 
     first_turn = not creator_sessions.has_rows(cid)
     file_contents: list[tuple[str, str]] = []
+    raw_files: list[tuple[str, bytes]] = []
     if first_turn and files:
         total_bytes = 0
         for i, file in enumerate(files[:_MAX_FILES]):
@@ -86,12 +87,30 @@ async def post_create_skill_stream(
                 return error_response(
                     f"Los adjuntos superan 1 MB en total."
                 )
+            raw_files.append((filename, content))
             try:
                 result = extract_text_from_bytes(filename, content)
                 file_contents.append((filename, result.text or f"[Error al procesar {filename}]"))
             except Exception as exc:
                 logger.warning("Error extrayendo texto de %s: %s", filename, exc)
                 file_contents.append((filename, f"[Error al procesar {filename}.]"))
+        if raw_files:
+            try:
+                from datetime import datetime
+
+                from backend.agent.utils.db import db_transaction
+                from backend.agent.utils.queries import load_query
+
+                turn_number = creator_sessions.get_last_turn_number(cid) + 1
+                now = datetime.now().isoformat()
+                with db_transaction() as conn:
+                    for filename, blob in raw_files:
+                        conn.execute(
+                            load_query("attachments/insert.sql"),
+                            (cid, turn_number, filename, len(blob), blob, now),
+                        )
+            except Exception as exc:
+                logger.warning("No se pudieron guardar adjuntos del creador %s: %s", cid, exc)
 
     if first_turn:
         setup_lines = [
@@ -105,7 +124,7 @@ async def post_create_skill_stream(
         user_setup: dict | None = {
             "name": nombre,
             "descripcion": texto,
-            "files": [{"name": n, "size": len(t)} for n, t in file_contents],
+            "files": [{"name": n, "size": len(b)} for n, b in raw_files],
         }
     else:
         user_message = texto

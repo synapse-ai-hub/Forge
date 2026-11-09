@@ -4,6 +4,7 @@ Endpoints:
 - ``GET /api/create/history?kind=tool``: conversations of one kind of creator, newest first.
 - ``GET /api/create/history/{creator_id}``: one conversation, rebuilt the way the page showed it.
 - ``DELETE /api/create/history/{creator_id}``: delete a conversation.
+- ``GET /api/create/history/{creator_id}/attachments/{file_name}``: download a file attached to the conversation.
 """
 
 from __future__ import annotations
@@ -68,3 +69,55 @@ async def delete_creator_history(creator_id: str) -> JSONResponse:
             status_code=404, content={"status": "error", "message": "La conversación no existe."},
         )
     return JSONResponse(status_code=200, content={"status": "success"})
+
+
+@router.get("/history/{creator_id}/attachments/{file_name}")
+async def download_creator_attachment(creator_id: str, file_name: str):
+    """Download the binary of a file attached to a creator conversation.
+
+    Attachments are stored with ``session_id = creator_id`` in the shared
+    ``attachments`` table (no FK, creators have no row in ``sessions``).
+
+    Args:
+        creator_id: Creator conversation id.
+        file_name: Original file name.
+
+    Returns:
+        The file bytes with a download header, or an error contract.
+    """
+    import logging
+    import mimetypes
+
+    from fastapi.responses import JSONResponse, Response
+
+    from backend.agent.utils.contract import make_error_response, validate_response, zero_usage
+    from backend.agent.utils.db import get_connection
+    from backend.agent.utils.error_logger import log_error
+
+    logger = logging.getLogger(__name__)
+    try:
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT file_name, content FROM attachments WHERE session_id = ? AND file_name = ? ORDER BY id DESC LIMIT 1",
+                (creator_id, file_name),
+            ).fetchone()
+        if row is None or row["content"] is None:
+            return JSONResponse(
+                status_code=404,
+                content=validate_response(make_error_response(message="Archivo no encontrado.", usage=zero_usage())),
+            )
+        data = bytes(row["content"])
+        name = (row["file_name"] or "archivo").replace('"', "").replace("\r", "").replace("\n", "")
+        media, _ = mimetypes.guess_type(name)
+        return Response(
+            content=data,
+            media_type=media or "application/octet-stream",
+            headers={"Content-Disposition": f'inline; filename="{name}"'},
+        )
+    except Exception as exc:
+        log_error(str(exc), source="create/history.py:download_creator_attachment")
+        logger.exception("Error downloading creator attachment %s: %s", file_name, exc)
+        return JSONResponse(
+            status_code=500,
+            content=validate_response(make_error_response(message="Error al descargar el archivo.", usage=zero_usage())),
+        )
