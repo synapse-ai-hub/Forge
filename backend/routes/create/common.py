@@ -159,6 +159,8 @@ async def process_creator_attachments(
                         )
             except Exception as exc:
                 logger.warning("No se pudieron guardar adjuntos del creador %s: %s", creator_id, exc)
+    except ValueError:
+        raise
     except Exception as exc:
         logger.warning("Error procesando adjuntos del creador: %s", exc)
     return file_contents, raw_files
