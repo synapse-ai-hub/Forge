@@ -119,7 +119,10 @@ async def post_create_tool_stream(
     parametros_list = parse_creator_list(parametros)
     datos_list = parse_creator_list(datos)
 
-    file_contents, raw_files = await process_creator_attachments(files, cid, creator_sessions)
+    try:
+        file_contents, raw_files = await process_creator_attachments(files, cid, creator_sessions)
+    except ValueError as exc:
+        return error_response(str(exc))
 
     first_turn = not creator_sessions.has_rows(cid)
     if first_turn:

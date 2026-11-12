@@ -68,7 +68,10 @@ async def post_create_skill_stream(
     nombre = (name or "").strip() or None
 
     first_turn = not creator_sessions.has_rows(cid)
-    file_contents, raw_files = await process_creator_attachments(files, cid, creator_sessions)
+    try:
+        file_contents, raw_files = await process_creator_attachments(files, cid, creator_sessions)
+    except ValueError as exc:
+        return error_response(str(exc))
 
     if first_turn:
         setup_lines = [

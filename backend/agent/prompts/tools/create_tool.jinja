@@ -171,7 +171,7 @@ Pasá siempre la ruta completa al tool `write` (por ejemplo `{{ carpeta }}/mi_to
 ## FLUJO DE TRABAJO OBLIGATORIO
 
 1. **CREÁ el archivo** `{{ carpeta }}/<nombre>.py` con `write`, con esa ruta absoluta tal cual. Estructura completa: módulo docstring, handler async con type hints, `Args:` docstring, try/except que devuelve dict, modo CLI.
-2. **CREÁ un script de tests** en `~/.config/synapseForge/tools/lib/tests/test_<nombre>.py` que ejercite la tool con datos realistas. Incluí casos válidos e inválidos.
+2. **CREÁ un script de tests** en `{{ carpeta }}/lib/tests/test_<nombre>.py` que ejercite la tool con datos realistas. Incluí casos válidos e inválidos.
 3. **INSTALÁ lo que falte** con `shell` y `python -m pip install <paquete>` (ver LIBRERÍAS DE TERCEROS).
 4. **EJECUTÁ los tests** con `shell` (por ejemplo `python lib/tests/test_<nombre>.py` desde la carpeta de tools).
 5. **MOSTRÁ los resultados** al usuario en tu respuesta (qué pasó, qué errores hubo).

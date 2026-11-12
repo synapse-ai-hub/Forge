@@ -188,7 +188,10 @@ async def post_create_workflow_stream(
     schedule_dict = parse_creator_dict(schedule) or None
     schedule_norm = normalize_schedule(schedule_dict) if schedule_dict else None
 
-    file_contents, raw_files = await process_creator_attachments(files, cid, creator_sessions)
+    try:
+        file_contents, raw_files = await process_creator_attachments(files, cid, creator_sessions)
+    except ValueError as exc:
+        return error_response(str(exc))
 
     first_turn = not creator_sessions.has_rows(cid)
     if first_turn:

@@ -16,7 +16,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
@@ -93,9 +93,9 @@ def parse_creator_dict(value: str | None) -> dict:
 
 
 async def process_creator_attachments(
-    files,
+    files: list[UploadFile] | None,
     creator_id: str,
-    session_manager,
+    session_manager: Any,
 ) -> tuple[list[tuple[str, str]], list[tuple[str, bytes]]]:
     """Extract text from creator attachments and persist binaries.
 
@@ -114,6 +114,9 @@ async def process_creator_attachments(
         Tuple ``(file_contents, raw_files)`` where ``file_contents`` is
         ``[(filename, text)]`` for the loop and ``raw_files`` is
         ``[(filename, bytes)]`` for the ``setup.files`` metadata.
+
+    Raises:
+        ValueError: If the attachments exceed ``_CREATOR_MAX_TOTAL_BYTES``.
     """
     from datetime import datetime
 
@@ -136,8 +139,7 @@ async def process_creator_attachments(
                 continue
             total_bytes += len(content)
             if total_bytes > _CREATOR_MAX_TOTAL_BYTES:
-                logger.warning("Adjuntos del creador exceden 1 MB en total.")
-                break
+                raise ValueError("Los adjuntos superan 1 MB en total.")
             raw_files.append((filename, content))
             try:
                 result = extract_text_from_bytes(filename, content)

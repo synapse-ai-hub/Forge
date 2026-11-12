@@ -24,6 +24,7 @@ from backend.agent.utils.creators import is_valid_id
 from backend.instances import agent
 from backend.routes.create.common import (
     _AGENTS_DIR,
+    CreateAgentRequest,
     VerifyCreatorRequest,
     error_response,
     parse_creator_dict,
@@ -118,12 +119,13 @@ async def post_create_agent_stream(
     rag_list = parse_creator_list(rag)
     tool_args_dict = parse_creator_dict(tool_args)
 
-    file_contents, raw_files = await process_creator_attachments(files, cid, creator_sessions)
+    try:
+        file_contents, raw_files = await process_creator_attachments(files, cid, creator_sessions)
+    except ValueError as exc:
+        return error_response(str(exc))
 
     first_turn = not creator_sessions.has_rows(cid)
     if first_turn:
-        from backend.routes.create.common import CreateAgentRequest
-
         req_like = CreateAgentRequest(
             descripcion=descripcion,
             name=nombre,
