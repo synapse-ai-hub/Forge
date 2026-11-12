@@ -550,9 +550,9 @@ export function SkillInterface() {
       if (!nameVal) { setSetupError("El nombre es obligatorio."); return; }
       if (!validarNombre(nameVal)) { setSetupError("Corregí el campo Nombre."); return; }
       setSetupDone(true);
-      enviar(desc, []);
+      enviar(desc, files);
     },
-    [nombre, descripcion, enviar, validarNombre],
+    [nombre, descripcion, enviar, validarNombre, files],
   );
 
   const setupKeyDown = useCallback(
@@ -716,6 +716,40 @@ export function SkillInterface() {
                 }}
                 onProvidersChange={(count) => setNoProviders(count === 0)}
               />
+              <div>
+                <span className="block text-sm font-medium text-gray-700 mb-1">
+                  Archivos adjuntos <span className="text-xs text-gray-500">(opcional)</span>
+                </span>
+                <p className="text-xs text-gray-500 mb-2">
+                  Podés adjuntar <strong>.md</strong>, <strong>.txt</strong>, <strong>.json</strong>, <strong>.csv</strong>, <strong>.pdf</strong>, <strong>.docx</strong>, <strong>.xlsx</strong> como referencia. Se inyectan en el prompt como en el chat principal.
+                </p>
+                {fileWarning && (
+                  <FileWarningBanner message={fileWarning} onDismiss={() => setFileWarning(null)} />
+                )}
+                {files.length > 0 && (
+                  <div className="flex flex-wrap gap-2 mb-2">
+                    {files.map((f, i) => (
+                      <FileChip key={`${f.name}-${i}`} file={f} onRemove={() => removeFile(i)} />
+                    ))}
+                  </div>
+                )}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  accept=".md,.txt,.json,.csv,.yaml,.yml,.xml,.pdf,.docx,.doc,.xlsx,.xls"
+                  className="hidden"
+                  onChange={handleFilesSelected}
+                />
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="inline-flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-500 font-medium border border-gray-300 rounded-lg px-3 py-2 bg-white"
+                >
+                  <Paperclip size={14} />
+                  Adjuntar archivos
+                </button>
+              </div>
               <button
                 type="submit"
                 disabled={noProviders}
