@@ -4,11 +4,12 @@ import {
   useRef,
   useState,
   type KeyboardEvent,
+  type ChangeEvent,
   type FormEvent,
 } from "react";
 import { flushSync } from "react-dom";
-import { Send, Square, Download, ShieldCheck } from "lucide-react";
-import { MessageRow } from "../components/chatBlocks";
+import { Send, Square, Download, ShieldCheck, Paperclip } from "lucide-react";
+import { FileChip, FileWarningBanner, MessageRow } from "../components/chatBlocks";
 import { CreateModelSelector } from "../components/CreateModelSelector";
 import { ResourceCards } from "../components/ResourceCards";
 import {
@@ -26,6 +27,22 @@ import { newCreatorId, type CreatorConversation } from
 import { useCreatorVerify, VerifyToastBanner } from "../hooks/useCreatorVerify";
 
 const API = API_BASE_URL + "/api";
+
+const ALLOWED_FILE_TYPES = [
+  "text/csv",
+  "text/plain",
+  "text/markdown",
+  "application/pdf",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/msword",
+  "application/json",
+  "application/xml",
+  "text/xml",
+];
+const MAX_FILES = 3;
+const MAX_TOTAL_SIZE = 1 * 1024 * 1024;
 
 /** Generate a unique ID with safe fallback when crypto is unavailable. */
 function generateId(): string {
@@ -55,6 +72,8 @@ export function AgentInterface() {
   const creatorIdRef = useRef<string>(newCreatorId());
   const [historyKey, setHistoryKey] = useState(0);
   const [input, setInput] = useState("");
+  const [files, setFiles] = useState<File[]>([]);
+  const [fileWarning, setFileWarning] = useState<string | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
@@ -64,6 +83,8 @@ export function AgentInterface() {
   /* ---- refs ---- */
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const setupFileInputRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   /* ---- auto scroll ---- */
@@ -143,6 +164,47 @@ export function AgentInterface() {
     }
   }, [input]);
 
+  /* ---- file validation (igual que chat principal y skill) ---- */
+  const handleFilesSelected = useCallback(
+    (e: ChangeEvent<HTMLInputElement>) => {
+      const selected = Array.from(e.target.files || []);
+      const valid: File[] = [];
+      let warning: string | null = null;
+      let currentTotalSize = files.reduce((sum, f) => sum + f.size, 0);
+      for (const f of selected) {
+        if (!ALLOWED_FILE_TYPES.includes(f.type) && !f.name.match(/\.(csv|xlsx|xls|md|txt|json|xml|yaml|yml|pdf|docx|doc)$/i)) {
+          warning = `Tipo de archivo no soportado: ${f.name}. Permitidos: PDF, DOCX, XLSX, TXT, CSV, JSON, XML.`;
+          continue;
+        }
+        if (valid.length + files.length >= MAX_FILES) {
+          warning = `Máximo ${MAX_FILES} archivos permitidos.`;
+          break;
+        }
+        if (currentTotalSize + f.size > MAX_TOTAL_SIZE) {
+          warning = `Tamaño total excede ${MAX_TOTAL_SIZE / (1024 * 1024)} MB.`;
+          break;
+        }
+        valid.push(f);
+        currentTotalSize += f.size;
+      }
+      if (warning) setFileWarning(warning);
+      setFiles((prev) => [...prev, ...valid]);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      if (setupFileInputRef.current) setupFileInputRef.current.value = "";
+    },
+    [files],
+  );
+
+  const removeFile = useCallback((index: number) => {
+    setFiles((prev) => prev.filter((_, i) => i !== index));
+  }, []);
+
+  useEffect(() => {
+    if (!fileWarning) return;
+    const timer = setTimeout(() => setFileWarning(null), 6000);
+    return () => clearTimeout(timer);
+  }, [fileWarning]);
+
   /* ---- validación del nombre ---- */
   const validarNombre = useCallback((val: string): boolean => {
     if (!val) { setNameError(null); return true; }
@@ -155,15 +217,17 @@ export function AgentInterface() {
 
   /* ---- envío al backend (streaming SSE /api/create/agent) ---- */
   const enviar = useCallback(
-    async (texto: string) => {
+    async (texto: string, archivos: File[]) => {
       if (isStreaming) return;
       setInput("");
+      setFiles([]);
       setChatError(null);
 
       const userMessage: Message = {
         id: generateId(),
         type: "user",
         content: texto,
+        files: archivos.map((f) => ({ name: f.name, size: f.size })),
       };
       const assistantId = generateId();
       const assistantMessage: Message = {
@@ -198,17 +262,20 @@ export function AgentInterface() {
       abortRef.current = abort;
 
       try {
+        const sel = selectionToRequest(seleccion) as Record<string, unknown>;
+        const formData = new FormData();
+        formData.append("descripcion", texto);
+        if (nombre) formData.append("name", nombre);
+        formData.append("creator_id", creatorIdRef.current);
+        if (createModel) formData.append("model", createModel);
+        if (createProvider) formData.append("provider", createProvider);
+        for (const [k, v] of Object.entries(sel)) {
+          formData.append(k, typeof v === "string" ? v : JSON.stringify(v ?? []));
+        }
+        archivos.forEach((f) => formData.append("files", f));
         const resp = await fetch(`${API}/create/agent`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            descripcion: texto,
-            name: nombre || null,
-            creator_id: creatorIdRef.current,
-            model: createModel,
-            provider: createProvider,
-            ...selectionToRequest(seleccion),
-          }),
+          body: formData,
           signal: abort.signal,
         });
         if (!resp.ok) throw new Error("HTTP " + resp.status);
@@ -434,8 +501,8 @@ export function AgentInterface() {
   const handleSend = useCallback(() => {
     const text = input.trim();
     if (!text || isStreaming) return;
-    enviar(text);
-  }, [input, isStreaming, enviar]);
+    enviar(text, files);
+  }, [input, files, isStreaming, enviar]);
 
   /* ---- detener streaming ---- */
   const handleCancel = useCallback(() => {
@@ -464,9 +531,9 @@ export function AgentInterface() {
       if (!desc) { setSetupError("Completá la descripción."); return; }
       if (nameVal && !validarNombre(nameVal)) { setSetupError("Corregí el campo Nombre."); return; }
       setSetupDone(true);
-      enviar(desc);
+      enviar(desc, files);
     },
-    [nombre, descripcion, enviar, validarNombre],
+    [nombre, descripcion, enviar, validarNombre, files],
   );
 
   const setupKeyDown = useCallback(
@@ -494,6 +561,8 @@ export function AgentInterface() {
     setSeleccion(EMPTY_SELECTION);
     setInput("");
     setChatError(null);
+    setFiles([]);
+    setFileWarning(null);
     setHistoryKey((k) => k + 1);
   }, []);
 
@@ -509,9 +578,20 @@ export function AgentInterface() {
     setNombre(typeof setup.name === "string" ? setup.name : "");
     setDescripcion(typeof setup.descripcion === "string" ? setup.descripcion : "");
     setSeleccion(selectionFromSetup(setup));
-    setMessages(c.messages.map((m) => ({ ...m, id: generateId(), isStreaming: false }) as Message));
+    setFiles([]);
+    const setupFiles = Array.isArray(setup.files) ? setup.files : [];
+    let filesAttached = false;
+    setMessages(c.messages.map((m) => {
+      const base = { ...m, id: generateId(), isStreaming: false } as Message;
+      if (!filesAttached && (m as any).type === "user" && setupFiles.length > 0) {
+        (base as any).files = setupFiles;
+        filesAttached = true;
+      }
+      return base;
+    }));
     setInput("");
     setChatError(null);
+    setFileWarning(null);
     setSetupDone(true);
     setHistoryKey((k) => k + 1);
   }, []);
@@ -631,6 +711,41 @@ export function AgentInterface() {
                 onProvidersChange={(count) => setNoProviders(count === 0)}
               />
 
+              <div>
+                <span className="block text-sm font-medium text-gray-700 mb-1">
+                  Archivos adjuntos <span className="text-xs text-app-text-secondary">(opcional)</span>
+                </span>
+                <p className="text-xs text-app-text-secondary mb-2">
+                  Podés adjuntar <strong>.md</strong>, <strong>.txt</strong>, <strong>.json</strong>, <strong>.csv</strong>, <strong>.pdf</strong>, <strong>.docx</strong>, <strong>.xlsx</strong> como referencia. Se inyectan en el prompt como en el chat principal.
+                </p>
+                {fileWarning && (
+                  <FileWarningBanner message={fileWarning} onDismiss={() => setFileWarning(null)} />
+                )}
+                {files.length > 0 && (
+                  <div className="flex flex-wrap gap-2 mb-2">
+                    {files.map((f, i) => (
+                      <FileChip key={`${f.name}-${i}`} file={f} onRemove={() => removeFile(i)} />
+                    ))}
+                  </div>
+                )}
+                <input
+                  ref={setupFileInputRef}
+                  type="file"
+                  multiple
+                  accept=".md,.txt,.json,.csv,.yaml,.yml,.xml,.pdf,.docx,.doc,.xlsx,.xls"
+                  className="hidden"
+                  onChange={handleFilesSelected}
+                />
+                <button
+                  type="button"
+                  onClick={() => setupFileInputRef.current?.click()}
+                  className="inline-flex items-center gap-1 text-xs text-app-primary hover:text-app-primary-light font-medium border border-app-border rounded-lg px-3 py-2 bg-white"
+                >
+                  <Paperclip size={14} />
+                  Adjuntar archivos
+                </button>
+              </div>
+
               <button
                 type="submit"
                 disabled={noProviders}
@@ -676,7 +791,19 @@ export function AgentInterface() {
             >
               <div className="relative max-w-full sm:max-w-3xl lg:max-w-4xl mx-auto space-y-4 sm:space-y-6">
                 {messages.map((msg) => (
-                  <MessageRow key={msg.id} message={msg} verboseMode={true} showCopyButton={false} autoCloseBlocks />
+                  <MessageRow
+                    key={msg.id}
+                    message={msg}
+                    verboseMode={true}
+                    showCopyButton={false}
+                    autoCloseBlocks
+                    downloadForFile={(file) => {
+                      const name = typeof file === "string" ? file : file?.name;
+                      const cid = creatorIdRef.current;
+                      if (!cid || !name) return undefined;
+                      return `${API}/create/history/${encodeURIComponent(cid)}/attachments/${encodeURIComponent(name)}`;
+                    }}
+                  />
                 ))}
               </div>
             </div>
@@ -693,6 +820,31 @@ export function AgentInterface() {
                       {chatError}
                     </div>
                   )}
+
+                  {fileWarning && (
+                    <FileWarningBanner message={fileWarning} onDismiss={() => setFileWarning(null)} />
+                  )}
+
+                  {files.length > 0 && (
+                    <div className="flex flex-wrap gap-2 mb-3">
+                      {files.map((f, i) => (
+                        <FileChip key={`${f.name}-${i}`} file={f} onRemove={() => removeFile(i)} />
+                      ))}
+                    </div>
+                  )}
+
+                  <p className="text-xs text-app-text-secondary mb-2">
+                    Podés adjuntar <strong>.md</strong>, <strong>.txt</strong>, <strong>.json</strong>, <strong>.csv</strong>, <strong>.pdf</strong>, <strong>.docx</strong>, <strong>.xlsx</strong> como referencia. Se inyectan en el prompt como en el chat principal.
+                  </p>
+
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    multiple
+                    accept=".md,.txt,.json,.csv,.yaml,.yml,.xml,.pdf,.docx,.doc,.xlsx,.xls"
+                    className="hidden"
+                    onChange={handleFilesSelected}
+                  />
 
                   <div className="flex gap-2 mb-2">
                     <button
@@ -740,10 +892,22 @@ export function AgentInterface() {
                                  text-app-text placeholder:text-app-text-secondary
                                  focus:outline-none focus:ring-2 focus:ring-app-primary/30 focus:border-app-primary
                                  transition-colors
-                                 pt-3 sm:pt-4 pb-[44px] sm:pb-[44px] pr-12 sm:pr-12 pl-4 sm:pl-4
+                                 pt-3 sm:pt-4 pb-[44px] sm:pb-[44px] pr-12 sm:pr-12 pl-12 sm:pl-12
                                  min-h-[80px] sm:min-h-[100px]"
                       style={{ maxHeight: "220px" }}
                     />
+
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="absolute bottom-3 left-3 w-7 h-7 sm:w-8 sm:h-8 rounded-full
+                                 flex items-center justify-center
+                                 bg-app-primary/10 hover:bg-app-primary/20
+                                 text-app-primary transition-all duration-150"
+                      aria-label="Adjuntar archivos"
+                    >
+                      <Paperclip size={16} />
+                    </button>
 
                     {isStreaming ? (
                       <button
