@@ -24,21 +24,18 @@ from backend.instances import agent
 from backend.routes.create.common import (
     _SKILLS_DIR,
     error_response,
+    process_creator_attachments,
     prompt_error_stream,
     router,
     VerifyCreatorRequest,
     stream_creator_turn,
     verify_creator_conversation,
 )
-from backend.routes.file_text_extractor import extract_text_from_bytes
 
 logger = logging.getLogger(__name__)
 
 creator_sessions = CreatorSessionManager(kind="skill")
 """Persistence of the skill creator conversations."""
-
-_MAX_FILES = 3
-_MAX_TOTAL_BYTES = 1 * 1024 * 1024
 
 
 @router.post("/skill")
@@ -71,46 +68,7 @@ async def post_create_skill_stream(
     nombre = (name or "").strip() or None
 
     first_turn = not creator_sessions.has_rows(cid)
-    file_contents: list[tuple[str, str]] = []
-    raw_files: list[tuple[str, bytes]] = []
-    if first_turn and files:
-        total_bytes = 0
-        for i, file in enumerate(files[:_MAX_FILES]):
-            filename = file.filename or f"archivo_{i + 1}"
-            try:
-                content = await file.read()
-            except Exception as exc:
-                logger.warning("Error leyendo archivo %s: %s", filename, exc)
-                continue
-            total_bytes += len(content)
-            if total_bytes > _MAX_TOTAL_BYTES:
-                return error_response(
-                    f"Los adjuntos superan 1 MB en total."
-                )
-            raw_files.append((filename, content))
-            try:
-                result = extract_text_from_bytes(filename, content)
-                file_contents.append((filename, result.text or f"[Error al procesar {filename}]"))
-            except Exception as exc:
-                logger.warning("Error extrayendo texto de %s: %s", filename, exc)
-                file_contents.append((filename, f"[Error al procesar {filename}.]"))
-        if raw_files:
-            try:
-                from datetime import datetime
-
-                from backend.agent.utils.db import db_transaction
-                from backend.agent.utils.queries import load_query
-
-                turn_number = creator_sessions.get_last_turn_number(cid) + 1
-                now = datetime.now().isoformat()
-                with db_transaction() as conn:
-                    for filename, blob in raw_files:
-                        conn.execute(
-                            load_query("attachments/insert.sql"),
-                            (cid, turn_number, filename, len(blob), blob, now),
-                        )
-            except Exception as exc:
-                logger.warning("No se pudieron guardar adjuntos del creador %s: %s", cid, exc)
+    file_contents, raw_files = await process_creator_attachments(files, cid, creator_sessions)
 
     if first_turn:
         setup_lines = [

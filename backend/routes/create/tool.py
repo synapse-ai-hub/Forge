@@ -13,6 +13,9 @@ from __future__ import annotations
 import logging
 import uuid
 
+from typing import Optional
+
+from fastapi import File, Form, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from backend.agent.creator_session import CreatorSessionManager
@@ -20,9 +23,11 @@ from backend.agent.utils.create_helpers import resolve_create_model_provider
 from backend.agent.utils.creators import is_valid_id
 from backend.instances import agent
 from backend.routes.create.common import (
-    CreateToolRequest,
+    _TOOLS_DIR,
     VerifyCreatorRequest,
     error_response,
+    parse_creator_list,
+    process_creator_attachments,
     prompt_error_stream,
     router,
     stream_creator_turn,
@@ -75,45 +80,73 @@ def _setup_text(name: str | None, descripcion: str, parametros: list | None, dat
 
 
 @router.post("/tool")
-async def post_create_tool_stream(req: CreateToolRequest):
+async def post_create_tool_stream(
+    descripcion: str = Form(...),
+    name: str | None = Form(None),
+    creator_id: str | None = Form(None),
+    parametros: str | None = Form(None),
+    datos: str | None = Form(None),
+    model: str | None = Form(None),
+    provider: str | None = Form(None),
+    files: Optional[list[UploadFile]] = File(None),
+):
     """Stream one turn of the tool creator.
 
+    Accepts setup fields as ``FormData`` with optional file attachments
+    on every turn (setup and iteration). Attachments travel as extracted
+    text via ``file_contents`` so they are injected into the prompt like
+    the main chat (``<inicio_adjuntos>``).
+
     Args:
-        req: The creation request (message, optional name, setup form,
-            optional creator id and optional model/provider override).
+        descripcion: What the tool does (or follow-up message).
+        name: Tool name suggested by the user.
+        creator_id: Creator conversation id.
+        parametros: JSON string with parameters list.
+        datos: JSON string with external data list.
+        model: Optional model override.
+        provider: Optional provider override.
+        files: Optional attachments (every turn).
 
     Returns:
         A ``StreamingResponse`` with the loop SSE events plus, when the
         turn touched the tool file, a terminal ``tool_result_final`` event.
     """
-    descripcion = (req.descripcion or "").strip()
+    descripcion = (descripcion or "").strip()
     if not descripcion:
         return error_response("La descripción es obligatoria.")
-    creator_id = req.creator_id if req.creator_id and is_valid_id(req.creator_id) else str(uuid.uuid4())
-    nombre = (req.name or "").strip() or None
+    cid = creator_id if creator_id and is_valid_id(creator_id) else str(uuid.uuid4())
+    nombre = (name or "").strip() or None
+    parametros_list = parse_creator_list(parametros)
+    datos_list = parse_creator_list(datos)
 
-    first_turn = not creator_sessions.has_rows(creator_id)
+    file_contents, raw_files = await process_creator_attachments(files, cid, creator_sessions)
+
+    first_turn = not creator_sessions.has_rows(cid)
     if first_turn:
-        user_message = f"{_setup_text(nombre, descripcion, req.parametros, req.datos)}\n\nMensaje del usuario: {descripcion}"
+        setup_lines = _setup_text(nombre, descripcion, parametros_list, datos_list)
+        if file_contents:
+            setup_lines += f"\n- Archivos adjuntos: {', '.join(n for n, _ in file_contents)}"
+        user_message = f"{setup_lines}\n\nMensaje del usuario: {descripcion}"
         user_setup: dict | None = {
             "name": nombre,
             "descripcion": descripcion,
-            "parametros": req.parametros or [],
-            "datos": req.datos or [],
+            "parametros": parametros_list,
+            "datos": datos_list,
+            "files": [{"name": n, "size": len(b)} for n, b in raw_files],
         }
     else:
         user_message = descripcion
         user_setup = None
 
     parameters: dict | None = None
-    if req.model or req.provider:
-        model, provider = resolve_create_model_provider(req.model, req.provider)
-        parameters = {"model": model, "provider": provider}
+    if model or provider:
+        resolved_model, resolved_provider = resolve_create_model_provider(model, provider)
+        parameters = {"model": resolved_model, "provider": resolved_provider}
 
     try:
         from backend.agent.utils.email_accounts import load_email_accounts_text
 
-        system_prompt = agent.prompt("create_tool", email_accounts=load_email_accounts_text())
+        system_prompt = agent.prompt("create_tool", carpeta=_TOOLS_DIR.as_posix(), email_accounts=load_email_accounts_text())
     except Exception:
         logger.exception("Prompt create_tool.jinja no encontrado.")
         return prompt_error_stream()
@@ -121,12 +154,13 @@ async def post_create_tool_stream(req: CreateToolRequest):
     return StreamingResponse(
         stream_creator_turn(
             kind="tool",
-            creator_id=creator_id,
+            creator_id=cid,
             user_message=user_message,
             system_prompt=system_prompt,
             session_manager=creator_sessions,
             user_setup=user_setup,
             parameters=parameters,
+            file_contents=file_contents or None,
         ),
         media_type="text/event-stream",
     )
