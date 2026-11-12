@@ -42,6 +42,7 @@ _AGENT_TOOLS_PERMS: dict[str, Any] = {
     "skill": "allow",
     "reference": "allow",
 }
+
 """Native tools enabled for the creators (read/explore + web + file edition).
 
 The ``skill`` tool is enabled so creators can load their internal skills
@@ -50,6 +51,116 @@ skill permissions every ``skill()`` call is denied by name.
 ``reference`` is always enabled with ``skill`` (hidden from the UI):
 it loads the reference files listed in a skill.
 """
+
+_CREATOR_MAX_FILES = 3
+_CREATOR_MAX_TOTAL_BYTES = 1 * 1024 * 1024
+
+
+def parse_creator_list(value: str | None) -> list:
+    """Parse a JSON list coming from creator ``FormData``.
+
+    Args:
+        value: JSON string or None.
+
+    Returns:
+        The parsed list, or [] when missing or invalid.
+    """
+    if not value:
+        return []
+    try:
+        parsed = json.loads(value)
+        return parsed if isinstance(parsed, list) else []
+    except Exception:
+        return []
+
+
+def parse_creator_dict(value: str | None) -> dict:
+    """Parse a JSON dict coming from creator ``FormData``.
+
+    Args:
+        value: JSON string or None.
+
+    Returns:
+        The parsed dict, or {} when missing or invalid.
+    """
+    if not value:
+        return {}
+    try:
+        parsed = json.loads(value)
+        return parsed if isinstance(parsed, dict) else {}
+    except Exception:
+        return {}
+
+
+async def process_creator_attachments(
+    files,
+    creator_id: str,
+    session_manager,
+) -> tuple[list[tuple[str, str]], list[tuple[str, bytes]]]:
+    """Extract text from creator attachments and persist binaries.
+
+    Shared by the four creators so setup and iteration turns behave like
+    the main chat: files travel as extracted text in ``file_contents``
+    (injected into the prompt via ``loop.run`` -> ``build_user_message``
+    -> ``<inicio_adjuntos>``) and binaries persist in ``attachments``
+    with ``session_id = creator_id`` for later download.
+
+    Args:
+        files: Optional list of ``UploadFile`` from the request.
+        creator_id: Creator conversation id (used as ``session_id``).
+        session_manager: Creator session manager of the kind.
+
+    Returns:
+        Tuple ``(file_contents, raw_files)`` where ``file_contents`` is
+        ``[(filename, text)]`` for the loop and ``raw_files`` is
+        ``[(filename, bytes)]`` for the ``setup.files`` metadata.
+    """
+    from datetime import datetime
+
+    from backend.agent.utils.db import db_transaction
+    from backend.agent.utils.queries import load_query
+    from backend.routes.file_text_extractor import extract_text_from_bytes
+
+    file_contents: list[tuple[str, str]] = []
+    raw_files: list[tuple[str, bytes]] = []
+    if not files:
+        return file_contents, raw_files
+    try:
+        total_bytes = 0
+        for i, file in enumerate(files[:_CREATOR_MAX_FILES]):
+            filename = getattr(file, "filename", None) or f"archivo_{i + 1}"
+            try:
+                content = await file.read()
+            except Exception as exc:
+                logger.warning("Error leyendo archivo %s: %s", filename, exc)
+                continue
+            total_bytes += len(content)
+            if total_bytes > _CREATOR_MAX_TOTAL_BYTES:
+                logger.warning("Adjuntos del creador exceden 1 MB en total.")
+                break
+            raw_files.append((filename, content))
+            try:
+                result = extract_text_from_bytes(filename, content)
+                file_contents.append((filename, result.text or f"[Error al procesar {filename}]"))
+            except Exception as exc:
+                logger.warning("Error extrayendo texto de %s: %s", filename, exc)
+                file_contents.append((filename, f"[Error al procesar {filename}.]"))
+        if raw_files:
+            try:
+                turn_number = session_manager.get_last_turn_number(creator_id) + 1
+                now = datetime.now().isoformat()
+                with db_transaction() as conn:
+                    for filename, blob in raw_files:
+                        conn.execute(
+                            load_query("attachments/insert.sql"),
+                            (creator_id, turn_number, filename, len(blob), blob, now),
+                        )
+            except Exception as exc:
+                logger.warning("No se pudieron guardar adjuntos del creador %s: %s", creator_id, exc)
+    except Exception as exc:
+        logger.warning("Error procesando adjuntos del creador: %s", exc)
+    return file_contents, raw_files
+
 
 _TOOLS_DIR = get_tools_dir()
 _SKILLS_DIR = get_skills_dir()
