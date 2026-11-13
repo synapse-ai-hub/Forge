@@ -88,6 +88,7 @@ The Forge turns those definitions into autonomous systems.
 - **Multi-provider LLM** — Ollama (local), curated cloud providers (OpenAI-compatible + Google)
 - **MCP integration** — connect external tool servers via the Model Context Protocol (stdio, HTTP or SSE), with an on/off switch per server
 - **Scheduler** — workflows with a `schedule` block run on a schedule, notify via UI and Telegram
+- **Proactive triggers** — external systems can trigger workflows via webhooks, verified and idempotent, executed in the background with notifications
 
 ### You ship
 
@@ -186,6 +187,10 @@ Remote control for the agent. Send messages, switch models, create skills/tools,
 ### Scheduled tasks
 
 A scheduled task is a workflow whose YAML has a `schedule` block (time `HH:MM` + weekdays). Tasks are created with the workflow creator — from the header Agenda (name, description, schedules and the resources the workflow will use) or with `/agendar` on Telegram — and run in the workflow engine like any run (retries, judge, notifications). The Agenda panel also edits schedules, runs tasks with play, cancels them and deletes them (workflow + runs + notifications). The backend checks every 20 seconds for schedules matching the current minute; the system timezone is used, with no configuration.
+
+### Proactive triggers
+
+An external system can trigger a workflow without manual intervention. Each trigger is mapped to a workflow, secured with its own secret and verified on every delivery. Duplicate deliveries are ignored, the response is immediate and the workflow runs in the background like any other run, with retries and notifications via UI and Telegram. Triggers can be paused, rotated and audited without losing history.
 
 ### Usage and billing
 

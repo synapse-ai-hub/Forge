@@ -148,7 +148,7 @@ export function NotificationModal({ notification, onClose, onReviewed }: Notific
             <p className="text-xs text-app-text-secondary">
               {formatDate(notification.created_at)}
               {" · "}
-              {notification.kind === "schedule" ? "Tarea programada" : "Workflow"}
+              {notification.kind === "schedule" ? "Tarea programada" : notification.kind === "webhook" ? "Webhook" : "Workflow"}
               {" · "}
               {notification.status === "success" ? "Ejecutado con éxito" : "Falló"}
             </p>
