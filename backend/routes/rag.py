@@ -452,6 +452,93 @@ async def delete_source(name: str, kind: str, source: str = "") -> dict:
         return make_error_response(message="No se pudo eliminar la fuente.")
 
 
+async def _index_media_file(
+    db: VectorDB,
+    collection: str,
+    filename: str,
+    content_bytes: bytes,
+    media_kind: str,
+    resultados: list[dict[str, Any]],
+    errores: list[dict[str, Any]],
+) -> str | None:
+    """Vectorize one media file from its bytes and store the chunks.
+
+    Each chunk is embedded with the multimodal embedding model
+    (``embed_multimodal``) from its media bytes plus a descriptive
+    placeholder text. The placeholder is what Chroma stores as the
+    document; the vector comes from the media objects.
+
+    Args:
+        db: The vector database.
+        collection: Target collection name.
+        filename: Original file name.
+        content_bytes: Raw file bytes.
+        media_kind: ``"image"``, ``"audio"`` or ``"video"``.
+        resultados: Success list to append to.
+        errores: Error list to append to.
+
+    Returns:
+        Error message in Spanish, or ``None`` on success.
+    """
+    from backend.agent.utils.media_rag import MediaRagError, build_media_chunks
+
+    try:
+        chunks = build_media_chunks(filename, content_bytes, media_kind)
+    except MediaRagError as exc:
+        return str(exc)
+    except Exception as exc:
+        logger.exception("Error preparando medio %s", filename)
+        return f"No se pudo procesar {filename}: {exc}"
+
+    ids: list[str] = []
+    documents: list[str] = []
+    metadatas: list[dict[str, Any]] = []
+    vectors: list[list[float]] = []
+    try:
+        for chunk in chunks:
+            vector = await asyncio.to_thread(
+                db.embed_func.embed_multimodal,
+                chunk["chunk_text"],
+                chunk.get("media_parts"),
+            )
+            ids.append(chunk["chunk_id"])
+            documents.append(chunk["chunk_text"])
+            meta: dict[str, Any] = {
+                "source": "file",
+                "filename": filename,
+                "chunk_number": chunk["chunk_number"],
+                "byte_size": chunk["byte_size"],
+                "media_kind": chunk["media_kind"],
+            }
+            if chunk.get("segment"):
+                meta["segment_start_s"] = chunk["segment"]["start_s"]
+                meta["segment_end_s"] = chunk["segment"]["end_s"]
+            metadatas.append(meta)
+            vectors.append(vector)
+    except Exception as exc:
+        logger.exception("Error embebiendo medio %s", filename)
+        return f"No se pudieron generar los embeddings de {filename}: {exc}"
+
+    _media_t0 = time.time()
+    await asyncio.to_thread(
+        db.add_documents, collection, ids=ids, documents=documents,
+        metadatas=metadatas, embeddings=vectors,
+    )
+    _media_duration = round(time.time() - _media_t0, 2)
+    try:
+        from backend.agent.utils.spend_handler import record_external_usage
+
+        record_external_usage(
+            "embedding", "google", db.embed_func.model_name, len(documents),
+            duration=_media_duration,
+            prompt_tokens=db.embed_func.count_tokens(documents),
+        )
+    except Exception:
+        pass
+    resultados.append({"filename": filename, "chunks": len(chunks)})
+    return None
+
+
 @router.post("/collections/{name}/files")
 async def upload_files(
     name: str,
@@ -461,11 +548,19 @@ async def upload_files(
 ) -> dict:
     """Upload files to a collection: extract text, chunk and store.
 
+    Text documents are chunked by characters (``chunk_size``/``overlap``).
+    Images, audio and video are vectorized from their bytes with the
+    multimodal embedding model: images produce exactly one chunk (no
+    character chunking applies); audio and video are split into
+    overlapping time segments (time-based chunking applies).
+
     Args:
         name: Target collection name.
         files: List of files to process.
-        chunk_size: Chunk size in chars (optional, default 500).
-        overlap: Overlap in chars (optional, default 60).
+        chunk_size: Chunk size in chars (optional, default 500; ignored
+            for media files).
+        overlap: Overlap in chars (optional, default 60; ignored for
+            media files).
 
     Returns:
         Contract with the processing details per file.
@@ -518,10 +613,24 @@ async def upload_files(
                 continue
 
             result: ExtractionResult = extract_text_from_bytes(filename, content_bytes)
+            media_kind: str | None = None
             if not result.success:
-                errores.append(
-                    {"filename": filename, "error": result.error_detail or "No se pudo procesar."}
+                # Media files are not text-extractable: vectorize them
+                # from their bytes instead of rejecting them.
+                from backend.agent.utils.media_rag import detect_media_kind
+
+                media_kind = detect_media_kind(filename)
+                if media_kind is None:
+                    errores.append(
+                        {"filename": filename, "error": result.error_detail or "No se pudo procesar."}
+                    )
+                    continue
+            if media_kind is not None:
+                media_error = await _index_media_file(
+                    db, name, filename, content_bytes, media_kind, resultados, errores
                 )
+                if media_error:
+                    errores.append({"filename": filename, "error": media_error})
                 continue
 
             text = (result.text or "").strip()

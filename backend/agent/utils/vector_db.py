@@ -59,7 +59,9 @@ class GeminiEmbeddingFunction(EmbeddingFunction[Documents]):
         from google import genai
         self.api_key = api_key
         self.model_name = model_name
-        self.client = genai.Client(api_key=api_key)
+        self.client = genai.Client(
+            api_key=api_key, http_options={"api_version": "v1beta"}
+        )
 
     def __call__(self, input: Documents) -> Embeddings:
         """Embed a batch of documents.
@@ -100,6 +102,52 @@ class GeminiEmbeddingFunction(EmbeddingFunction[Documents]):
             logger.error("Error llamando a Gemini embeddings: %s", e)
             raise RuntimeError(f"No se pudieron generar los embeddings: {e}") from e
         return vectors
+
+    def embed_multimodal(
+        self,
+        text: str,
+        media: list[tuple[bytes, str]] | None = None,
+    ) -> list[float]:
+        """Embed one input combining text with media objects.
+
+        Unlike :meth:`__call__` (text-only, used by Chroma), this sends a
+        single ``Content`` with the text part plus one inline-data part per
+        media object (image/audio bytes). Used to index media turns
+        (TTS/image one-shots) by their objects, not by base64 text.
+
+        Args:
+            text: Text part (user message + assistant placeholder text).
+            media: Optional list of ``(raw_bytes, mime_type)`` tuples.
+
+        Returns:
+            A single embedding vector.
+
+        Raises:
+            RuntimeError: If the Gemini API call fails.
+        """
+        from google.genai import types
+
+        try:
+            parts: list[Any] = [types.Part.from_text(text=(text or "").strip() or " ")]
+            for raw, mime in media or []:
+                if raw:
+                    parts.append(
+                        types.Part.from_bytes(
+                            data=bytes(raw),
+                            mime_type=mime or "application/octet-stream",
+                        )
+                    )
+            resp = self.client.models.embed_content(
+                model=self.model_name,
+                contents=[types.Content(parts=parts)],
+            )
+            embeddings = resp.embeddings or []
+            if not embeddings or not embeddings[0].values:
+                raise RuntimeError("Gemini devolvió un embedding vacío.")
+            return list(embeddings[0].values)
+        except Exception as e:
+            logger.error("Error llamando a Gemini embeddings multimodales: %s", e)
+            raise RuntimeError(f"No se pudieron generar los embeddings: {e}") from e
 
     def count_tokens(self, input: Documents) -> int:
         """Count tokens with the server-side tokenizer.

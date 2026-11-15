@@ -15,6 +15,8 @@ from typing import Optional, Tuple
 
 from backend.agent.utils.error_logger import log_error
 
+from backend.agent.utils.media_rag import SUPPORTED_MEDIA_EXTENSIONS
+
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -94,6 +96,15 @@ SUPPORTED_TEXT_EXTENSIONS = {
 }
 
 ALLOWED_EXTENSIONS = SUPPORTED_TEXT_EXTENSIONS.union({".pdf", ".docx", ".doc", ".xlsx", ".xls"})
+
+# Media extensions accepted by the RAG uploader (vectorized from their
+# bytes with the multimodal embedding model, not from extracted text).
+# They are listed here so ``is_extension_allowed`` passes them; the
+# actual handling branches to ``media_rag`` in the upload route.
+# Single source of truth: ``backend.agent.utils.media_rag``.
+ALLOWED_MEDIA_EXTENSIONS = frozenset(SUPPORTED_MEDIA_EXTENSIONS)
+
+ALLOWED_EXTENSIONS = ALLOWED_EXTENSIONS.union(ALLOWED_MEDIA_EXTENSIONS)
 
 # Default limits - can be overridden via env vars if necessary.
 MAX_UPLOAD_SIZE_MB = float(os.getenv("FILE_UPLOAD_MAX_MB", "50"))
