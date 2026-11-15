@@ -11,7 +11,7 @@ anyio>=4.13.0
 
 # --- LLM ---
 ollama>=0.1.0
-google-genai>=1.0.0
+google-genai>=2.25.0
 openai>=1.0.0
 typesafe-sdk>=0.7.0
 
