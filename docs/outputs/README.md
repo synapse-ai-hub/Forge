@@ -30,6 +30,7 @@
 | `04-sdk-gemini.md` | SDK `google-genai` 2.24.0: `response_modalities`, `image_config`, `speech_config`, TTS, imagen y Live API |
 | `05-sdk-ollama.md` | SDK `ollama` 0.6.2: `generate`/`chat` con `width`/`height`/`steps`, `capabilities`, límites (sin TTS nativo) |
 | `06-propuesta-diseno.md` | Propuesta de diseño: desplegable de salida, mapeo modelo→salidas, endpoints, render y plan por fases |
+| `07-fallo-tts-modalidades.md` | Fallo real `gemini-2.5-flash-preview-tts` (400 TEXT no soportado): causa raíz, evidencia SDK y tabla de combinaciones válidas |
 
 ## Cómo leer
 
