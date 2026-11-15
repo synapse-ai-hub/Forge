@@ -148,7 +148,7 @@ class StreamingMixin:
                 oa_kwargs.update(
                     _oa_audio_kwargs_s(effective_provider, model)
                 )
-            except Exception:
+            except (ImportError, AttributeError):
                 pass
 
             stream_cfg = get_reasoning_streaming_config(effective_provider)
@@ -225,7 +225,7 @@ class StreamingMixin:
                     # buffer data, emit once at stream end (batch).
                     try:
                         _delta_audio = getattr(delta, "audio", None)
-                    except Exception:
+                    except AttributeError:
                         _delta_audio = None
                     if _delta_audio is not None:
                         try:
@@ -235,7 +235,7 @@ class StreamingMixin:
                             _atr = getattr(_delta_audio, "transcript", None)
                             if isinstance(_atr, str) and _atr:
                                 _oa_audio_transcript += _atr
-                        except Exception:
+                        except (AttributeError, TypeError):
                             pass
 
                     # Stream text content
@@ -279,7 +279,7 @@ class StreamingMixin:
                             'model': model,
                         },
                     }
-                except Exception:
+                except (TypeError, ValueError):
                     pass
                 _oa_audio_parts = []
                 _oa_audio_transcript = ""
@@ -536,9 +536,9 @@ class StreamingMixin:
                         if _raw_mods and all(_m == "audio" for _m in _raw_mods):
                             _resolved_mods = ["AUDIO"]
                             _is_tts_only = True
-                    except Exception:
+                    except (ImportError, AttributeError):
                         pass
-            except Exception:
+            except (ImportError, AttributeError, KeyError):
                 pass
             contents, system_instruction = self._to_gemini_contents(msgs)
             if _is_tts_only:
@@ -556,7 +556,7 @@ class StreamingMixin:
                         role="user",
                         parts=[_stypes.Part.from_text(text=_last_text or "Hola")],
                     )]
-                except Exception:
+                except (ImportError, AttributeError):
                     pass
                 system_instruction = None
             config_kwargs: dict[str, Any] = {}
@@ -580,7 +580,7 @@ class StreamingMixin:
                     from backend.agent.llm.outputs import build_gemini_speech_config as _build_speech
 
                     config_kwargs["speech_config"] = _build_speech()
-                except Exception:
+                except (ImportError, AttributeError):
                     pass
 
             # Use translator for reasoning (Google). TTS-only models do
@@ -669,7 +669,7 @@ class StreamingMixin:
                             else:
                                 yield {'type': 'image', 'content': {'b64': b64, 'mime': mime, 'model': model}}
                             await asyncio.sleep(0.01)
-                        except Exception:
+                        except (ValueError, TypeError, AttributeError):
                             pass
 
             # After stream finishes, record spend (every call counts, even
@@ -695,10 +695,10 @@ class StreamingMixin:
                                 _wav_tag = _wav_url_live(bytes(_wav_bytes))
                                 _merged_b64 = _wav_tag.split("data:audio/wav;base64,", 1)[1].split('"', 1)[0]
                                 _merged_mime = "audio/wav"
-                            except Exception:
+                            except (ValueError, TypeError):
                                 pass
                         yield {'type': 'audio', 'content': {'b64': _merged_b64, 'mime': _merged_mime, 'model': model}}
-                except Exception:
+                except (ValueError, TypeError):
                     pass
                 pending_audio_parts = []
             if usage_data is not None:

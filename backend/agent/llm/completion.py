@@ -154,7 +154,7 @@ class CompletionMixin:
                     oa_kwargs.update(
                         _oa_audio_kwargs(effective_provider, model)
                     )
-                except Exception:
+                except (ImportError, AttributeError):
                     pass
 
                 try:
@@ -198,7 +198,7 @@ class CompletionMixin:
                                 f'<audio controls src="data:audio/wav;base64,'
                                 f'{_adata.strip()}" style="width:100%;"></audio>'
                             ).strip()
-                except Exception:
+                except (AttributeError, TypeError):
                     pass
                 if cleaned_output and output:
                     output = self.clean(output)
@@ -295,9 +295,9 @@ class CompletionMixin:
                             if _raw_c and all(_m == "audio" for _m in _raw_c):
                                 _resolved_mods_c = ["AUDIO"]
                                 _is_tts_only_c = True
-                        except Exception:
+                        except (ImportError, AttributeError):
                             pass
-                except Exception:
+                except (ImportError, AttributeError, KeyError):
                     pass
                 contents, system_instruction = self._to_gemini_contents(msgs)
                 if _is_tts_only_c:
@@ -314,7 +314,7 @@ class CompletionMixin:
                             role="user",
                             parts=[_stypes_c.Part.from_text(text=_last_text_c or "Hola")],
                         )]
-                    except Exception:
+                    except (ImportError, AttributeError):
                         pass
                     system_instruction = None
                 config_kwargs: dict[str, Any] = {}
@@ -338,7 +338,7 @@ class CompletionMixin:
                         from backend.agent.llm.outputs import build_gemini_speech_config as _build_speech_c
 
                         config_kwargs["speech_config"] = _build_speech_c()
-                    except Exception:
+                    except (ImportError, AttributeError):
                         pass
 
                 # Use translator for reasoning (Google). TTS-only models do
@@ -403,7 +403,7 @@ class CompletionMixin:
                                     output += f'\n<audio controls src="data:{mime};base64,{b64}" style="width:100%;"></audio>\n'
                             else:
                                 output += f'\n<img src="data:{mime};base64,{b64}" alt="Generated image" style="max-width:100%;border-radius:8px;" />\n'
-                        except Exception:
+                        except (ValueError, TypeError, AttributeError):
                             pass
                 completion_tokens = 0
                 prompt_tokens = 0

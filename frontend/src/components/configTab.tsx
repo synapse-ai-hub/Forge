@@ -367,23 +367,23 @@ export function ConfigTab({ verboseMode, onVerboseModeChange }: ConfigTabProps) 
           reasoning: prm.reasoning,
           budget_tokens: prm.budget_tokens,
           response_format: prm.response_format,
-          output: (prm as unknown as { output?: string | null }).output ?? null,
-          voice: (prm as unknown as { voice?: string | null }).voice ?? null,
-          voice_speed: (prm as unknown as { voice_speed?: number | null }).voice_speed ?? null,
-          voice_instructions: (prm as unknown as { voice_instructions?: string | null }).voice_instructions ?? null,
-          voice_format: (prm as unknown as { voice_format?: string | null }).voice_format ?? null,
+          output: prm.output ?? null,
+          voice: prm.voice ?? null,
+          voice_speed: prm.voice_speed ?? null,
+          voice_instructions: prm.voice_instructions ?? null,
+          voice_format: prm.voice_format ?? null,
         };
         setPendingParams(p);
         setSavedParams(p);
         setReasoningSupported(prm.reasoning_supported);
         setResponseFormatSupported(prm.response_format_supported);
-        setOutputModalities((prm as unknown as { output_modalities?: string[] | null }).output_modalities ?? null);
-        setModelType((prm as unknown as { model_type?: string | null }).model_type ?? null);
+        setOutputModalities(prm.output_modalities ?? null);
+        setModelType(prm.model_type ?? null);
         setOutputOptions(
           buildOutputOptions(
-            (prm as unknown as { output_modalities?: string[] | null }).output_modalities ?? null,
+            prm.output_modalities ?? null,
             prm.response_format_supported,
-            (prm as unknown as { model_type?: string | null }).model_type ?? null
+            prm.model_type ?? null
           )
         );
         // Voice panel: options for the current model (hidden when N/A).
@@ -487,17 +487,23 @@ export function ConfigTab({ verboseMode, onVerboseModeChange }: ConfigTabProps) 
       return;
     }
     setSearching(true);
+    const controller = new AbortController();
     const timer = setTimeout(async () => {
       try {
-        const resp = await configService.searchModels("", modelFilterType);
+        const resp = await configService.searchModels("", modelFilterType, controller.signal);
         setSearchResults(resp && resp.status === "success" ? resp.results || [] : []);
-      } catch {
-        setSearchResults([]);
+      } catch (err: unknown) {
+        if (!(err instanceof DOMException && err.name === "AbortError")) {
+          setSearchResults([]);
+        }
       } finally {
         setSearching(false);
       }
     }, 300);
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
   }, [modelFilterType]);
 
   const handleSearchSelect = async (provider: string, modelId: string) => {

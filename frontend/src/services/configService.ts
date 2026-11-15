@@ -225,10 +225,10 @@ export const configService = {
   },
 
   /** Search models by text and type across providers with a stored key. */
-  async searchModels(q: string, type: string): Promise<ModelSearchResponse> {
+  async searchModels(q: string, type: string, signal?: AbortSignal): Promise<ModelSearchResponse> {
     const response = await fetch(
       `${API_BASE_URL}/api/config/models/search?q=${encodeURIComponent(q)}&type=${encodeURIComponent(type)}`,
-      { method: "GET" }
+      { method: "GET", signal }
     );
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -237,7 +237,8 @@ export const configService = {
   },
 
   /** Get model capabilities (reasoning options, etc.) for a specific model/provider. */
-  async getModelCapabilities(model: string, provider: string): Promise<ModelCapabilitiesResponse> {    const response = await fetch(
+  async getModelCapabilities(model: string, provider: string): Promise<ModelCapabilitiesResponse> {
+    const response = await fetch(
       `${API_BASE_URL}/api/config/models/capabilities?model=${encodeURIComponent(model)}&provider=${encodeURIComponent(provider)}`,
       { method: "GET" }
     );

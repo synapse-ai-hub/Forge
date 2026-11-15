@@ -51,15 +51,17 @@ class TransportMixin:
     async def _send_document(self, chat_id: int, path: str) -> None:
         """Send a file to a chat as a Telegram document (legacy path wrapper).
 
-        Paths are resolved against DB attachments only; arbitrary
-        filesystem reads are rejected.
+        .. deprecated::
+            Use ``send_photo_bytes``, ``send_audio_bytes`` or
+            ``send_video_bytes`` with DB attachment content instead.
+            This wrapper only rejects server filesystem paths.
 
         Args:
             chat_id: The Telegram chat id.
             path: Attachment file name (DB ``attachments.file_name``).
 
         Raises:
-            RuntimeError: If the attachment is not found.
+            RuntimeError: Always; filesystem paths are never sent.
         """
         try:
             from backend.agent.llm.outputs import load_output_bytes as _load

@@ -936,7 +936,7 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
                 : event.type === "audio"
                   ? { type: "audio" as const, b64: payload.b64 ?? null, url: payload.url ?? null, file_name: payload.file_name ?? null, mime: payload.mime ?? null }
                   : { type: "video" as const, url: payload.url ?? null, file_name: payload.file_name ?? null, mime: payload.mime ?? null };
-            accumulatedBlocks.push(mediaBlock as unknown as (typeof accumulatedBlocks)[number]);
+            accumulatedBlocks.push(mediaBlock);
             setMessages((prev) =>
               prev.map((m) =>
                 m.id === assistantId
