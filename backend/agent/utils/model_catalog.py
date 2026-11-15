@@ -91,13 +91,21 @@ def should_sync(provider: str) -> bool:
         provider: Provider name (e.g. ``"openrouter"``).
 
     Returns:
-        ``True`` if the catalog is stale, missing, or synced with older
-        sync logic.
+        ``True`` if the catalog is stale, missing, empty for the
+        provider, or synced with older sync logic.
     """
     conn = _connect()
     if conn is None:
         return True
     try:
+        # Empty catalog (e.g. rows wiped by key deletion) must re-sync
+        # even when the timestamp looks fresh.
+        count_row = conn.execute(
+            load_query("model_catalog/count_by_provider.sql"),
+            (provider,),
+        ).fetchone()
+        if count_row is None or int(count_row["n"]) == 0:
+            return True
         row = conn.execute(
             load_query("config/get_value.sql"),
             (f"catalog_sync_{provider}",),
@@ -530,7 +538,7 @@ def matches_model_type(
 
 
 def search_models(query: str) -> list[dict[str, Any]]:
-    """Search catalog models by id, name or description (case-insensitive).
+    """Search catalog models by provider, id, name or description (case-insensitive).
 
     Args:
         query: Substring to match. Empty matches all.
@@ -552,7 +560,7 @@ def search_models(query: str) -> list[dict[str, Any]]:
     try:
         rows = conn.execute(
             load_query("model_catalog/search_models.sql"),
-            (pattern, pattern, pattern),
+            (pattern, pattern, pattern, pattern),
         ).fetchall()
         return [
             {

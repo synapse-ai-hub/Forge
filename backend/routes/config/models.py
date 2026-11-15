@@ -465,13 +465,13 @@ async def search_models(
     """Search models by text and type across providers with a stored key.
 
     Only providers with a configured API key are searched ("the ones I have").
-    ``q`` matches case-insensitively against the model id, name and
+    ``q`` matches case-insensitively against the provider, model id, name and
     description (e.g. ``free``, ``tts``, ``audio``). ``type`` is one of
     ``todos``, ``texto``, ``imagen``, ``audio``, ``video``,
     ``transcripcion``, ``embeddings``, ``decision`` or ``rerank``.
 
     Args:
-        q: Substring filter over model id, name and description.
+        q: Substring filter over provider, model id, name and description.
             Empty matches all.
         type_filter: Model-type filter (``type`` query param).
 

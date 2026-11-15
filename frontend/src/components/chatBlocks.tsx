@@ -630,6 +630,13 @@ function mediaKey(block: { b64?: string | null; url?: string | null }, type: str
   return `${type}-${src.length}-${src.slice(0, 32)}-${index}`;
 }
 
+/** Pause every other media element on the page so audios/videos never overlap. */
+function pauseOtherMedia(current: HTMLMediaElement): void {
+  document.querySelectorAll("audio, video").forEach((el) => {
+    if (el !== current) (el as HTMLMediaElement).pause();
+  });
+}
+
 function MessageRow({
   message,
   verboseMode,
@@ -748,7 +755,7 @@ function MessageRow({
                   if (!src) return null;
                   return (
                     <div key={mediaKey(block, "audio", i)} style={{ width: "100%", minHeight: "54px" }}>
-                      <audio controls src={src} style={{ width: "100%" }} />
+                      <audio controls src={src} style={{ width: "100%" }} onPlay={(e) => pauseOtherMedia(e.currentTarget)} />
                     </div>
                   );
                 }
@@ -757,7 +764,7 @@ function MessageRow({
                   if (!src) return null;
                   return (
                     <div key={mediaKey(block, "video", i)}>
-                      <video controls src={src} style={{ maxWidth: "100%", borderRadius: "8px" }} />
+                      <video controls src={src} style={{ maxWidth: "100%", borderRadius: "8px" }} onPlay={(e) => pauseOtherMedia(e.currentTarget)} />
                     </div>
                   );
                 }

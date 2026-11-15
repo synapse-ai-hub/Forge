@@ -105,6 +105,7 @@ export function ConfigTab({ verboseMode, onVerboseModeChange }: ConfigTabProps) 
   const [showVoiceInfo, setShowVoiceInfo] = useState(false);
   /* ---- model search filter (text + type, across providers with key) ---- */
   const [modelFilterType, setModelFilterType] = useState("todos");
+  const [modelFilterText, setModelFilterText] = useState("");
   const [searchResults, setSearchResults] = useState<ModelSearchResult[] | null>(null);
   const [searching, setSearching] = useState(false);
   const [applyMessage, setApplyMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
@@ -479,9 +480,9 @@ export function ConfigTab({ verboseMode, onVerboseModeChange }: ConfigTabProps) 
     }
   };
 
-  /* Cross-provider model search: runs when a type filter is selected. */
+  /* Cross-provider model search: runs when text or type filter changes. */
   useEffect(() => {
-    if (modelFilterType === "todos") {
+    if (modelFilterType === "todos" && modelFilterText.trim() === "") {
       setSearchResults(null);
       setSearching(false);
       return;
@@ -490,7 +491,7 @@ export function ConfigTab({ verboseMode, onVerboseModeChange }: ConfigTabProps) 
     const controller = new AbortController();
     const timer = setTimeout(async () => {
       try {
-        const resp = await configService.searchModels("", modelFilterType, controller.signal);
+        const resp = await configService.searchModels(modelFilterText.trim(), modelFilterType, controller.signal);
         setSearchResults(resp && resp.status === "success" ? resp.results || [] : []);
       } catch (err: unknown) {
         if (!(err instanceof DOMException && err.name === "AbortError")) {
@@ -504,7 +505,7 @@ export function ConfigTab({ verboseMode, onVerboseModeChange }: ConfigTabProps) 
       clearTimeout(timer);
       controller.abort();
     };
-  }, [modelFilterType]);
+  }, [modelFilterType, modelFilterText]);
 
   const handleSearchSelect = async (provider: string, modelId: string) => {
     setSelectedProvider(provider);
@@ -915,7 +916,13 @@ export function ConfigTab({ verboseMode, onVerboseModeChange }: ConfigTabProps) 
       </div>
 
       <Collapsible title="Filtrar modelos (todos los proveedores)">
-        <div className="mt-1">
+        <div className="mt-1 space-y-2">
+          <Input
+            value={modelFilterText}
+            onChange={(e) => setModelFilterText(e.target.value)}
+            aria-label="Filtrar modelos por texto"
+            className="w-full"
+          />
           <select
             value={modelFilterType}
             onChange={(e) => setModelFilterType(e.target.value)}
