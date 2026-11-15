@@ -318,7 +318,7 @@ def get_model_reasoning_options(provider: str, model: str) -> dict:
     Returns:
         Dict with ``reasoning_supported``, ``reasoning_options``,
         ``reasoning_param``, ``reasoning_type``,
-        ``response_format_supported``, plus model info.
+        ``response_format_supported``, ``model_type``, plus model info.
     """
     result = {
         "reasoning_supported": None,
@@ -326,6 +326,7 @@ def get_model_reasoning_options(provider: str, model: str) -> dict:
         "reasoning_param": None,
         "reasoning_type": "boolean",
         "response_format_supported": None,
+        "model_type": "chat",
     }
 
     if not provider or not model:
