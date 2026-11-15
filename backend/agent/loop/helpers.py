@@ -240,7 +240,7 @@ def _read_param_override(key: str) -> Any:
 
     Reads the value persisted by ``POST /api/config/models/select``
     (keys ``param_temperature``, ``param_top_p``, ``param_reasoning``,
-    ``param_budget_tokens``, ``param_response_format``).
+    ``param_budget_tokens``, ``param_response_format``, ``param_output``).
     The literal string ``"null"`` (or a missing/unparseable key) means
     "default" → returns ``None`` so the caller falls back to the next
     level of the precedence chain.
@@ -250,7 +250,7 @@ def _read_param_override(key: str) -> Any:
 
     Returns:
         The parsed override value (``float`` for temperature/top_p,
-        ``bool`` for reasoning, ``str`` for response_format) or ``None``
+        ``bool`` for reasoning, ``str`` for response_format/output) or ``None``
         when there is no explicit override.
     """
     try:
@@ -271,6 +271,8 @@ def _read_param_override(key: str) -> Any:
             else:
                 return raw.strip()
         if key == "param_response_format":
+            return raw.strip().lower()
+        if key == "param_output":
             return raw.strip().lower()
         return float(raw)
     except (TypeError, ValueError):

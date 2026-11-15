@@ -186,7 +186,10 @@ class Agent(
             # dispara "Task exception was never retrieved" en aclose()
             # cuando el GC lo reclama (BaseApiClient.__del__).
             self.google_client = (
-                genai.Client(api_key=self.__google_api_key)
+                genai.Client(
+                    api_key=self.__google_api_key,
+                    http_options={"api_version": "v1beta"},
+                )
                 if self.__google_api_key
                 else None
             )
@@ -228,7 +231,9 @@ class Agent(
             if provider_u == 'google':
                 key = provider_keys.resolve_api_key('google')
                 self.__google_api_key = key
-                self.google_client = genai.Client(api_key=key) if key else None
+                self.google_client = genai.Client(
+                    api_key=key, http_options={"api_version": "v1beta"}
+                ) if key else None
             elif provider_u in provider_keys.PROVIDER_REGISTRY:
                 info = provider_keys.PROVIDER_REGISTRY[provider_u]
                 if str(info.get("api_type") or "") != "openai-compatible":

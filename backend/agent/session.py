@@ -492,6 +492,39 @@ class SessionManager:
         finally:
             conn.close()
 
+    def user_turn_exists(self, session_id: str, turn_number: int) -> bool:
+        """Check whether a user message is already stored for a turn.
+
+        Retried requests must not duplicate the user row: exactly one
+        user message is stored per turn.
+
+        Args:
+            session_id: The session identifier.
+            turn_number: The turn number to check.
+
+        Returns:
+            ``True`` when a ``"user"`` row already exists for the turn.
+        """
+        conn = None
+        try:
+            conn = self._get_connection()
+            with self._lock:
+                row = conn.execute(
+                    load_query("messages/user_turn_exists.sql"),
+                    (session_id, turn_number),
+                ).fetchone()
+                return row is not None
+        except Exception as e:
+            log_error(str(e), source="backend/agent/session.py:user_turn_exists")
+            logger.warning(
+                "Could not check user row for session '%s' turn %s: %s",
+                session_id, turn_number, e,
+            )
+            return False
+        finally:
+            if conn is not None:
+                conn.close()
+
     def save_turn_latency(self, session_id: str, turn_number: int) -> dict:
         """Compute and store the latency of a single turn.
 

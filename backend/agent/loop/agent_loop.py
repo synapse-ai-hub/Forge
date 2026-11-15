@@ -41,6 +41,7 @@ SSE events (collapsible) around the delegation.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import os
@@ -311,6 +312,14 @@ class AgentLoop:
             override_response_format = _read_param_override("param_response_format")
             if override_response_format is not None:
                 response_format = override_response_format
+            override_output = _read_param_override("param_output")
+            frontmatter_output = parameters.get("output") if parameters else None
+            try:
+                from backend.agent.llm.outputs import resolve_output
+
+                effective_output = resolve_output(frontmatter_output, override_output, response_format)
+            except Exception:
+                effective_output = "text"
 
             # Resolve this loop's effective provider. If the agent's frontmatter
             # sets `parameters.provider`, use it for this loop only (passed
@@ -594,16 +603,22 @@ class AgentLoop:
             )
 
             # --- 5-c. Save user message to DB (after building messages so history is clean) ---
+            # Idempotent: retried requests must not duplicate the user row.
             user_row_kwargs: dict[str, Any] = {}
             if user_setup is not None:
                 # Only creator session managers accept it; the chat never sends it.
                 user_row_kwargs["setup"] = user_setup
-            session_manager.save_message(
-                session_id, "user",
-                content=BLOCKED_USER_TEXT if blocked else user_message,
-                turn_number=turn_number,
-                **user_row_kwargs,
-            )
+            try:
+                _user_exists = session_manager.user_turn_exists(session_id, turn_number)
+            except Exception:
+                _user_exists = False
+            if not _user_exists:
+                session_manager.save_message(
+                    session_id, "user",
+                    content=BLOCKED_USER_TEXT if blocked else user_message,
+                    turn_number=turn_number,
+                    **user_row_kwargs,
+                )
             if blocked:
                 session_manager.save_message(
                     session_id, "assistant", content=_BLOCKED_REPLY,
@@ -642,6 +657,43 @@ class AgentLoop:
                     async def _generate_title() -> None:
                         """Generate the title of the session from the first message and store it."""
                         try:
+                            # Audio-only models cannot produce a text title:
+                            # skip the LLM call and use the fallback directly
+                            # (saves quota and never fails).
+                            try:
+                                from backend.agent.utils.model_catalog import (
+                                    get_reasoning_options as _title_caps,
+                                )
+
+                                _t_raw = (_title_caps(
+                                    (effective_provider or "").strip(), model
+                                ).get("output_modalities") or [])
+                                _t_norm = [str(_m or "").strip().lower() for _m in _t_raw]
+                                _is_audio_only = bool(_t_norm) and all(_m == "audio" for _m in _t_norm)
+                            except Exception:
+                                _is_audio_only = False
+                            if _is_audio_only:
+                                title = user_message[:80].strip()
+                                if title:
+                                    try:
+                                        session_manager.update_session_title(session_id, title)
+                                    except Exception as exc:
+                                        logger.warning("No se pudo guardar el título: %s", exc)
+                                    try:
+                                        session_manager.save_message(
+                                            session_id, "title",
+                                            content=f"Título generado: {title}",
+                                            model=model,
+                                            provider=effective_provider,
+                                            turn_number=turn_number,
+                                            step=0,
+                                            status="success", message="title",
+                                            usage=zero_usage(),
+                                        )
+                                    except Exception:
+                                        pass
+                                    await title_queue.put(title)
+                                return
                             title_result = await agent.llm_process(
                                 model=model,
                                 prompt=title_prompt,
@@ -653,8 +705,9 @@ class AgentLoop:
                             )
                             raw_title = title_result.get("data", "") if isinstance(title_result, dict) else ""
                             title = (raw_title or "").strip().replace('"', "").replace("'", "")
-                            if not title:
+                            if not title or "<audio" in title or "<img" in title or "<video" in title:
                                 # Fallback: usar el primer mensaje del usuario truncado
+                                # (los modelos de solo-audio/imagen no devuelven texto titulable)
                                 title = user_message[:80].strip()
                             if title:
                                 try:
@@ -746,6 +799,10 @@ class AgentLoop:
                 collected_reasoning = ""
                 tool_calls = None
                 usage_data: dict[str, Any] | None = None
+                # Free mode: raw PCM chunks from streaming TTS are buffered
+                # here and wrapped into a single playable WAV tag at persist
+                # time (messages.content, turn/step). No attachments.
+                audio_pcm_parts: list[bytes] = []
 
                 llm_attempt = 0
                 while True:
@@ -755,6 +812,7 @@ class AgentLoop:
                     collected_reasoning = ""
                     tool_calls = None
                     usage_data = None
+                    audio_pcm_parts = []
 
                     # Preventively block the request if the configured budget
                     # limit is exceeded (cloud providers only; LOCAL/Ollama has
@@ -786,6 +844,221 @@ class AgentLoop:
                             yield "data: [DONE]\n\n"
                             return
 
+                    # ---- 6a-bis. Non-chat output: image via dedicated SDK ----
+                    # Persisted in messages.content (turn/step) as data-URL
+                    # HTML. No attachments, no filesystem.
+                    if effective_output == "image" and llm_attempt == 0 and iteration == 1:
+                        try:
+                            from backend.agent.llm.outputs import generate_image
+                            from backend.agent.utils.contract import zero_usage
+                            import html as _html_md
+
+                            image_prompt = user_message if isinstance(user_message, str) else ""
+                            result = await generate_image(agent, effective_provider, model, image_prompt)
+                            if result.get("status") == "success":
+                                content_md = ""
+                                if result.get("b64"):
+                                    mime = _html_md.escape(str(result.get("mime", "image/png")), quote=True)
+                                    content_md = f'<img src="data:{mime};base64,{result["b64"]}" alt="Generated image" style="max-width:100%;border-radius:8px;" />'
+                                if not content_md and result.get("url"):
+                                    raw_url = str(result["url"])
+                                    lowered = raw_url.lower().strip()
+                                    if lowered.startswith("https://") or lowered.startswith("http://"):
+                                        safe_url = _html_md.escape(raw_url, quote=True)
+                                        content_md = f'<img src="{safe_url}" alt="Generated image" style="max-width:100%;border-radius:8px;" />'
+                                    else:
+                                        content_md = "[image]"
+                                payload = {
+                                    "b64": result.get("b64"),
+                                    "url": result.get("url"),
+                                    "mime": result.get("mime", "image/png"),
+                                    "model": model,
+                                }
+                                session_manager.save_message(
+                                    session_id, "assistant", content=content_md or "[image]",
+                                    model=model, provider=effective_provider,
+                                    turn_number=turn_number, step=step,
+                                    status="success", message="image",
+                                    usage=zero_usage(),
+                                )
+                                try:
+                                    from backend.agent.utils.spend_handler import record_multimodal_spend
+
+                                    record_multimodal_spend(
+                                        (effective_provider or "").strip(), model, "image", 1.0
+                                    )
+                                except Exception:
+                                    pass
+                                yield f"data: {json.dumps({'type': 'image', 'content': payload}, ensure_ascii=False)}\n\n"
+                                yield "data: [DONE]\n\n"
+                                return
+                            err_msg = str(result.get("message") or "Image generation failed.")
+                            session_manager.save_message(
+                                session_id, "assistant", content=f"*Error generando imagen: {err_msg}*",
+                                model=model, provider=effective_provider,
+                                turn_number=turn_number, step=step,
+                                status="error", message="image_error",
+                            )
+                            yield f"data: {json.dumps({'type': 'error', 'content': err_msg}, ensure_ascii=False)}\n\n"
+                            yield "data: [DONE]\n\n"
+                            return
+                        except Exception as exc:
+                            log_error(str(exc), source="loop.py:run(image)")
+                            yield f"data: {json.dumps({'type': 'error', 'content': str(exc)}, ensure_ascii=False)}\n\n"
+                            yield "data: [DONE]\n\n"
+                            return
+
+                    # ---- 6a-ter. Non-chat output: audio/TTS via dedicated SDK ----
+                    # Persisted in messages.content (turn/step) as data-URL HTML.
+                    if effective_output == "audio" and llm_attempt == 0 and iteration == 1:
+                        try:
+                            from backend.agent.llm.outputs import generate_speech
+                            from backend.agent.llm.voices import (
+                                read_stored_voice_settings as _read_voice,
+                                translate_voice as _translate_voice,
+                            )
+                            from backend.agent.utils.contract import zero_usage as zero_usage_audio
+                            import html as _html_a
+
+                            speech_text = user_message if isinstance(user_message, str) else ""
+                            # Voice panel settings travel to the SDK: stored
+                            # voice/format are validated first so a stale
+                            # value fails with a friendly message, not a 400.
+                            # Untouched (Default) keeps each provider's own
+                            # default: None voice = model default on Gemini,
+                            # alloy/mp3 on OpenAI-compatible providers.
+                            _stored_voice = _read_voice()
+                            _voice_arg: str | None = None
+                            _format_arg = "mp3"
+                            _has_voice_setting = any(
+                                _stored_voice.get(k) is not None
+                                for k in ("voice", "speed", "instructions", "audio_format")
+                            )
+                            if _has_voice_setting:
+                                try:
+                                    _checked = _translate_voice(
+                                        effective_provider,
+                                        model,
+                                        voice=_stored_voice.get("voice"),
+                                        speed=_stored_voice.get("speed"),
+                                        instructions=_stored_voice.get("instructions"),
+                                        audio_format=_stored_voice.get("audio_format"),
+                                    )
+                                    if isinstance(_checked, dict) and _checked.get("status") == "success":
+                                        _vdata = _checked.get("data") or {}
+                                        if isinstance(_vdata.get("voice"), str) and _vdata["voice"]:
+                                            _voice_arg = _vdata["voice"]
+                                        if isinstance(_vdata.get("response_format"), str) and _vdata["response_format"]:
+                                            _format_arg = _vdata["response_format"]
+                                except Exception:
+                                    pass
+                            if _voice_arg is None and (effective_provider or "").strip().lower() != "google":
+                                _voice_arg = "alloy"
+                            speech_result = await generate_speech(
+                                agent, effective_provider, model, speech_text,
+                                voice=_voice_arg, response_format=_format_arg,
+                            )
+                            if speech_result.get("status") == "success":
+                                audio_b64 = speech_result.get("b64")
+                                if speech_result.get("audio") and not audio_b64:
+                                    import base64 as _b64e
+
+                                    audio_b64 = _b64e.b64encode(bytes(speech_result["audio"])).decode("ascii")
+                                if audio_b64:
+                                    mime_a = _html_a.escape(str(speech_result.get("mime", "audio/mpeg")), quote=True)
+                                    audio_md = f'<audio controls src="data:{mime_a};base64,{audio_b64}" style="width:100%;"></audio>'
+                                else:
+                                    audio_md = "[audio]"
+                                audio_payload = {
+                                    "b64": audio_b64,
+                                    "mime": speech_result.get("mime", "audio/mpeg"),
+                                    "model": model,
+                                }
+                                session_manager.save_message(
+                                    session_id, "assistant", content=audio_md,
+                                    model=model, provider=effective_provider,
+                                    turn_number=turn_number, step=step,
+                                    status="success", message="audio",
+                                    usage=zero_usage_audio(),
+                                )
+                                try:
+                                    from backend.agent.utils.spend_handler import record_multimodal_spend as record_audio_spend
+
+                                    record_audio_spend(
+                                        (effective_provider or "").strip(), model, "audio", 1.0
+                                    )
+                                except Exception:
+                                    pass
+                                yield f"data: {json.dumps({'type': 'audio', 'content': audio_payload}, ensure_ascii=False)}\n\n"
+                                yield "data: [DONE]\n\n"
+                                return
+                            err_msg = str(speech_result.get("message") or "Speech generation failed.")
+                            session_manager.save_message(
+                                session_id, "assistant", content=f"*Error generando audio: {err_msg}*",
+                                model=model, provider=effective_provider,
+                                turn_number=turn_number, step=step,
+                                status="error", message="audio_error",
+                            )
+                            yield f"data: {json.dumps({'type': 'error', 'content': err_msg}, ensure_ascii=False)}\n\n"
+                            yield "data: [DONE]\n\n"
+                            return
+                        except Exception as exc:
+                            log_error(str(exc), source="loop.py:run(audio)")
+                            yield f"data: {json.dumps({'type': 'error', 'content': str(exc)}, ensure_ascii=False)}\n\n"
+                            yield "data: [DONE]\n\n"
+                            return
+
+                    # ---- 6a-quater. Non-chat output: video (late phase, limited providers) ----
+                    if effective_output == "video" and llm_attempt == 0 and iteration == 1:
+                        try:
+                            from backend.agent.llm.outputs import build_video_html, generate_video
+                            from backend.agent.utils.contract import zero_usage as zero_usage_video
+
+                            video_prompt = user_message if isinstance(user_message, str) else ""
+                            video_result = await generate_video(agent, effective_provider, model, video_prompt)
+                            if video_result.get("status") == "success":
+                                video_url = str(video_result.get("url") or "")
+                                video_md = build_video_html(video_url) if video_url else "[video]"
+                                video_payload = {
+                                    "url": video_url,
+                                    "video_id": video_result.get("video_id"),
+                                    "mime": video_result.get("mime", "video/mp4"),
+                                    "model": model,
+                                }
+                                session_manager.save_message(
+                                    session_id, "assistant", content=video_md,
+                                    model=model, provider=effective_provider,
+                                    turn_number=turn_number, step=step,
+                                    status="success", message="video",
+                                    usage=zero_usage_video(),
+                                )
+                                try:
+                                    from backend.agent.utils.spend_handler import record_multimodal_spend as record_video_spend
+
+                                    record_video_spend(
+                                        (effective_provider or "").strip(), model, "video", 1.0
+                                    )
+                                except Exception:
+                                    pass
+                                yield f"data: {json.dumps({'type': 'video', 'content': video_payload}, ensure_ascii=False)}\n\n"
+                                yield "data: [DONE]\n\n"
+                                return
+                            err_msg = str(video_result.get("message") or "Video generation failed.")
+                            session_manager.save_message(
+                                session_id, "assistant", content=f"*Error generando video: {err_msg}*",
+                                model=model, provider=effective_provider,
+                                turn_number=turn_number, step=step,
+                                status="error", message="video_error",
+                            )
+                            yield f"data: {json.dumps({'type': 'error', 'content': err_msg}, ensure_ascii=False)}\n\n"
+                            yield "data: [DONE]\n\n"
+                            return
+                        except Exception as exc:
+                            log_error(str(exc), source="loop.py:run(video)")
+                            yield f"data: {json.dumps({'type': 'error', 'content': str(exc)}, ensure_ascii=False)}\n\n"
+                            yield "data: [DONE]\n\n"
+                            return
+
                     try:
                         async for event in agent.llm_streaming(
                             model=model, messages=messages, tools=tools,
@@ -794,10 +1067,58 @@ class AgentLoop:
                             reasoning=reasoning, budget_tokens=budget_tokens,
                             provider=effective_provider,
                             response_format=response_format,
+                            output=effective_output,
                         ):
                             if event["type"] == "chunk":
                                 collected_content += event.get("content", "")
                                 yield f"data: {json.dumps({'type': 'chunk', 'content': event.get('content', '')}, ensure_ascii=False)}\n\n"
+                            elif event["type"] == "image":
+                                # Free mode: image alongside text in the same turn.
+                                # Persisted into collected_content as data-URL HTML
+                                # in messages.content (turn/step). No attachments.
+                                try:
+                                    payload = event.get("content", {}) or {}
+                                    b64 = payload.get("b64")
+                                    if b64:
+                                        import html as _htmli2
+
+                                        mime_i = _htmli2.escape(str(payload.get("mime", "image/png")), quote=True)
+                                        collected_content += f'\n<img src="data:{mime_i};base64,{b64}" alt="Generated image" style="max-width:100%;border-radius:8px;" />\n'
+                                    elif payload.get("url"):
+                                        import html as _htmli
+
+                                        safe_u = _htmli.escape(str(payload.get("url")), quote=True)
+                                        collected_content += f'\n<img src="{safe_u}" alt="Generated image" style="max-width:100%;border-radius:8px;" />\n'
+                                    else:
+                                        collected_content += "\n[image]\n"
+                                except Exception:
+                                    collected_content += "\n[image]\n"
+                                yield f"data: {json.dumps({'type': 'image', 'content': event.get('content', {})}, ensure_ascii=False)}\n\n"
+                            elif event["type"] == "audio":
+                                # Free mode: audio alongside text in the same turn
+                                # (TTS models). Raw PCM chunks are buffered and
+                                # wrapped into ONE playable WAV tag at persist
+                                # time (messages.content, turn/step).
+                                # SSE still streams each chunk live.
+                                try:
+                                    payload = event.get("content", {}) or {}
+                                    b64 = payload.get("b64")
+                                    if b64:
+                                        try:
+                                            audio_pcm_parts.append(base64.b64decode(b64))
+                                        except Exception:
+                                            pass
+                                        collected_content += "\n[audio]\n"
+                                    elif payload.get("url"):
+                                        import html as _htmla
+
+                                        safe_u = _htmla.escape(str(payload.get("url")), quote=True)
+                                        collected_content += f'\n<audio controls src="{safe_u}" style="width:100%;"></audio>\n'
+                                    else:
+                                        collected_content += "\n[audio]\n"
+                                except Exception:
+                                    collected_content += "\n[audio]\n"
+                                yield f"data: {json.dumps({'type': 'audio', 'content': event.get('content', {})}, ensure_ascii=False)}\n\n"
                             elif event["type"] == "reasoning":
                                 collected_reasoning += event.get("content", "")
                                 yield f"data: {json.dumps({'type': 'reasoning', 'content': event.get('content', '')}, ensure_ascii=False)}\n\n"
@@ -826,6 +1147,15 @@ class AgentLoop:
                                     "total_time": round(step_time + float((usage_data or {}).get("total_time") or 0), 2),
                                     "time_to_first_token": (usage_data or {}).get("time_to_first_token"),
                                 }
+                                if audio_pcm_parts:
+                                    try:
+                                        from backend.agent.llm.outputs import build_wav_data_url as _wav_url_ab
+
+                                        collected_content = collected_content.replace("\n[audio]\n", "")
+                                        collected_content += _wav_url_ab(b"".join(audio_pcm_parts))
+                                    except Exception:
+                                        pass
+                                    audio_pcm_parts = []
                                 session_manager.save_message(
                                     session_id, "assistant", content=collected_content,
                                     reasoning=collected_reasoning or None,
@@ -877,7 +1207,17 @@ class AgentLoop:
                         # Fatal, budget and too-large errors: no retry.
                         if error_category in ("fatal", "budget", "too_large"):
                             log_error(str(e), source="loop.py:run(llm_stream)")
-                            if _is_model_not_found(str(e)):
+                            _err_lower = str(e).lower()
+                            if "bidi" in _err_lower or "live api" in _err_lower:
+                                # Live-only models (e.g. gemini-*-live-preview)
+                                # require the Live API over WebSocket, which the
+                                # chat does not use.
+                                error_msg = (
+                                    "*Este modelo solo funciona con la API en vivo (Live API) "
+                                    "y no está soportado en el chat. Elegí otro modelo desde "
+                                    "la configuración.*"
+                                )
+                            elif _is_model_not_found(str(e)):
                                 # The configured model does not exist: the
                                 # technical detail stays in the db log, the
                                 # user gets clean text naming the model.
@@ -1018,6 +1358,17 @@ class AgentLoop:
                         _schedule_latency()
                         return
                     break  # Stream consumed successfully
+                # Free mode: wrap buffered streaming-TTS PCM chunks into ONE
+                # playable WAV tag before any persist of this attempt.
+                if audio_pcm_parts:
+                    try:
+                        from backend.agent.llm.outputs import build_wav_data_url as _wav_url
+
+                        collected_content = collected_content.replace("\n[audio]\n", "")
+                        collected_content += _wav_url(b"".join(audio_pcm_parts))
+                    except Exception:
+                        pass
+                    audio_pcm_parts = []
                 # The step accumulators hold only failed attempts: every row
                 # saved below adds this successful attempt (usage_data) once.
 
