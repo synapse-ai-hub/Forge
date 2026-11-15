@@ -26,7 +26,30 @@ export interface ToolBlock {
   result?: any;
 }
 
-export type ContentBlock = TextBlock | ReasoningBlock | ToolBlock;
+export interface ImageBlock {
+  type: "image";
+  b64?: string | null;
+  url?: string | null;
+  file_name?: string | null;
+  mime?: string | null;
+}
+
+export interface AudioBlock {
+  type: "audio";
+  b64?: string | null;
+  url?: string | null;
+  file_name?: string | null;
+  mime?: string | null;
+}
+
+export interface VideoBlock {
+  type: "video";
+  url?: string | null;
+  file_name?: string | null;
+  mime?: string | null;
+}
+
+export type ContentBlock = TextBlock | ReasoningBlock | ToolBlock | ImageBlock | AudioBlock | VideoBlock;
 
 export interface SessionMessage {
   id: string;

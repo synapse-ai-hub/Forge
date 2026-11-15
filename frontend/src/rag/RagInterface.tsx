@@ -7,7 +7,7 @@ import { Button } from "../components/ui/button";
 
 const API = API_BASE_URL + "/api";
 
-const ALLOWED_EXTENSIONS = /\.(pdf|txt|md|docx|doc|csv|xlsx|xls|json|xml|yaml|yml|py)$/i;
+const ALLOWED_EXTENSIONS = /\.(pdf|txt|md|docx|doc|csv|xlsx|xls|json|xml|yaml|yml|py|png|jpg|jpeg|webp|gif|bmp|mp3|wav|ogg|flac|m4a|mp4|mov)$/i;
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50 MB por archivo
 
 /** Colección tal como la devuelve el backend. */
@@ -274,7 +274,7 @@ export function RagInterface() {
     let warning: string | null = null;
     for (const f of incoming) {
       if (!ALLOWED_EXTENSIONS.test(f.name)) {
-        warning = `Tipo de archivo no soportado: ${f.name}. Permitidos: PDF, TXT, MD, DOCX, DOC, CSV, XLSX, XLS, JSON, XML, YAML, PY.`;
+        warning = `Tipo de archivo no soportado: ${f.name}. Permitidos: PDF, TXT, MD, DOCX, DOC, CSV, XLSX, XLS, JSON, XML, YAML, PY, imágenes, audio y video.`;
         continue;
       }
       if (f.size > MAX_FILE_SIZE) {
@@ -636,11 +636,11 @@ export function RagInterface() {
                     Arrastrá archivos acá o{" "}
                     <span className="text-indigo-600 font-medium">seleccioná</span>
                   </p>
-                  <p className="text-xs text-gray-400 mt-1">PDF, TXT, MD, DOCX, CSV, XLSX, JSON, XML</p>
+                  <p className="text-xs text-gray-400 mt-1">PDF, TXT, MD, DOCX, CSV, XLSX, JSON, XML · Imágenes, audio y video</p>
                   <input
                     type="file"
                     multiple
-                    accept=".pdf,.txt,.md,.docx,.csv,.xlsx,.xls,.json,.xml,.yaml,.yml,.py"
+                    accept=".pdf,.txt,.md,.docx,.doc,.csv,.xlsx,.xls,.json,.xml,.yaml,.yml,.py,.png,.jpg,.jpeg,.webp,.gif,.bmp,.mp3,.wav,.ogg,.flac,.m4a,.mp4,.mov"
                     className="hidden"
                     onChange={handleFilesSelected}
                   />

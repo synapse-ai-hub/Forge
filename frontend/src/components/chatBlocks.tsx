@@ -623,6 +623,13 @@ function ToolCallBlock({
 /*  MessageRow                                                        */
 /* ------------------------------------------------------------------ */
 
+/** Stable React key for a media block: same content keeps its DOM node
+ *  across re-renders (typing in the input must not remount players). */
+function mediaKey(block: { b64?: string | null; url?: string | null }, type: string, index: number): string {
+  const src = block.b64 || block.url || "";
+  return `${type}-${src.length}-${src.slice(0, 32)}-${index}`;
+}
+
 function MessageRow({
   message,
   verboseMode,
@@ -727,6 +734,33 @@ function MessageRow({
                     />
                   );
                 }
+                if (block.type === "image") {
+                  const src = block.b64 ? `data:${block.mime || "image/png"};base64,${block.b64}` : block.url || "";
+                  if (!src) return null;
+                  return (
+                    <div key={mediaKey(block, "image", i)}>
+                      <img src={src} alt="Generated image" style={{ maxWidth: "100%", borderRadius: "8px" }} />
+                    </div>
+                  );
+                }
+                if (block.type === "audio") {
+                  const src = block.b64 ? `data:${block.mime || "audio/mpeg"};base64,${block.b64}` : block.url || "";
+                  if (!src) return null;
+                  return (
+                    <div key={mediaKey(block, "audio", i)} style={{ width: "100%", minHeight: "54px" }}>
+                      <audio controls src={src} style={{ width: "100%" }} />
+                    </div>
+                  );
+                }
+                if (block.type === "video") {
+                  const src = block.url || "";
+                  if (!src) return null;
+                  return (
+                    <div key={mediaKey(block, "video", i)}>
+                      <video controls src={src} style={{ maxWidth: "100%", borderRadius: "8px" }} />
+                    </div>
+                  );
+                }
                 return null;
               })}
             </div>
@@ -751,10 +785,20 @@ function MessageRow({
             </>
           )}
 
-          {/* Copy button (only when there's actual text content) — opcional (skill lo desactiva) */}
+          {/* Action row: Copy (only when there's actual text content) + thumbs.
+              Media answers (audio/image/video) have no text to copy — the
+              player already offers download — but they still get feedback. */}
           {showCopyButton && message.type === "assistant" && !message.isStreaming && message.id !== "welcome" && (
-            (message.content || (message.blocks && message.blocks.some((b) => b.type === "text"))) && (
+            (() => {
+              const hasText = message.content || (message.blocks && message.blocks.some((b) => b.type === "text"));
+              const hasMedia = message.blocks && message.blocks.some((b) => b.type === "image" || b.type === "audio" || b.type === "video");
+              if (!hasText && !hasMedia) return null;
+              const canCopy = !!hasText;
+              const canVote = !!onFeedback && message.turn != null;
+              if (!canCopy && !canVote) return null;
+              return (
               <div className="mt-2 flex items-stretch gap-2">
+                {canCopy && (
                 <button
                   type="button"
                   onClick={() => {
@@ -768,7 +812,8 @@ function MessageRow({
                   <Copy size={12} />
                   Copiar
                 </button>
-                {onFeedback && message.turn != null && (
+                )}
+                {canVote && (
                   <>
                     {(["up", "down"] as const).map((type) => {
                       const selected = feedback === type;
@@ -802,7 +847,8 @@ function MessageRow({
                   </>
                 )}
               </div>
-            )
+              );
+            })()
           )}
 
           {/* TypingIndicator:

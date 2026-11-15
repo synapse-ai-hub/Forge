@@ -923,6 +923,30 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
           case "usage":
             break;
 
+          case "image":
+          case "audio":
+          case "video": {
+            const payload =
+              typeof event.content === "object" && event.content !== null
+                ? event.content
+                : {};
+            const mediaBlock =
+              event.type === "image"
+                ? { type: "image" as const, b64: payload.b64 ?? null, url: payload.url ?? null, file_name: payload.file_name ?? null, mime: payload.mime ?? null }
+                : event.type === "audio"
+                  ? { type: "audio" as const, b64: payload.b64 ?? null, url: payload.url ?? null, file_name: payload.file_name ?? null, mime: payload.mime ?? null }
+                  : { type: "video" as const, url: payload.url ?? null, file_name: payload.file_name ?? null, mime: payload.mime ?? null };
+            accumulatedBlocks.push(mediaBlock as unknown as (typeof accumulatedBlocks)[number]);
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === assistantId
+                  ? { ...m, blocks: [...accumulatedBlocks] }
+                  : m,
+              ),
+            );
+            break;
+          }
+
           case "done":
             // console.log(`[DEBUG_TIEMPO_SSE] done event — assistantId=${assistantId}, t=${performance.now()}`);
             break;
