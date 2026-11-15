@@ -456,6 +456,25 @@ class VectorDB:
             collection_name,
         )
 
+    def delete_by_metadata(
+        self,
+        collection_name: str,
+        where: dict[str, Any],
+    ) -> None:
+        """Delete documents matching a metadata filter.
+
+        Args:
+            collection_name: Collection.
+            where: Metadata filter (e.g. ``{"session_id": sid}``).
+        """
+        col = self.get_collection(collection_name)
+        col.delete(where=where)
+        logger.info(
+            "Documentos eliminados de '%s' con filtro %s.",
+            collection_name,
+            where,
+        )
+
     def get_documents(
         self,
         collection_name: str,

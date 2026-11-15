@@ -601,7 +601,12 @@ class SessionManager:
             conn.close()
 
     def delete_session(self, session_id: str) -> dict:
-        """Delete a session and all its messages.
+        """Delete a session, its messages and its conversation memory.
+
+        Removes SQLite rows (messages, attachments, session) and all
+        ``agent_conversations`` vector chunks whose metadata holds this
+        ``session_id``. The vector cleanup is best-effort: failures are
+        logged but do not fail the deletion.
 
         Args:
             session_id: The session identifier to remove.
@@ -634,6 +639,23 @@ class SessionManager:
                     )
 
                 conn.commit()
+
+            try:
+                from backend.agent.utils.vector_db import get_vector_db
+
+                get_vector_db().delete_by_metadata(
+                    "agent_conversations", {"session_id": session_id}
+                )
+            except Exception as chroma_exc:
+                log_error(
+                    str(chroma_exc),
+                    source="backend/agent/session.py:delete_session:chroma",
+                )
+                logger.warning(
+                    "Could not delete vector memory for session '%s': %s",
+                    session_id,
+                    chroma_exc,
+                )
 
             return make_success_response(
                 message=f"Session '{session_id}' deleted.",
