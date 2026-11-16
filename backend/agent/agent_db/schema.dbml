@@ -304,9 +304,14 @@ Table creators {
   completion_tokens integer [default: 0, note: 'output tokens (call rows)']
   total_tokens integer [default: 0, note: 'input + output tokens (call rows)']
   total_time real [note: 'seconds the call or the request took']
+  time_to_first_token real [note: 'seconds until the first token arrived (assistant rows)']
   cost_input real [default: 0.0, note: 'USD cost of the input tokens']
   cost_output real [default: 0.0, note: 'USD cost of the output tokens']
   cost_total real [default: 0.0, note: 'cost_input + cost_output']
+  turn_number integer [note: 'turn of the conversation (1, 2, ...); NULL in old rows']
+  step integer [note: 'step inside the turn (one per LLM round); NULL in old rows']
+  substep integer [note: 'position inside the step (parallel tool calls); NULL in old rows']
+  tool_call_id text [note: 'id of the tool call, in tool rows (links to the assistant row)']
   created_at text [not null, note: 'local time, ISO format']
 
   indexes {
@@ -425,6 +430,70 @@ Table workflow_run_steps {
   Note: 'Commits of a workflow run: one row per node execution. state: open (dispatched) | done (result committed) | failed | stale (a done row invalidated because an earlier step had to be re-run). result holds the complete node output (never truncated) so a retry or a resume after a crash rebuilds the shared state without re-running it. What ended is deleted: a run that finished well keeps no rows here, only a run that failed or was cut leaves them to resume from. The record of everything the run did lives in workflow_runs. run_id has no foreign key: it is the group of rows of workflow_runs that share it, so no column is unique to reference.'
 }
 
+Table triggers {
+  slug text [pk, note: 'trigger id; also the path segment of its webhook URL']
+  workflow_name text [not null, note: 'workflow to run; must exist in workflows(name)']
+  secret_hash text [not null, note: 'hash of the trigger secret, never the secret itself']
+  enabled integer [not null, default: 1, note: '1 accepts events, 0 rejects without deleting history']
+  created_at text [not null, note: 'local time the trigger was created']
+  updated_at text [not null, note: 'local time of the last change']
+
+  indexes {
+    enabled [name: 'idx_triggers_enabled']
+    workflow_name [name: 'idx_triggers_workflow']
+  }
+
+  Note: 'Registry of proactive triggers. The YAML workflow stays the definition; the slug is the id. A row is created when a trigger is created in the UI. secret_hash never leaves the backend except once at creation and rotation. enabled pauses reception without deleting history.'
+}
+
+Table trigger_runs {
+  id integer [pk, increment, note: 'internal row id; orders the rows']
+  event_id text [not null, note: 'public id of the delivery, returned with 202']
+  trigger_slug text [not null, note: 'trigger that received the event']
+  workflow_name text [not null, note: 'workflow mapped at reception time']
+  workflow_run_id text [note: 'workflow_runs.run_id of the launched run, when any']
+  status text [not null, note: 'received | verified | mapped | launched | notified | error']
+  attempt integer [not null, default: 1, note: 'attempt that made the row, 1..3']
+  idempotency_key text [note: 'client key for idempotent retries']
+  payload_hash text [note: 'hash of the raw body, to detect conflicting reuse']
+  result text [note: 'short result of the linked run, when finished']
+  error_text text [note: 'failure message in plain language, when failed']
+  started_at text [not null, note: 'local time the event was accepted']
+  finished_at text [note: 'local time the pipeline closed']
+
+  indexes {
+    (trigger_slug, idempotency_key) [name: 'idx_trigger_runs_idempotency', unique]
+    started_at [name: 'idx_trigger_runs_started_at']
+    status [name: 'idx_trigger_runs_status']
+    trigger_slug [name: 'idx_trigger_runs_trigger']
+    event_id [name: 'idx_trigger_runs_event']
+  }
+
+  Note: 'One row per accepted webhook delivery, laid out like workflow_runs. event_id is the public id returned with 202. trigger_slug links to triggers(slug). workflow_run_id links to workflow_runs.run_id without a hard FK, like notifications.run_id, because workflow_runs has many rows per run and no column is unique to reference. status: received | verified | mapped | launched | notified | error. attempt: delivery attempt that made the row, 1..3. idempotency_key + payload_hash enforce idempotency: same key and same hash returns the original event, same key with different hash is a conflict and never runs.'
+}
+
+Table trigger_run_steps {
+  id integer [pk, increment, note: 'internal row id']
+  event_id text [not null, note: 'delivery the stage belongs to (trigger_runs.event_id)']
+  attempt integer [not null, default: 1, note: 'attempt of the delivery that executed it']
+  step integer [not null, note: 'stage of the pipeline (received, verified, mapped, launched, notified)']
+  substep integer [not null, default: 0, note: 'position of the stage inside its step']
+  node_id text [not null, note: 'id of the stage in the pipeline']
+  node_type text [not null, note: 'received | verified | mapped | launched | notified']
+  args text [note: 'JSON with the arguments of the stage']
+  state text [not null, default: `'open'`, note: 'open | done | failed | stale']
+  result text [note: 'complete output of the stage']
+  error text [note: 'failure message when state is failed']
+  created_at text [not null, note: 'local time the stage was dispatched']
+  updated_at text [not null, note: 'local time of the last change']
+
+  indexes {
+    (event_id, step) [name: 'idx_trigger_run_steps_run']
+  }
+
+  Note: 'Commits of a trigger pipeline: one row per stage execution. state: open (dispatched) | done (result committed) | failed | stale (a done row invalidated because an earlier stage had to be re-run). result holds the complete stage output (never truncated) so a retry or a resume after a crash rebuilds the pipeline without re-running it. What ended is deleted: a delivery that finished well keeps no rows here, only a delivery that failed or was cut leaves them to resume from. The record of everything the delivery did lives in trigger_runs. event_id has no foreign key: it is the group id of trigger_runs that share it, so no column is unique to reference.'
+}
+
 Table notifications {
   id integer [pk, increment, note: 'internal row id']
   kind text [not null, note: 'workflow | schedule']
@@ -468,4 +537,7 @@ Ref: step_frontier.session_id > sessions.session_id [delete: cascade]
 Ref: message_feedback.session_id > sessions.session_id [delete: cascade]
 Ref: workflow_runs.workflow_name > workflows.name
 Ref: workflow_runs.parent_session_id > sessions.session_id [delete: set null]
+Ref: triggers.workflow_name > workflows.name
+Ref: trigger_runs.trigger_slug > triggers.slug
+Ref: trigger_runs.workflow_name > workflows.name
 Ref: notifications.workflow_name > workflows.name

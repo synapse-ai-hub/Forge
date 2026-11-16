@@ -5,7 +5,7 @@ import { API_BASE_URL } from "../config/api";
 /** A finished workflow run or scheduled-task execution. */
 export interface AppNotification {
   id: number;
-  kind: "workflow" | "schedule";
+  kind: "workflow" | "schedule" | "webhook";
   /** Workflow name or task name. */
   title: string;
   status: "success" | "error";
