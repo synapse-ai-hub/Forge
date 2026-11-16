@@ -269,7 +269,7 @@ export function RagInterface() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ new_name: name, description: editDescription }),
       });
-      const data = await resp.json();
+      const data: { status?: string; message?: string; data?: { name?: string } } = await resp.json();
       if (data.status === "success") {
         setResultType("success");
         setResultMsg(data.message || "Colección actualizada.");
@@ -292,8 +292,7 @@ export function RagInterface() {
     setEditName(selected || "");
     const meta = collections.find((c) => c.name === selected)?.metadata;
     setEditDescription(typeof meta?.description === "string" ? meta.description : "");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selected]);
+  }, [selected, collections]);
 
   /* ---- eliminar colección ---- */
   const handleDelete = useCallback(
@@ -579,8 +578,9 @@ export function RagInterface() {
               <Collapsible title="Editar colección">
                 <div className="space-y-3">
                   <div>
-                    <label className="text-xs text-app-text">Nombre</label>
+                    <label htmlFor="edit-collection-name" className="text-xs text-app-text">Nombre</label>
                     <input
+                      id="edit-collection-name"
                       type="text"
                       value={editName}
                       onChange={(e) => setEditName(e.target.value)}
@@ -589,8 +589,9 @@ export function RagInterface() {
                     />
                   </div>
                   <div>
-                    <label className="text-xs text-app-text">Descripción</label>
+                    <label htmlFor="edit-collection-description" className="text-xs text-app-text">Descripción</label>
                     <input
+                      id="edit-collection-description"
                       type="text"
                       value={editDescription}
                       onChange={(e) => setEditDescription(e.target.value)}
@@ -611,8 +612,9 @@ export function RagInterface() {
                 </p>
                 <div className="space-y-3">
                   <div>
-                    <label className="text-xs text-app-text">Chunk</label>
+                    <label htmlFor="chunk-size" className="text-xs text-app-text">Chunk</label>
                     <input
+                      id="chunk-size"
                       type="number"
                       min={1}
                       step={1}
@@ -623,8 +625,9 @@ export function RagInterface() {
                     />
                   </div>
                   <div>
-                    <label className="text-xs text-app-text">Overlap</label>
+                    <label htmlFor="chunk-overlap" className="text-xs text-app-text">Overlap</label>
                     <input
+                      id="chunk-overlap"
                       type="number"
                       min={0}
                       step={1}

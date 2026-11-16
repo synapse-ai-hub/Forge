@@ -433,12 +433,9 @@ class VectorDB:
         current_meta.pop("hnsw:space", None)
         target = (new_name or "").strip() or name
         if target != name:
-            try:
-                self._client.get_collection(name=target)
+            existing = [c.name for c in self._client.list_collections()]
+            if target in existing:
                 raise ValueError(f"La colección '{target}' ya existe.")
-            except (ValueError, chromadb.errors.NotFoundError) as exc:
-                if isinstance(exc, ValueError) and "ya existe" in str(exc):
-                    raise
         col.modify(name=target, metadata=current_meta)
         logger.info("Colección '%s' actualizada (nuevo nombre: '%s').", name, target)
         return self.get_collection_info(target)
