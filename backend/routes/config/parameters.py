@@ -24,6 +24,11 @@ _PARAM_KEYS = {
     "reasoning": "param_reasoning",
     "budget_tokens": "param_budget_tokens",
     "response_format": "param_response_format",
+    "output": "param_output",
+    "voice": "param_voice",
+    "voice_speed": "param_voice_speed",
+    "voice_instructions": "param_voice_instructions",
+    "voice_format": "param_voice_format",
 }
 
 """Mapping of parameter name → ``config_kv`` key. Persisted values use the
@@ -48,7 +53,9 @@ def _parse_optional_float(raw: Any, low: float, high: float) -> tuple[float | No
         value = float(raw)
     except (TypeError, ValueError):
         return None, f"must be a number between {low} and {high}, or null."
-    if value < low or value > high:
+    import math
+
+    if math.isnan(value) or value < low or value > high:
         return None, f"must be a number between {low} and {high}, or null."
     return value, None
 
@@ -73,7 +80,7 @@ def _read_param(key: str) -> Any:
 
     Returns:
         The parsed value (``float`` for temperature/top_p, ``str`` for
-        reasoning/response_format, ``int`` for budget_tokens) or ``None``
+        reasoning/response_format/output, ``int`` for budget_tokens) or ``None``
         when unset/"null" (default).
     """
     if session_manager is None:
@@ -86,10 +93,158 @@ def _read_param(key: str) -> Any:
             return raw.strip().lower()
         if key == _PARAM_KEYS["response_format"]:
             return raw.strip().lower()
+        if key == _PARAM_KEYS["output"]:
+            return raw.strip().lower()
+        if key == _PARAM_KEYS["voice"]:
+            return raw.strip()
+        if key == _PARAM_KEYS["voice_instructions"]:
+            return raw.strip()
+        if key == _PARAM_KEYS["voice_format"]:
+            return raw.strip().lower()
         if key == _PARAM_KEYS["budget_tokens"]:
             return int(float(raw))
         return float(raw)
     except (TypeError, ValueError):
+        return None
+
+def _parse_optional_output(raw: Any) -> tuple[str | None, str | None]:
+    """Parse an optional output modality parameter (``None`` = default).
+
+    ``"auto"`` means free mode: the model decides per turn (text for
+    questions, image/audio when requested). Explicit values force that
+    modality for every turn.
+
+    Args:
+        raw: Raw value from the request body (str or ``None``).
+
+    Returns:
+        Tuple ``(value, error)`` — exactly one of the two is ``None``.
+    """
+    if raw is None:
+        return None, None
+    if not isinstance(raw, str):
+        return None, "must be 'text', 'json', 'image', 'audio', 'video', 'auto' or null."
+    value = raw.strip().lower()
+    if value in ("", "null", "default"):
+        return None, None
+    if value not in ("text", "json", "image", "audio", "video", "auto"):
+        return None, "must be 'text', 'json', 'image', 'audio', 'video', 'auto' or null."
+    return value, None
+
+def _parse_optional_voice(raw: Any) -> tuple[str | None, str | None]:
+    """Parse an optional voice name (``None`` = default).
+
+    Args:
+        raw: Raw value from the request body (str or ``None``).
+
+    Returns:
+        Tuple ``(value, error)`` — exactly one of the two is ``None``.
+    """
+    if raw is None:
+        return None, None
+    if not isinstance(raw, str):
+        return None, "must be a voice name string or null."
+    value = raw.strip()
+    if value.lower() in ("", "null", "default"):
+        return None, None
+    if len(value) > 64:
+        return None, "must be a voice name string (max 64 chars) or null."
+    return value, None
+
+
+def _parse_optional_voice_speed(raw: Any) -> tuple[float | None, str | None]:
+    """Parse an optional TTS speed multiplier (``None`` = default).
+
+    Args:
+        raw: Raw value from the request body (number or ``None``).
+
+    Returns:
+        Tuple ``(value, error)`` — exactly one of the two is ``None``.
+    """
+    from backend.agent.llm.voices import VOICE_SPEED_MAX, VOICE_SPEED_MIN
+
+    return _parse_optional_float(raw, VOICE_SPEED_MIN, VOICE_SPEED_MAX)
+
+
+def _parse_optional_voice_instructions(raw: Any) -> tuple[str | None, str | None]:
+    """Parse optional TTS style instructions (``None`` = default).
+
+    Args:
+        raw: Raw value from the request body (str or ``None``).
+
+    Returns:
+        Tuple ``(value, error)`` — exactly one of the two is ``None``.
+    """
+    if raw is None:
+        return None, None
+    if not isinstance(raw, str):
+        return None, "must be a string or null."
+    value = raw.strip()
+    if value.lower() in ("", "null", "default"):
+        return None, None
+    if len(value) > 2000:
+        return None, "must be a string (max 2000 chars) or null."
+    return value, None
+
+
+def _parse_optional_voice_format(raw: Any) -> tuple[str | None, str | None]:
+    """Parse an optional TTS audio format (``None`` = default).
+
+    Args:
+        raw: Raw value from the request body (str or ``None``).
+
+    Returns:
+        Tuple ``(value, error)`` — exactly one of the two is ``None``.
+    """
+    from backend.agent.llm.voices import OPENAI_AUDIO_FORMATS
+
+    if raw is None:
+        return None, None
+    if not isinstance(raw, str):
+        return None, f"must be one of {list(OPENAI_AUDIO_FORMATS)} or null."
+    value = raw.strip().lower()
+    if value in ("", "null", "default"):
+        return None, None
+    if value not in OPENAI_AUDIO_FORMATS:
+        return None, f"must be one of {list(OPENAI_AUDIO_FORMATS)} or null."
+    return value, None
+
+
+def _is_output_supported(
+    output_modalities: list | None,
+    model_type: str | None,
+    structured_supported: bool | None,
+    output: str,
+) -> bool | None:
+    """Check whether an output modality is supported by a model.
+
+    Args:
+        output_modalities: List from the catalog (e.g. ``["text", "image"]``).
+        model_type: Catalog ``type`` (e.g. ``"chat"``, ``"image"``, ``"speech"``).
+        structured_supported: Whether the model supports structured output.
+        output: Requested output (``"text"``, ``"json"``, ``"image"``, ``"audio"``, ``"video"``).
+
+    Returns:
+        ``True`` if supported, ``False`` if not, ``None`` when unknown.
+    """
+    try:
+        if output == "json":
+            if structured_supported is False:
+                return False
+            if structured_supported is True:
+                return True
+            return None
+        if output == "auto":
+            return True
+        if output_modalities is None:
+            return None
+        mods = [str(m).strip().lower() for m in output_modalities]
+        if output in mods:
+            return True
+        if output == "text" and model_type in ("chat", None):
+            return None
+        return False
+    except Exception:
         return None
 
 @router.get("/parameters")
@@ -99,7 +254,9 @@ async def get_parameters() -> JSONResponse:
     Also reports whether the currently selected model declaratively supports
     reasoning (``reasoning_supported``) and structured output
     (``response_format_supported``): ``true``/``false`` per the provider
-    catalog, or ``null`` when capability is unknown.
+    catalog, or ``null`` when capability is unknown. Also reports
+    ``output_modalities`` and ``model_type`` so the frontend can build the
+    output dropdown per model.
 
     Returns:
         JSON response with the parameters and the support flags.
@@ -109,6 +266,8 @@ async def get_parameters() -> JSONResponse:
         current_provider = agent.provider if agent is not None else ""
         reasoning_supported: bool | None = None
         response_format_supported: bool | None = None
+        output_modalities: list | None = None
+        model_type: str | None = None
         if current_model and current_provider:
             if current_provider == "LOCAL":
                 from backend.agent.utils.model_resolver import (
@@ -122,6 +281,8 @@ async def get_parameters() -> JSONResponse:
                     get_model_reasoning_options, current_provider, current_model
                 )
                 response_format_supported = local_caps.get("response_format_supported")
+                output_modalities = local_caps.get("output_modalities")
+                model_type = local_caps.get("model_type")
             else:
                 caps = await asyncio.to_thread(
                     model_catalog.get_reasoning_options,
@@ -130,6 +291,8 @@ async def get_parameters() -> JSONResponse:
                 )
                 reasoning_supported = caps.get("reasoning_supported")
                 response_format_supported = caps.get("response_format_supported")
+                output_modalities = caps.get("output_modalities")
+                model_type = caps.get("model_type")
         return JSONResponse(
             status_code=200,
             content={
@@ -139,10 +302,17 @@ async def get_parameters() -> JSONResponse:
                 "reasoning": _read_param(_PARAM_KEYS["reasoning"]),
                 "budget_tokens": _read_param(_PARAM_KEYS["budget_tokens"]),
                 "response_format": _read_param(_PARAM_KEYS["response_format"]),
+                "output": _read_param(_PARAM_KEYS["output"]),
+                "voice": _read_param(_PARAM_KEYS["voice"]),
+                "voice_speed": _read_param(_PARAM_KEYS["voice_speed"]),
+                "voice_instructions": _read_param(_PARAM_KEYS["voice_instructions"]),
+                "voice_format": _read_param(_PARAM_KEYS["voice_format"]),
                 "model": current_model,
                 "provider": current_provider or "",
                 "reasoning_supported": reasoning_supported,
                 "response_format_supported": response_format_supported,
+                "output_modalities": output_modalities,
+                "model_type": model_type,
             },
         )
     except Exception as exc:
@@ -150,4 +320,54 @@ async def get_parameters() -> JSONResponse:
         return JSONResponse(
             status_code=500,
             content={"status": "error", "message": f"Error leyendo parámetros: {exc}"},
+        )
+
+
+@router.get("/voices")
+async def get_voices(provider: str = "", model: str = "") -> JSONResponse:
+    """Return the voice options for a TTS-capable model.
+
+    Without query params the currently selected model is used. The response
+    drives the voice panel in settings: ``voices`` (selectable names),
+    ``voice_details`` (name + style + live gender/pitch/accent/persona/
+    description for Google, name + recommended flag for OpenAI),
+    ``supports_speed`` / ``supports_instructions`` (which extra fields to
+    show), ``formats`` (audio containers), ``fixed_voice`` (voice fixed by
+    the model) and ``applicable`` (``False`` when the model has no audio
+    output — the panel must be hidden).
+
+    Args:
+        provider: Optional provider id (defaults to the selected one).
+        model: Optional model id (defaults to the selected one).
+
+    Returns:
+        JSON response with the voice options.
+    """
+    try:
+        from backend.agent.llm.voices import get_voice_options
+
+        current_model = (model or "").strip() or (
+            agent._resolved_model if agent is not None else None
+        )
+        current_provider = (provider or "").strip() or (
+            agent.provider if agent is not None else ""
+        )
+        # Off the event loop: Google options may query the Voice Library.
+        options = await asyncio.to_thread(
+            get_voice_options, current_provider or "", current_model or ""
+        )
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "success",
+                "model": current_model,
+                "provider": current_provider or "",
+                **options,
+            },
+        )
+    except Exception as exc:
+        log_error(str(exc), source="backend/routes/config.py:get_voices")
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": f"Error leyendo voces: {exc}"},
         )

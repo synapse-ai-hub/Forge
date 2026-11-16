@@ -46,6 +46,11 @@ _MODELS_DEV_URL = "https://models.dev/api.json"
 _SYNC_TTL_SECONDS = 86400  # 24 hours
 _TIMEOUT_SECONDS = 30
 
+# Sync logic version. Bump when the sync code changes (new types, new
+# gap-fill sources) so the next startup re-syncs even within the TTL.
+# Stored per provider in ``config_kv`` (key: ``catalog_sync_v_{provider}``).
+_SYNC_CODE_VERSION = 2
+
 
 # ---------------------------------------------------------------------------
 # Database helpers
@@ -77,18 +82,30 @@ def should_sync(provider: str) -> bool:
     """Check whether the catalog for a provider needs refreshing.
 
     Uses the ``config_kv`` table to store the last sync timestamp per
-    provider (key: ``catalog_sync_{provider}``).
+    provider (key: ``catalog_sync_{provider}``) and the sync logic
+    version (key: ``catalog_sync_v_{provider}``). A version mismatch
+    forces exactly one re-sync after the sync code changes, even within
+    the 24h TTL.
 
     Args:
         provider: Provider name (e.g. ``"openrouter"``).
 
     Returns:
-        ``True`` if the catalog is stale or missing.
+        ``True`` if the catalog is stale, missing, empty for the
+        provider, or synced with older sync logic.
     """
     conn = _connect()
     if conn is None:
         return True
     try:
+        # Empty catalog (e.g. rows wiped by key deletion) must re-sync
+        # even when the timestamp looks fresh.
+        count_row = conn.execute(
+            load_query("model_catalog/count_by_provider.sql"),
+            (provider,),
+        ).fetchone()
+        if count_row is None or int(count_row["n"]) == 0:
+            return True
         row = conn.execute(
             load_query("config/get_value.sql"),
             (f"catalog_sync_{provider}",),
@@ -96,7 +113,18 @@ def should_sync(provider: str) -> bool:
         if row is None:
             return True
         last_sync = float(row["value"])
-        return (time.time() - last_sync) > _SYNC_TTL_SECONDS
+        if (time.time() - last_sync) > _SYNC_TTL_SECONDS:
+            return True
+        version_row = conn.execute(
+            load_query("config/get_value.sql"),
+            (f"catalog_sync_v_{provider}",),
+        ).fetchone()
+        if version_row is None:
+            return True
+        try:
+            return int(version_row["value"]) != _SYNC_CODE_VERSION
+        except (TypeError, ValueError):
+            return True
     except Exception:
         return True
     finally:
@@ -104,7 +132,7 @@ def should_sync(provider: str) -> bool:
 
 
 def _set_sync_timestamp(provider: str) -> None:
-    """Record the current time as last sync for a provider.
+    """Record the current time and sync logic version for a provider.
 
     Args:
         provider: Provider name.
@@ -117,6 +145,10 @@ def _set_sync_timestamp(provider: str) -> None:
             conn.execute(
                 load_query("config/upsert_value.sql"),
                 (f"catalog_sync_{provider}", str(time.time())),
+            )
+            conn.execute(
+                load_query("config/upsert_value.sql"),
+                (f"catalog_sync_v_{provider}", str(_SYNC_CODE_VERSION)),
             )
     except Exception as e:
         log_error(str(e), source="model_catalog.py:_set_sync_timestamp")
@@ -215,13 +247,142 @@ def _extract_provider_models(catalog: dict, provider: str) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# OpenRouter supplement (models.dev has no embedding/speech/transcription
+# entries for openrouter, so those models would never appear in the filter)
+# ---------------------------------------------------------------------------
+
+_OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
+
+# OpenRouter output modality -> our catalog ``type``. Text-only models are
+# skipped: models.dev already covers them with richer data.
+_OPENROUTER_MODALITY_TO_TYPE = {
+    "image": "image",
+    "video": "video",
+    "speech": "speech",
+    "transcription": "transcription",
+    "audio": "audio",
+    "embeddings": "embedding",
+    "rerank": "reranking",
+    "decisions": "decision",
+}
+
+
+def _openrouter_price_per_million(value: Any) -> float | None:
+    """Convert an OpenRouter per-token price to USD per million tokens.
+
+    Args:
+        value: Price string/number from the OpenRouter API (per token).
+            Negative sentinels (``-1`` dynamic routers) map to ``None``.
+
+    Returns:
+        Price in USD per million tokens, or ``None`` when unknown.
+    """
+    try:
+        price = float(value)
+    except (TypeError, ValueError):
+        return None
+    if price < 0:
+        return None
+    return price * 1_000_000
+
+
+def _fetch_openrouter_models() -> list[dict]:
+    """Fetch the full OpenRouter catalog (all output modalities).
+
+    Uses the public OpenRouter Models API with ``output_modalities=all``
+    and paginates until no more models are returned. Only non-text-output
+    models are kept (text chat models already come from models.dev).
+
+    Returns:
+        List of model dicts ready for DB insertion (same keys as
+        ``_extract_provider_models`` rows). Empty on any failure.
+    """
+    import requests
+
+    rows: list[dict] = []
+    now = datetime.now().isoformat()
+    offset = 0
+    try:
+        while True:
+            resp = requests.get(
+                _OPENROUTER_MODELS_URL,
+                params={"output_modalities": "all", "limit": 1000, "offset": offset},
+                headers={"User-Agent": "synapseForge/1.0"},
+                timeout=_TIMEOUT_SECONDS,
+            )
+            resp.raise_for_status()
+            items = (resp.json() or {}).get("data", []) or []
+            if not items:
+                break
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                arch = item.get("architecture") or {}
+                outputs = [str(m).strip().lower() for m in (arch.get("output_modalities") or [])]
+                non_text = [m for m in outputs if m and m != "text"]
+                if not non_text:
+                    continue  # text chat: models.dev already covers it
+                primary = non_text[0]
+                mtype = _OPENROUTER_MODALITY_TO_TYPE.get(primary)
+                if not mtype:
+                    continue
+                inputs = [str(m).strip().lower() for m in (arch.get("input_modalities") or [])]
+                pricing = item.get("pricing") or {}
+                supported = [str(p) for p in (item.get("supported_parameters") or [])]
+                top = item.get("top_provider") or {}
+                rows.append({
+                    "provider": "openrouter",
+                    "model_id": item.get("id"),
+                    "type": mtype,
+                    "name": item.get("name"),
+                    "description": item.get("description"),
+                    "family": None,
+                    "context_window": item.get("context_length"),
+                    "input_limit": None,
+                    "output_limit": top.get("max_completion_tokens"),
+                    "reasoning": 1 if "reasoning" in supported else 0,
+                    "reasoning_options": None,
+                    "tool_call": 1 if "tools" in supported else 0,
+                    "attachment": 1 if any(m != "text" for m in inputs) else 0,
+                    "temperature": 1 if "temperature" in supported else 0,
+                    "structured_output": 1 if "structured_outputs" in supported else 0,
+                    "modalities_input": json.dumps(inputs) if inputs else None,
+                    "modalities_output": json.dumps(outputs) if outputs else None,
+                    "cost_input": _openrouter_price_per_million(pricing.get("prompt")),
+                    "cost_output": _openrouter_price_per_million(pricing.get("completion")),
+                    "cost_cache_read": None,
+                    "cost_cache_write": None,
+                    "open_weights": 0,
+                    "status": None,
+                    "api": "https://openrouter.ai/api/v1",
+                    "npm": "@ai-sdk/openai-compatible",
+                    "updated_at": now,
+                })
+            if len(items) < 1000:
+                break
+            offset += len(items)
+    except Exception as e:
+        log_error(str(e), source="model_catalog.py:_fetch_openrouter_models")
+        return []
+    return [r for r in rows if r.get("model_id")]
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
 def sync_catalog(provider: str) -> dict:
     """Fetch models.dev and upsert models for a provider into the DB.
 
-    Rate-limited to once every 24 hours per provider.
+    Fetches the default catalog plus the specialized ``image``,
+    ``speech``, ``embedding``, ``video``, ``transcription``,
+    ``decision`` and ``reranking`` catalogs so non-text outputs (image/TTS),
+    embedding models and decision/rerank models are also synced.
+    For ``openrouter`` the models.dev gaps (no embedding/speech/
+    transcription entries) are filled from the OpenRouter Models API.
+    Rate-limited to once every 24 hours per provider, plus a
+    version-guard: when the sync logic changes, the next call re-syncs
+    once even within the TTL.
 
     Args:
         provider: Provider ID (e.g. ``"openrouter"``, ``"google"``).
@@ -238,13 +399,41 @@ def sync_catalog(provider: str) -> dict:
         logger.debug("Catalog for '%s' is fresh, skipping sync.", provider)
         return {"status": "success", "message": "Catalog is fresh.", "models": 0}
 
+    merged: dict[str, dict] = {}
     try:
-        catalog = _fetch_models_dev()
+        for model_type in (
+            None,
+            "image",
+            "speech",
+            "embedding",
+            "video",
+            "transcription",
+            "decision",
+            "reranking",
+        ):
+            try:
+                catalog = _fetch_models_dev(model_type)
+            except Exception as e:
+                log_error(str(e), source="model_catalog.py:sync_catalog(fetch)")
+                if model_type is None:
+                    return {"status": "error", "message": f"Could not fetch models.dev: {e}"}
+                continue
+            for row in _extract_provider_models(catalog, provider):
+                merged[row["model_id"]] = row
+        # OpenRouter gap fill: models.dev catalogs no embedding/speech/
+        # transcription entries for openrouter. Supplement only adds model
+        # ids models.dev does not know (setdefault: models.dev wins).
+        if provider == "openrouter":
+            try:
+                for row in _fetch_openrouter_models():
+                    merged.setdefault(row["model_id"], row)
+            except Exception as e:
+                log_error(str(e), source="model_catalog.py:sync_catalog(openrouter)")
     except Exception as e:
         log_error(str(e), source="model_catalog.py:sync_catalog(fetch)")
         return {"status": "error", "message": f"Could not fetch models.dev: {e}"}
 
-    rows = _extract_provider_models(catalog, provider)
+    rows = list(merged.values())
     if not rows:
         return {
             "status": "error",
@@ -295,6 +484,95 @@ def get_models(provider: str) -> list[str]:
         return [row["model_id"] for row in rows]
     except Exception as e:
         log_error(str(e), source="model_catalog.py:get_models")
+        return []
+    finally:
+        conn.close()
+
+
+def matches_model_type(
+    model_type: str | None,
+    modalities_output_json: str | None,
+    wanted: str,
+) -> bool:
+    """Check whether a catalog row matches a model-type filter.
+
+    Args:
+        model_type: The ``type`` column value (may be ``None``).
+        modalities_output_json: The ``modalities_output`` column value
+            (JSON list, may be ``None``).
+        wanted: One of ``"todos"``, ``"texto"``, ``"imagen"``, ``"audio"``,
+            ``"video"``, ``"transcripcion"``, ``"embeddings"``,
+            ``"decision"`` or ``"rerank"``.
+
+    Returns:
+        ``True`` when the row matches the filter.
+    """
+    wanted = (wanted or "todos").strip().lower()
+    if wanted in ("", "todos", "all"):
+        return True
+    mtype = (model_type or "").strip().lower()
+    try:
+        outputs = json.loads(modalities_output_json) if modalities_output_json else []
+    except (TypeError, ValueError):
+        outputs = []
+    if not isinstance(outputs, list):
+        outputs = []
+    outputs = [str(o).strip().lower() for o in outputs]
+    if wanted == "texto":
+        return mtype in ("", "chat", "text")
+    if wanted == "imagen":
+        return mtype == "image" or "image" in outputs
+    if wanted == "audio":
+        return mtype in ("speech", "audio") or "audio" in outputs
+    if wanted == "video":
+        return mtype == "video" or "video" in outputs
+    if wanted in ("transcripcion", "transcription"):
+        return mtype == "transcription"
+    if wanted in ("embeddings", "embedding"):
+        return mtype == "embedding" or "embedding" in outputs
+    if wanted in ("decision", "decisions"):
+        return mtype == "decision"
+    if wanted in ("rerank", "reranking"):
+        return mtype in ("rerank", "reranking")
+    return False
+
+
+def search_models(query: str) -> list[dict[str, Any]]:
+    """Search catalog models by provider, id, name or description (case-insensitive).
+
+    Args:
+        query: Substring to match. Empty matches all.
+
+    Returns:
+        List of ``{"provider", "model_id", "type", "modalities_output"}``
+        dicts ordered by provider and model id. Empty on DB errors.
+    """
+    escaped = (
+        (query or "")
+        .replace("\\", "\\\\")
+        .replace("%", "\\%")
+        .replace("_", "\\_")
+    )
+    pattern = f"%{escaped}%"
+    conn = _connect()
+    if conn is None:
+        return []
+    try:
+        rows = conn.execute(
+            load_query("model_catalog/search_models.sql"),
+            (pattern, pattern, pattern, pattern),
+        ).fetchall()
+        return [
+            {
+                "provider": row["provider"],
+                "model_id": row["model_id"],
+                "type": row["type"],
+                "modalities_output": row["modalities_output"],
+            }
+            for row in rows
+        ]
+    except Exception as e:
+        log_error(str(e), source="model_catalog.py:search_models")
         return []
     finally:
         conn.close()
@@ -357,6 +635,8 @@ def get_reasoning_options(provider: str, model_id: str) -> dict:
       ``"toggle"`` | ``"boolean"``
     - ``response_format_supported``: bool | None (from models.dev
       ``structured_output`` flag)
+    - ``model_type``: str | None (from models.dev ``type`` field, e.g.
+      ``"chat"``, ``"image"``, ``"speech"``, ``"realtime"``)
 
     Args:
         provider: Provider name.
@@ -375,6 +655,7 @@ def get_reasoning_options(provider: str, model_id: str) -> dict:
         "output_limit": None,
         "input_modalities": None,
         "output_modalities": None,
+        "model_type": None,
         "cost_input": None,
         "cost_output": None,
     }
@@ -386,6 +667,10 @@ def get_reasoning_options(provider: str, model_id: str) -> dict:
     # Structured output support comes straight from models.dev.
     if model.get("structured_output") is not None:
         result["response_format_supported"] = bool(model.get("structured_output"))
+
+    # Model family type decides which SDK call to use (chat vs image vs speech).
+    if model.get("type") is not None:
+        result["model_type"] = str(model.get("type"))
 
     # Add model info
     result["context_window"] = model.get("context_window")

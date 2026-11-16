@@ -22,6 +22,7 @@ import time
 from typing import Any
 
 import httpx
+from chromadb.errors import NotFoundError
 from fastapi import APIRouter, File, Form, UploadFile
 from pydantic import BaseModel
 
@@ -76,6 +77,13 @@ class AddUrlRequest(BaseModel):
     # errores en español dentro del contrato (en vez del 422 de Pydantic).
     chunk_size: Any = None
     overlap: Any = None
+
+
+class UpdateCollectionRequest(BaseModel):
+    """Request to rename a collection and/or update its description."""
+
+    new_name: str | None = None
+    description: str | None = None
 
 
 DEFAULT_CHUNK_SIZE = 500
@@ -275,6 +283,63 @@ async def reindex_collection_endpoint(name: str) -> dict:
         return make_error_response(message="No se pudo reindexar la colección.")
 
 
+@router.patch("/collections/{name}")
+async def update_collection(name: str, req: UpdateCollectionRequest) -> dict:
+    """Rename a collection and/or update its description.
+
+    Args:
+        name: Current collection name.
+        req: Body with optional ``new_name`` and ``description``.
+            ``description`` set to ``""`` clears it; omitted keeps it.
+
+    Returns:
+        Contract with the updated collection data.
+    """
+    try:
+        error = validar_nombre_coleccion(name)
+        if error:
+            return make_error_response(message=error)
+        if name in INTERNAL_COLLECTIONS:
+            return make_error_response(message="Las colecciones internas no se administran desde acá.")
+
+        new_name = (req.new_name or "").strip() or None
+        if new_name:
+            error = validar_nombre_coleccion(new_name)
+            if error:
+                return make_error_response(message=error)
+            if new_name in INTERNAL_COLLECTIONS:
+                return make_error_response(message="Ese nombre está reservado para colecciones internas.")
+
+        if new_name is None and req.description is None:
+            return make_error_response(
+                message="Nada que actualizar: indicá un nuevo nombre o una descripción."
+            )
+
+        db = get_vector_db()
+        try:
+            db.get_collection(name)
+        except (ValueError, NotFoundError):
+            return make_error_response(
+                message=f"La colección '{name}' no existe."
+            )
+        try:
+            info = db.update_collection(
+                name, new_name=new_name, description=req.description
+            )
+        except ValueError as exc:
+            return make_error_response(message=str(exc))
+        return validate_response(
+            make_success_response(
+                message=f"Colección '{name}' actualizada.",
+                data=info,
+                usage=zero_usage(),
+            )
+        )
+    except Exception:
+        logger.exception("Error actualizando colección")
+        return make_error_response(message="No se pudo actualizar la colección.")
+
+
 @router.delete("/collections/{name}")
 async def delete_collection(name: str) -> dict:
     """Delete a collection and all its data.
@@ -452,6 +517,127 @@ async def delete_source(name: str, kind: str, source: str = "") -> dict:
         return make_error_response(message="No se pudo eliminar la fuente.")
 
 
+async def _index_media_file(
+    db: VectorDB,
+    collection: str,
+    filename: str,
+    content_bytes: bytes,
+    media_kind: str,
+    resultados: list[dict[str, Any]],
+    errores: list[dict[str, Any]],
+) -> str | None:
+    """Vectorize one media file from its bytes and store the chunks.
+
+    Each chunk is embedded with the multimodal embedding model
+    (``embed_multimodal``) from its media bytes plus the extracted
+    content (transcription/description). The document stored in Chroma
+    holds the placeholder header plus that real content; the vector is
+    computed from the final document plus the media objects.
+
+    Args:
+        db: The vector database.
+        collection: Target collection name.
+        filename: Original file name.
+        content_bytes: Raw file bytes.
+        media_kind: ``"image"``, ``"audio"`` or ``"video"``.
+        resultados: Success list to append to.
+        errores: Error list to append to.
+
+    Returns:
+        Error message in Spanish, or ``None`` on success.
+    """
+    from backend.agent.utils.media_rag import (
+        MEDIA_DESCRIBE_MODEL,
+        MediaRagError,
+        build_content_prompt,
+        build_media_chunks,
+        content_document,
+    )
+
+    try:
+        chunks = build_media_chunks(filename, content_bytes, media_kind)
+    except MediaRagError as exc:
+        return str(exc)
+    except Exception as exc:
+        logger.exception("Error preparando medio %s", filename)
+        return f"No se pudo procesar {filename}: {exc}"
+
+    ids: list[str] = []
+    documents: list[str] = []
+    metadatas: list[dict[str, Any]] = []
+    vectors: list[list[float]] = []
+    try:
+        for chunk in chunks:
+            try:
+                _desc_t0 = time.time()
+                content = await asyncio.to_thread(
+                    db.embed_func.describe_media,
+                    build_content_prompt(chunk["media_kind"]),
+                    chunk.get("media_parts"),
+                    MEDIA_DESCRIBE_MODEL,
+                )
+                try:
+                    from backend.agent.utils.spend_handler import (
+                        record_external_usage,
+                    )
+
+                    record_external_usage(
+                        "transcription", "google", MEDIA_DESCRIBE_MODEL, 1,
+                        duration=round(time.time() - _desc_t0, 2),
+                    )
+                except Exception:
+                    pass
+            except Exception:
+                logger.warning(
+                    "No se pudo extraer el contenido de %s (tramo %s): "
+                    "se indexa solo el marcador.",
+                    filename, chunk.get("segment"),
+                )
+                content = None
+            chunk_text = content_document(chunk["chunk_text"], content)
+            vector = await asyncio.to_thread(
+                db.embed_func.embed_multimodal,
+                chunk_text,
+                chunk.get("media_parts"),
+            )
+            ids.append(chunk["chunk_id"])
+            documents.append(chunk_text)
+            meta: dict[str, Any] = {
+                "source": "file",
+                "filename": filename,
+                "chunk_number": chunk["chunk_number"],
+                "byte_size": chunk["byte_size"],
+                "media_kind": chunk["media_kind"],
+            }
+            if chunk.get("segment"):
+                meta["segment_start_s"] = chunk["segment"]["start_s"]
+                meta["segment_end_s"] = chunk["segment"]["end_s"]
+            metadatas.append(meta)
+            vectors.append(vector)
+    except Exception as exc:
+        logger.exception("Error embebiendo medio %s", filename)
+        return f"No se pudieron generar los embeddings de {filename}: {exc}"
+
+    _media_t0 = time.time()
+    await asyncio.to_thread(
+        db.add_documents, collection, ids=ids, documents=documents,
+        metadatas=metadatas, embeddings=vectors,
+    )
+    _media_duration = round(time.time() - _media_t0, 2)
+    try:
+        from backend.agent.utils.spend_handler import record_external_usage
+
+        record_external_usage(
+            "embedding", "google", db.embed_func.model_name, len(documents),
+            duration=_media_duration,
+            prompt_tokens=db.embed_func.count_tokens(documents),
+        )
+    except Exception:
+        pass
+    resultados.append({"filename": filename, "chunks": len(chunks)})
+    return None
+
+
 @router.post("/collections/{name}/files")
 async def upload_files(
     name: str,
@@ -461,11 +647,19 @@ async def upload_files(
 ) -> dict:
     """Upload files to a collection: extract text, chunk and store.
 
+    Text documents are chunked by characters (``chunk_size``/``overlap``).
+    Images, audio and video are vectorized from their bytes with the
+    multimodal embedding model: images produce exactly one chunk (no
+    character chunking applies); audio and video are split into
+    overlapping time segments (time-based chunking applies).
+
     Args:
         name: Target collection name.
         files: List of files to process.
-        chunk_size: Chunk size in chars (optional, default 500).
-        overlap: Overlap in chars (optional, default 60).
+        chunk_size: Chunk size in chars (optional, default 500; ignored
+            for media files).
+        overlap: Overlap in chars (optional, default 60; ignored for
+            media files).
 
     Returns:
         Contract with the processing details per file.
@@ -518,10 +712,24 @@ async def upload_files(
                 continue
 
             result: ExtractionResult = extract_text_from_bytes(filename, content_bytes)
+            media_kind: str | None = None
             if not result.success:
-                errores.append(
-                    {"filename": filename, "error": result.error_detail or "No se pudo procesar."}
+                # Media files are not text-extractable: vectorize them
+                # from their bytes instead of rejecting them.
+                from backend.agent.utils.media_rag import detect_media_kind
+
+                media_kind = detect_media_kind(filename)
+                if media_kind is None:
+                    errores.append(
+                        {"filename": filename, "error": result.error_detail or "No se pudo procesar."}
+                    )
+                    continue
+            if media_kind is not None:
+                media_error = await _index_media_file(
+                    db, name, filename, content_bytes, media_kind, resultados, errores
                 )
+                if media_error:
+                    errores.append({"filename": filename, "error": media_error})
                 continue
 
             text = (result.text or "").strip()

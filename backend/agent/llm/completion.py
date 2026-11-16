@@ -34,6 +34,7 @@ class CompletionMixin:
                            reasoning: bool = True,
                            budget_tokens: int | None = None,
                            provider: str | None = None,
+                           output: str | None = None,
                            **kwargs: Any) -> ContractResponse:
         """Send a chat completion and return content + tool_calls.
 
@@ -139,6 +140,22 @@ class CompletionMixin:
                 )
                 if reasoning_kwargs:
                     oa_kwargs.setdefault("extra_body", {}).update(reasoning_kwargs)
+                # Audio-capable OpenAI-speech models (e.g. gpt-audio via
+                # OpenRouter) REQUIRE the audio modality on every call, even
+                # for plain text turns: without it the provider rejects the
+                # request ("requires that either input content or output
+                # modality contain audio"). The helper below is a no-op ({})
+                # for models that are not speech-compatible.
+                try:
+                    from backend.agent.llm.voices import (
+                        build_openai_audio_kwargs as _oa_audio_kwargs,
+                    )
+
+                    oa_kwargs.update(
+                        _oa_audio_kwargs(effective_provider, model)
+                    )
+                except (ImportError, AttributeError):
+                    pass
 
                 try:
                     response = await client.chat.completions.create(
@@ -163,6 +180,26 @@ class CompletionMixin:
                         raise
                 output = response.choices[0].message.content or ""
                 raw_tc = response.choices[0].message.tool_calls
+                # Chat-style audio output (OpenAI dialect): base64 wav in
+                # ``message.audio.data`` plus an optional transcript. Emit
+                # the same ``<audio>`` tag the media extractors expect.
+                try:
+                    _audio_msg = getattr(
+                        response.choices[0].message, "audio", None
+                    )
+                    if _audio_msg is not None:
+                        _adata = getattr(_audio_msg, "data", None)
+                        _atr = getattr(_audio_msg, "transcript", None)
+                        if isinstance(_atr, str) and _atr.strip():
+                            output = f"{_atr.strip()}\n{output or ''}".strip()
+                        if isinstance(_adata, str) and _adata.strip():
+                            output = (
+                                f"{output}\n"
+                                f'<audio controls src="data:audio/wav;base64,'
+                                f'{_adata.strip()}" style="width:100%;"></audio>'
+                            ).strip()
+                except (AttributeError, TypeError):
+                    pass
                 if cleaned_output and output:
                     output = self.clean(output)
                 completion_tokens = response.usage.completion_tokens
@@ -232,7 +269,54 @@ class CompletionMixin:
                 total_time = round(time.time() - _proc_t0, 2)
             elif api_type == 'google':
                 # ── Google Gemini ──
+                # TTS-only models (["audio"]) accept ONLY ["AUDIO"] and do
+                # NOT support multiturn chat: single user message, no tools.
+                _resolved_mods_c: list[str] | None = None
+                _is_tts_only_c = False
+                _out_norm_c = (output or kwargs.get("output") or "")
+                _out_norm_c = _out_norm_c.strip().lower() if isinstance(_out_norm_c, str) else ""
+                try:
+                    from backend.agent.utils.model_catalog import get_reasoning_options as _get_caps_c
+                    from backend.agent.llm.outputs import (
+                        resolve_gemini_response_modalities as _resolve_mods_c,
+                    )
+
+                    if _out_norm_c in ("image", "audio", "auto"):
+                        _caps_c = _get_caps_c((effective_provider or "").strip(), model)
+                        _raw_mods_c = _caps_c.get("output_modalities") or []
+                        _resolved_mods_c = _resolve_mods_c(_raw_mods_c, response_format)
+                        _is_tts_only_c = _resolved_mods_c == ["AUDIO"]
+                    else:
+                        # Calls without an output hint (e.g. title generation)
+                        # still must not send TEXT/thinking to audio-only models.
+                        try:
+                            _caps_c = _get_caps_c((effective_provider or "").strip(), model)
+                            _raw_c = [str(_m or "").strip().lower() for _m in (_caps_c.get("output_modalities") or [])]
+                            if _raw_c and all(_m == "audio" for _m in _raw_c):
+                                _resolved_mods_c = ["AUDIO"]
+                                _is_tts_only_c = True
+                        except (ImportError, AttributeError):
+                            pass
+                except (ImportError, AttributeError, KeyError):
+                    pass
                 contents, system_instruction = self._to_gemini_contents(msgs)
+                if _is_tts_only_c:
+                    try:
+                        from google.genai import types as _stypes_c
+
+                        _last_text_c = ""
+                        for _m in reversed(msgs or []):
+                            _cc = (_m or {}).get("content", "")
+                            if isinstance(_cc, str) and _cc.strip():
+                                _last_text_c = _cc.strip()
+                                break
+                        contents = [_stypes_c.Content(
+                            role="user",
+                            parts=[_stypes_c.Part.from_text(text=_last_text_c or "Hola")],
+                        )]
+                    except (ImportError, AttributeError):
+                        pass
+                    system_instruction = None
                 config_kwargs: dict[str, Any] = {}
                 if temperature is not None:
                     config_kwargs['temperature'] = temperature
@@ -243,19 +327,30 @@ class CompletionMixin:
                 if system_instruction:
                     config_kwargs['system_instruction'] = system_instruction
                 gemini_tools = self._to_gemini_tools(tools)
-                if gemini_tools:
+                if gemini_tools and not _is_tts_only_c:
                     config_kwargs['tools'] = gemini_tools
                 if response_format == "json":
                     config_kwargs['response_mime_type'] = 'application/json'
+                if _resolved_mods_c is not None:
+                    config_kwargs["response_modalities"] = _resolved_mods_c
+                if _is_tts_only_c and response_format != "json":
+                    try:
+                        from backend.agent.llm.outputs import build_gemini_speech_config as _build_speech_c
 
-                # Use translator for reasoning (Google)
+                        config_kwargs["speech_config"] = _build_speech_c()
+                    except (ImportError, AttributeError):
+                        pass
+
+                # Use translator for reasoning (Google). TTS-only models do
+                # NOT support thinking: sending thinking_config fails with
+                # 400 "Thinking is not enabled for this model".
                 reasoning_kwargs = translate_reasoning(
                     provider=effective_provider,
                     reasoning_value=reasoning,
                     model_id=model,
                     budget_tokens=budget_tokens,
                 )
-                if "thinking_config" in reasoning_kwargs:
+                if "thinking_config" in reasoning_kwargs and not _is_tts_only_c:
                     config_kwargs["thinking_config"] = reasoning_kwargs["thinking_config"]
 
                 response = await self.google_client.aio.models.generate_content(
@@ -284,6 +379,32 @@ class CompletionMixin:
                             # persistence in the session store.
                             "signature": _signature_to_str(getattr(part, "thought_signature", None)),
                         })
+                    # Free mode: inline image/audio alongside text in the same turn.
+                    inline = getattr(part, "inline_data", None)
+                    if inline is not None and getattr(inline, "data", None):
+                        try:
+                            import base64 as _b64mod
+
+                            raw = inline.data
+                            b64 = raw if isinstance(raw, str) else _b64mod.b64encode(bytes(raw)).decode("ascii")
+                            mime = getattr(inline, "mime_type", None) or "image/png"
+                            if str(mime).lower().startswith("audio/"):
+                                # Raw PCM (audio/l16) is not browser-playable:
+                                # wrap it in a WAV container.
+                                if "l16" in str(mime).lower() or "pcm" in str(mime).lower():
+                                    try:
+                                        from backend.agent.llm.outputs import build_wav_data_url as _wav_url_c
+
+                                        raw_bytes = raw if isinstance(raw, bytes) else _b64mod.b64decode(b64)
+                                        output += _wav_url_c(bytes(raw_bytes))
+                                    except Exception:
+                                        output += f'\n<audio controls src="data:{mime};base64,{b64}" style="width:100%;"></audio>\n'
+                                else:
+                                    output += f'\n<audio controls src="data:{mime};base64,{b64}" style="width:100%;"></audio>\n'
+                            else:
+                                output += f'\n<img src="data:{mime};base64,{b64}" alt="Generated image" style="max-width:100%;border-radius:8px;" />\n'
+                        except (ValueError, TypeError, AttributeError):
+                            pass
                 completion_tokens = 0
                 prompt_tokens = 0
                 total_tokens = 0

@@ -199,16 +199,45 @@ async def chat_endpoint(
         # Set error context for this request (inside event_stream so set/reset share same async context)
         error_ctx_token = set_error_context(session_id=session_id, turn_number=turn_number)
         try:
-            agent_loop = AgentLoop(
-                agent=agent,
-                session_manager=session_manager,
-            )
-            event_source = agent_loop.run(
-                session_id=session_id,
-                user_message=message,
-                file_contents=file_contents,
-                stream_cancel_event=stream_cancel_event,
-            )
+            # Media-only models (TTS / image, no text output) run a
+            # one-shot turn outside the agent loop: single direct SDK
+            # call with only the user's text.
+            use_oneshot = False
+            try:
+                from backend.agent.llm.outputs import is_media_only_turn
+                from backend.agent.utils.model_catalog import get_reasoning_options
+
+                _model = getattr(agent, "_resolved_model", None)
+                _provider = getattr(agent, "provider", None)
+                _caps = get_reasoning_options(
+                    (_provider or "").strip() if isinstance(_provider, str) else "",
+                    _model,
+                )
+                use_oneshot, _ = is_media_only_turn((_caps or {}).get("output_modalities"))
+            except Exception:
+                use_oneshot = False
+            if use_oneshot:
+                from backend.agent.loop.media_oneshot import run_media_oneshot
+
+                event_source = run_media_oneshot(
+                    session_id=session_id,
+                    user_message=message,
+                    turn_number=turn_number,
+                    agent=agent,
+                    session_manager=session_manager,
+                    stream_cancel_event=stream_cancel_event,
+                )
+            else:
+                agent_loop = AgentLoop(
+                    agent=agent,
+                    session_manager=session_manager,
+                )
+                event_source = agent_loop.run(
+                    session_id=session_id,
+                    user_message=message,
+                    file_contents=file_contents,
+                    stream_cancel_event=stream_cancel_event,
+                )
             async for sse_event in event_source:
                 # If client disconnected, signal cancellation but let generator finish naturally
                 # (loop.py will handle aborted event, save partial response, and yield [DONE])

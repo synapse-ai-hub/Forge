@@ -7,7 +7,7 @@ import { Button } from "../components/ui/button";
 
 const API = API_BASE_URL + "/api";
 
-const ALLOWED_EXTENSIONS = /\.(pdf|txt|md|docx|doc|csv|xlsx|xls|json|xml|yaml|yml|py)$/i;
+const ALLOWED_EXTENSIONS = /\.(pdf|txt|md|docx|doc|csv|xlsx|xls|json|xml|yaml|yml|py|png|jpg|jpeg|webp|gif|bmp|mp3|wav|ogg|flac|m4a|mp4|mov)$/i;
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50 MB por archivo
 
 /** Colección tal como la devuelve el backend. */
@@ -50,6 +50,11 @@ export function RagInterface() {
 
   // Colección seleccionada
   const [selected, setSelected] = useState<string | null>(null);
+
+  // Editar nombre/descripción de la colección seleccionada
+  const [editName, setEditName] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+  const [editing, setEditing] = useState(false);
 
   // Fuentes de la colección seleccionada
   const [sources, setSources] = useState<Source[]>([]);
@@ -246,6 +251,49 @@ export function RagInterface() {
     [newName, newDescription, loadCollections, ragBlocked],
   );
 
+  /* ---- editar nombre/descripción de la colección seleccionada ---- */
+  const selectedMeta = collections.find((c) => c.name === selected) || null;
+  const handleEditCollection = useCallback(async () => {
+    if (ragBlocked) return;
+    if (!selected) return;
+    const name = editName.trim();
+    if (!name) {
+      setResultType("error");
+      setResultMsg("El nombre de la colección es obligatorio.");
+      return;
+    }
+    setEditing(true);
+    try {
+      const resp = await fetch(`${API}/rag/collections/${encodeURIComponent(selected)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ new_name: name, description: editDescription }),
+      });
+      const data: { status?: string; message?: string; data?: { name?: string } } = await resp.json();
+      if (data.status === "success") {
+        setResultType("success");
+        setResultMsg(data.message || "Colección actualizada.");
+        await loadCollections();
+        setSelected(data.data?.name || name);
+      } else {
+        setResultType("error");
+        setResultMsg(data.message || "Error al actualizar la colección.");
+      }
+    } catch (e) {
+      setResultType("error");
+      setResultMsg("Error de conexión: " + ((e as Error)?.message || "Error desconocido"));
+    } finally {
+      setEditing(false);
+    }
+  }, [selected, editName, editDescription, loadCollections, ragBlocked]);
+
+  /* Sincronizar el formulario de edición al cambiar de colección. */
+  useEffect(() => {
+    setEditName(selected || "");
+    const meta = collections.find((c) => c.name === selected)?.metadata;
+    setEditDescription(typeof meta?.description === "string" ? meta.description : "");
+  }, [selected, collections]);
+
   /* ---- eliminar colección ---- */
   const handleDelete = useCallback(
     async (name: string) => {
@@ -274,7 +322,7 @@ export function RagInterface() {
     let warning: string | null = null;
     for (const f of incoming) {
       if (!ALLOWED_EXTENSIONS.test(f.name)) {
-        warning = `Tipo de archivo no soportado: ${f.name}. Permitidos: PDF, TXT, MD, DOCX, DOC, CSV, XLSX, XLS, JSON, XML, YAML, PY.`;
+        warning = `Tipo de archivo no soportado: ${f.name}. Permitidos: PDF, TXT, MD, DOCX, DOC, CSV, XLSX, XLS, JSON, XML, YAML, PY, imágenes, audio y video.`;
         continue;
       }
       if (f.size > MAX_FILE_SIZE) {
@@ -513,22 +561,60 @@ export function RagInterface() {
             </div>
           ) : (
             <div className="max-w-2xl mx-auto space-y-6">
-              <div>
+              <div className="space-y-2">
                 <h2 className="text-lg font-semibold text-app-text">{selected}</h2>
+                {typeof selectedMeta?.metadata?.description === "string" &&
+                  selectedMeta.metadata.description && (
+                    <p className="text-sm text-app-text-secondary">
+                      {selectedMeta.metadata.description}
+                    </p>
+                  )}
                 <p className="text-xs text-app-text-secondary">
-                  Agregá archivos o páginas web. El contenido se chunkea y se guarda en la colección. Podés ver y eliminar cada fuente abajo.
+                  Agregá archivos o páginas web. El contenido de texto se chunkea y se guarda en la colección. Podés ver y eliminar cada fuente abajo.
                 </p>
               </div>
+
+              {/* Editar nombre y descripción de la colección */}
+              <Collapsible title="Editar colección">
+                <div className="space-y-3">
+                  <div>
+                    <label htmlFor="edit-collection-name" className="text-xs text-app-text">Nombre</label>
+                    <input
+                      id="edit-collection-name"
+                      type="text"
+                      value={editName}
+                      onChange={(e) => setEditName(e.target.value)}
+                      title="Nombre de la colección (minúsculas, números y guiones)."
+                      className="w-full rounded-lg border border-app-border bg-white px-2 py-1 text-xs text-app-text focus:outline-none focus:ring-2 focus:ring-app-primary-light"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="edit-collection-description" className="text-xs text-app-text">Descripción</label>
+                    <input
+                      id="edit-collection-description"
+                      type="text"
+                      value={editDescription}
+                      onChange={(e) => setEditDescription(e.target.value)}
+                      title="Descripción de la colección."
+                      className="w-full rounded-lg border border-app-border bg-white px-2 py-1 text-xs text-app-text focus:outline-none focus:ring-2 focus:ring-app-primary-light"
+                    />
+                  </div>
+                  <Button type="button" onClick={handleEditCollection} variant="gradient" className="w-full" disabled={editing}>
+                    {editing ? "Guardando..." : "Guardar cambios"}
+                  </Button>
+                </div>
+              </Collapsible>
 
               {/* Configuración de chunking (archivos y páginas web) */}
               <Collapsible title="Configuración de chunking">
                 <p className="text-[11px] text-app-text-secondary mb-2">
-                  Se aplica a archivos y páginas web al presionar "Aplicar". Sin aplicar, se usan los valores por defecto ({DEFAULT_CHUNK_SIZE} / {DEFAULT_OVERLAP}).
+                  Solo aplica a texto (archivos de texto y páginas web) al presionar "Aplicar". Sin aplicar, se usan los valores por defecto ({DEFAULT_CHUNK_SIZE} / {DEFAULT_OVERLAP}). Las imágenes generan un único chunk; los audios y videos se dividen por tiempo, no por estos valores.
                 </p>
                 <div className="space-y-3">
                   <div>
-                    <label className="text-xs text-app-text">Chunk</label>
+                    <label htmlFor="chunk-size" className="text-xs text-app-text">Chunk</label>
                     <input
+                      id="chunk-size"
                       type="number"
                       min={1}
                       step={1}
@@ -539,8 +625,9 @@ export function RagInterface() {
                     />
                   </div>
                   <div>
-                    <label className="text-xs text-app-text">Overlap</label>
+                    <label htmlFor="chunk-overlap" className="text-xs text-app-text">Overlap</label>
                     <input
+                      id="chunk-overlap"
                       type="number"
                       min={0}
                       step={1}
@@ -636,11 +723,11 @@ export function RagInterface() {
                     Arrastrá archivos acá o{" "}
                     <span className="text-indigo-600 font-medium">seleccioná</span>
                   </p>
-                  <p className="text-xs text-gray-400 mt-1">PDF, TXT, MD, DOCX, CSV, XLSX, JSON, XML</p>
+                  <p className="text-xs text-gray-400 mt-1">PDF, TXT, MD, DOCX, CSV, XLSX, JSON, XML · Imágenes, audio y video</p>
                   <input
                     type="file"
                     multiple
-                    accept=".pdf,.txt,.md,.docx,.csv,.xlsx,.xls,.json,.xml,.yaml,.yml,.py"
+                    accept=".pdf,.txt,.md,.docx,.doc,.csv,.xlsx,.xls,.json,.xml,.yaml,.yml,.py,.png,.jpg,.jpeg,.webp,.gif,.bmp,.mp3,.wav,.ogg,.flac,.m4a,.mp4,.mov"
                     className="hidden"
                     onChange={handleFilesSelected}
                   />

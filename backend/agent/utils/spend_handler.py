@@ -238,6 +238,69 @@ def record_spend(
         return False
 
 
+def calculate_multimodal_cost(
+    provider: str,
+    model: str,
+    output: str,
+    units: float = 1.0,
+) -> tuple[float, float, float]:
+    """Calculate the cost for a non-token output (image, audio, video).
+
+    Token pricing from ``model_catalog`` does not apply to image, speech
+    or video generations (billed per image, per character/second or per
+    video-second depending on the provider). Phase 1 records the request
+    with zero token cost and exposes the ``output`` basis so future
+    provider-specific pricing can plug in here without touching callers.
+
+    Args:
+        provider: The provider name (e.g. ``"openai"``, ``"google"``).
+        model: The model identifier.
+        output: Output modality (``"image"``, ``"audio"``, ``"video"``).
+        units: Number of billed units (images, characters, seconds).
+
+    Returns:
+        A tuple of (cost_input, cost_output, cost_total), currently
+        ``(0.0, 0.0, 0.0)`` with a warning so spend stays consistent.
+    """
+    try:
+        logger.warning(
+            "Multimodal cost for %s/%s output=%s units=%s is not priced yet: recording zero cost.",
+            provider,
+            model,
+            output,
+            units,
+        )
+        return 0.0, 0.0, 0.0
+    except Exception as e:
+        log_error(str(e), source="spend_handler.py:calculate_multimodal_cost")
+        return 0.0, 0.0, 0.0
+
+
+def record_multimodal_spend(
+    provider: str,
+    model: str,
+    output: str,
+    units: float = 1.0,
+) -> bool:
+    """Record a spend transaction for an image, audio or video generation.
+
+    Args:
+        provider: The provider name.
+        model: The model identifier.
+        output: Output modality (``"image"``, ``"audio"``, ``"video"``).
+        units: Number of billed units.
+
+    Returns:
+        True if the spend was recorded successfully, False otherwise.
+    """
+    try:
+        cost_input, cost_output, _ = calculate_multimodal_cost(provider, model, output, units)
+        return record_spend(provider, model, 0, 0, cost_input, cost_output, requests=1)
+    except Exception as e:
+        log_error(str(e), source="spend_handler.py:record_multimodal_spend")
+        return False
+
+
 def calculate_cost(
     provider: str,
     model: str,

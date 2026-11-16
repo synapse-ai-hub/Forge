@@ -449,6 +449,9 @@ def reindex_collection(db: VectorDB, name: str) -> dict:
     ALL up front (so an embedding failure aborts before anything is
     deleted), then recreates the collection and re-inserts everything.
     Vectors are never converted; they are regenerated from the texts.
+    Media chunks (images/audio/video, marked with ``media_kind``
+    metadata) keep their stored vectors verbatim: their bytes are not
+    persisted, so they cannot be re-embedded from text.
 
     Args:
         db: Shared ``VectorDB`` instance (current embedding function).
@@ -480,19 +483,35 @@ def reindex_collection(db: VectorDB, name: str) -> dict:
         )
 
     # 1. Read every stored chunk (paginated via col.get offset/limit).
+    # Media chunks (``media_kind`` metadata) keep their existing vectors:
+    # their bytes are not stored, so they cannot be re-embedded from
+    # text — re-embedding the placeholder would destroy the media
+    # vector. Only text chunks are re-embedded.
     all_ids: list[str] = []
     all_documents: list[str] = []
     all_metadatas: list[dict] = []
+    media_vectors: dict[str, list[float]] = {}
     batch_size = 256
     offset = 0
     while True:
-        page = old.get(limit=batch_size, offset=offset)
+        page = old.get(limit=batch_size, offset=offset, include=["documents", "metadatas", "embeddings"])
         ids = page.get("ids") or []
         if not ids:
             break
-        all_ids.extend(ids)
-        all_documents.extend(page.get("documents") or [])
-        all_metadatas.extend(page.get("metadatas") or [])
+        docs = page.get("documents") or []
+        metas = page.get("metadatas") or []
+        embs = page.get("embeddings") or []
+        if not (len(docs) == len(ids) and len(metas) == len(ids) and len(embs) == len(ids)):
+            raise ValueError(
+                f"La colección '{name}' devolvió páginas inconsistentes; "
+                "reindex abortado sin cambios."
+            )
+        for chunk_id, doc, meta, emb in zip(ids, docs, metas, embs):
+            all_ids.append(chunk_id)
+            all_documents.append(doc)
+            all_metadatas.append(meta if isinstance(meta, dict) else {})
+            if isinstance(meta, dict) and meta.get("media_kind") and emb:
+                media_vectors[chunk_id] = list(emb)
         if len(ids) < batch_size:
             break
         offset += batch_size
@@ -510,14 +529,30 @@ def reindex_collection(db: VectorDB, name: str) -> dict:
         }
 
     # 2. Embed EVERYTHING up front. If this fails, the original collection
-    #    is untouched (no data loss).
+    #    is untouched (no data loss). Media chunks are excluded: their
+    #    stored vectors are reused verbatim in step 4.
     logger.info(
         "Reindexando '%s': embebiendo %d chunk(s) con el modelo actual...",
         name,
         len(all_documents),
     )
     _embed_t0 = time.time()
-    vectors = _embed_with_retry(db.embed_func, all_documents)
+    text_indices = [i for i, cid in enumerate(all_ids) if cid not in media_vectors]
+    text_docs = [all_documents[i] for i in text_indices]
+    vectors: list[list[float] | None] = [None] * len(all_ids)
+    if text_docs:
+        text_vectors = _embed_with_retry(db.embed_func, text_docs)
+        for idx, vec in zip(text_indices, text_vectors):
+            vectors[idx] = vec
+    for i, cid in enumerate(all_ids):
+        if cid in media_vectors:
+            vectors[i] = media_vectors[cid]
+    missing = [cid for cid, vec in zip(all_ids, vectors) if vec is None]
+    if missing:
+        raise ValueError(
+            f"La colección '{name}' tiene {len(missing)} chunk(s) de medios "
+            "sin vector almacenado; reindex abortado sin cambios."
+        )
     _embed_duration = round(time.time() - _embed_t0, 2)
     # Track the embedding-model call in SQLite (one row with the embedded
     # chunk count). Never breaks the reindex flow.
@@ -525,9 +560,9 @@ def reindex_collection(db: VectorDB, name: str) -> dict:
         from backend.agent.utils.spend_handler import record_external_usage
 
         record_external_usage(
-            "embedding", "google", db.embed_func.model_name, len(all_documents),
+            "embedding", "google", db.embed_func.model_name, len(text_docs),
             duration=_embed_duration,
-            prompt_tokens=db.embed_func.count_tokens(all_documents),
+            prompt_tokens=db.embed_func.count_tokens(text_docs) if text_docs else 0,
         )
     except Exception:
         pass
@@ -640,6 +675,178 @@ def _turn_metadata(
         "created_at": now.isoformat(timespec="seconds"),
         "date": now.strftime("%d/%m/%Y %H:%M"),
     }
+
+
+def strip_media_data_urls(text: str) -> str:
+    """Replace embedded media data URLs with short placeholders.
+
+    Assistant messages persist generated media as ``<audio>``/``<img>``
+    tags with base64 payloads. Indexing that base64 as text produces
+    garbage embeddings and burns quota, so it is replaced before
+    indexing (the objects themselves are embedded separately).
+
+    Args:
+        text: Assistant message content (may contain media tags).
+
+    Returns:
+        The text with data URLs replaced by placeholders.
+    """
+    import re as _re
+
+    if not text:
+        return ""
+    cleaned = _re.sub(
+        r'<audio\b[^>]*>',
+        "[audio generado]",
+        text,
+        flags=_re.IGNORECASE,
+    )
+    cleaned = _re.sub(
+        r'<video\b[^>]*>',
+        "[video generado]",
+        cleaned,
+        flags=_re.IGNORECASE,
+    )
+    cleaned = _re.sub(
+        r'<img\b[^>]*>',
+        "[imagen generada]",
+        cleaned,
+        flags=_re.IGNORECASE,
+    )
+    cleaned = _re.sub(
+        r'data:(?:audio|image|video)/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+',
+        "[contenido multimedia]",
+        cleaned,
+        flags=_re.IGNORECASE,
+    )
+    return cleaned
+
+
+def index_media_turn(
+    session_id: str,
+    turn_number: int,
+    user_message: str,
+    assistant_message: str,
+    media: list[tuple[bytes, str]] | None = None,
+) -> dict:
+    """Index one media one-shot turn using multimodal embeddings.
+
+    The turn document contains the user text and the assistant text with
+    media payloads stripped to placeholders, plus the extracted media
+    content (transcription/description) appended; the embedding vector is
+    computed from that final document PLUS the media objects
+    (image/audio bytes), not from base64 text. A single document is
+    stored (no chunking: stripped media turns are short).
+
+    Args:
+        session_id: Session identifier.
+        turn_number: Turn number inside the session.
+        user_message: User message of the turn.
+        assistant_message: Final assistant response (may contain media tags).
+        media: Optional list of ``(raw_bytes, mime_type)`` media objects.
+
+    Returns:
+        Contract response dict (``{status, message, data, usage}``).
+    """
+    try:
+        from backend.instances import session_manager
+        from backend.agent.utils.vector_db import get_vector_db
+
+        stripped = strip_media_data_urls(assistant_message)
+        if not (user_message or "").strip() and not stripped.strip():
+            return make_success_response(
+                message="Turno vacío: nada que indexar.",
+                data=None,
+                usage=zero_usage(),
+            )
+
+        session_title = session_manager.get_session_title(session_id)
+        document = build_turn_document(user_message, stripped)
+        metadata = _turn_metadata(session_id, session_title, turn_number)
+        doc_id = f"{session_id}__turn_{turn_number}"
+
+        db = get_vector_db()
+        db.get_or_create_collection(MEMORY_COLLECTION)
+
+        # Extract the real media content (transcription/description) so the
+        # stored document holds it instead of a bare placeholder.
+        if media:
+            from backend.agent.utils.media_rag import (
+                MEDIA_DESCRIBE_MODEL,
+                build_content_prompt,
+                content_document,
+            )
+
+            contents: list[str] = []
+            for raw, mime in media:
+                kind = "audio" if (mime or "").startswith("audio") else (
+                    "video" if (mime or "").startswith("video") else "image"
+                )
+                try:
+                    _desc_t0 = time.time()
+                    contents.append(
+                        db.embed_func.describe_media(
+                            build_content_prompt(kind),
+                            [(bytes(raw), mime)],
+                            MEDIA_DESCRIBE_MODEL,
+                        )
+                    )
+                    try:
+                        from backend.agent.utils.spend_handler import (
+                            record_external_usage,
+                        )
+
+                        record_external_usage(
+                            "transcription", "google", MEDIA_DESCRIBE_MODEL, 1,
+                            duration=round(time.time() - _desc_t0, 2),
+                            session_id=session_id,
+                            turn_number=turn_number,
+                        )
+                    except Exception:
+                        pass
+                except Exception:
+                    logger.warning(
+                        "No se pudo extraer el contenido de un medio del "
+                        "turno %s#%s: se indexa solo el marcador.",
+                        session_id, turn_number,
+                    )
+            if contents:
+                document = content_document(document, "\n".join(contents))
+
+        _mem_t0 = time.time()
+        vector = db.embed_func.embed_multimodal(document, media)
+        db.add_documents(
+            MEMORY_COLLECTION,
+            ids=[doc_id],
+            documents=[document],
+            metadatas=[metadata],
+            embeddings=[vector],
+        )
+        _mem_duration = round(time.time() - _mem_t0, 2)
+        try:
+            from backend.agent.utils.spend_handler import record_external_usage
+
+            record_external_usage(
+                "embedding", "google", db.embed_func.model_name, 1,
+                duration=_mem_duration,
+                prompt_tokens=db.embed_func.count_tokens([document]),
+            )
+        except Exception:
+            pass
+
+        return make_success_response(
+            message=f"Turno {turn_number} indexado en '{MEMORY_COLLECTION}'.",
+            data={"indexed_documents": 1},
+            usage=zero_usage(),
+        )
+    except Exception as e:
+        log_error(str(e), source="rag_helpers.py:index_media_turn")
+        logger.warning("Could not index media turn %s#%s: %s", session_id, turn_number, e)
+        return make_error_response(
+            message=f"No se pudo indexar el turno: {e}",
+            data=None,
+            usage=zero_usage(),
+        )
 
 
 def _index_turn_sync(

@@ -158,6 +158,22 @@ function App() {
     notificationService.list().then(setNotifications).catch(() => {});
   }, []);
 
+  /* A play on any audio/video pauses every other media element on the
+   * page, so players never overlap. The "play" event does not bubble,
+   * so it is captured at the document level; this also covers raw
+   * <audio>/<video> tags rendered inside markdown HTML. */
+  useEffect(() => {
+    const onPlayCapture = (event: Event) => {
+      const current = event.target as HTMLMediaElement | null;
+      if (!current || (current.tagName !== "AUDIO" && current.tagName !== "VIDEO")) return;
+      document.querySelectorAll("audio, video").forEach((el) => {
+        if (el !== current) (el as HTMLMediaElement).pause();
+      });
+    };
+    document.addEventListener("play", onPlayCapture, true);
+    return () => document.removeEventListener("play", onPlayCapture, true);
+  }, []);
+
   /* Opening the bell: refresh the list, then mark everything as read. */
   const handleOpenNotifications = useCallback(async () => {
     try {

@@ -450,6 +450,49 @@ def build_user_message(
         return user_message
 
 
+_MEDIA_DATA_URL_RE = re.compile(
+    r'data:(?P<mime>audio/[^;"\s]+|image/[^;"\s]+|video/[^;"\s]+);base64,[A-Za-z0-9+/=]+'
+)
+"""Matches inline base64 media payloads (audio/image/video data URLs)."""
+
+
+def sanitize_media_content(content: Any) -> Any:
+    """Replace inline base64 media with short placeholders.
+
+    Assistant turns persist generated media as ``data:<mime>;base64,...``
+    URLs. Sending those payloads back to the LLM on every turn inflates
+    the context (multi-MB histories) and breaks providers with input
+    size limits. This keeps the surrounding text and notes that media
+    was generated, without the bytes.
+
+    Args:
+        content: Message content that may embed base64 data URLs.
+            Non-string input is returned unchanged.
+
+    Returns:
+        The content with each audio/image/video data URL replaced by
+        ``[audio generado]``, ``[imagen generada]`` or ``[video generado]``.
+        Non-string input is returned unchanged.
+    """
+    if not isinstance(content, str) or "data:" not in content:
+        return content
+
+    def _placeholder(match: re.Match[str]) -> str:
+        mime = (match.group("mime") or "").lower()
+        if mime.startswith("audio/"):
+            return "[audio generado]"
+        if mime.startswith("image/"):
+            return "[imagen generada]"
+        if mime.startswith("video/"):
+            return "[video generado]"
+        return "[media generada]"
+
+    try:
+        return _MEDIA_DATA_URL_RE.sub(_placeholder, content)
+    except Exception:
+        return content
+
+
 def build_initial_messages(
     session_manager: SessionManager,
     session_id: str,
@@ -494,7 +537,13 @@ def build_initial_messages(
 
         content = msg.get("content")
         if content is not None:
-            entry["content"] = content
+            # Strip inline base64 media: history must stay small enough
+            # for provider input limits (multi-MB data URLs break calls).
+            entry["content"] = (
+                sanitize_media_content(content)
+                if isinstance(content, str)
+                else content
+            )
 
         tool_calls = msg.get("tool_calls")
         if tool_calls:

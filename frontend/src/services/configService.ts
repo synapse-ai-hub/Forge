@@ -89,6 +89,11 @@ export interface AdvancedParams {
   reasoning: string | null;
   budget_tokens: number | null;
   response_format: string | null;
+  output: string | null;
+  voice: string | null;
+  voice_speed: number | null;
+  voice_instructions: string | null;
+  voice_format: string | null;
 }
 
 export interface ParametersResponse {
@@ -98,12 +103,21 @@ export interface ParametersResponse {
   reasoning: string | null;
   budget_tokens: number | null;
   response_format: string | null;
+  output: string | null;
+  voice: string | null;
+  voice_speed: number | null;
+  voice_instructions: string | null;
+  voice_format: string | null;
   model: string | null;
   provider: string;
   /** Whether the current model declaratively supports reasoning (null = unknown). */
   reasoning_supported: boolean | null;
   /** Whether the current model declaratively supports structured output (null = unknown). */
   response_format_supported: boolean | null;
+  /** Output modalities from models.dev (e.g. ["text", "image"]). */
+  output_modalities?: string[] | null;
+  /** Model family type from models.dev (e.g. "chat", "image", "speech"). */
+  model_type?: string | null;
 }
 
 export interface ModelCapabilitiesResponse {
@@ -120,8 +134,53 @@ export interface ModelCapabilitiesResponse {
   output_limit: number | null;
   input_modalities: string[] | null;
   output_modalities: string[] | null;
+  model_type?: string | null;
   cost_input: number | null;
   cost_output: number | null;
+}
+
+/** Voice options for a TTS-capable model (drives the voice panel). */
+export interface VoicesResponse {
+  status: string;
+  model: string | null;
+  provider: string;
+  voices: string[];
+  supports_speed: boolean;
+  supports_instructions: boolean;
+  formats: string[];
+  fixed_voice: boolean;
+  applicable: boolean;
+  /** Voice used when none is selected (model default). */
+  default_voice?: string | null;
+  /** Format used when none is selected; null when the model has a fixed format. */
+  default_format?: string | null;
+  /**
+   * Per-voice metadata. Google: name + documented style + live
+   * gender/pitch/accent/persona/description from the Voice Library
+   * (empty strings when unavailable). OpenAI: name + recommended flag.
+   */
+  voice_details?: Array<{
+    name: string;
+    style?: string;
+    gender?: string;
+    pitch?: string;
+    accent?: string;
+    persona?: string;
+    description?: string;
+    recommended?: boolean;
+  }>;
+}
+
+/** One cross-provider model search hit. */
+export interface ModelSearchResult {
+  provider: string;
+  model_id: string;
+  type: string | null;
+}
+
+export interface ModelSearchResponse {
+  status: string;
+  results: ModelSearchResult[];
 }
 
 export interface DecisionProvider {
@@ -165,6 +224,18 @@ export const configService = {
     return response.json();
   },
 
+  /** Search models by text and type across providers with a stored key. */
+  async searchModels(q: string, type: string, signal?: AbortSignal): Promise<ModelSearchResponse> {
+    const response = await fetch(
+      `${API_BASE_URL}/api/config/models/search?q=${encodeURIComponent(q)}&type=${encodeURIComponent(type)}`,
+      { method: "GET", signal }
+    );
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    return response.json();
+  },
+
   /** Get model capabilities (reasoning options, etc.) for a specific model/provider. */
   async getModelCapabilities(model: string, provider: string): Promise<ModelCapabilitiesResponse> {
     const response = await fetch(
@@ -194,6 +265,11 @@ export const configService = {
         reasoning: params ? params.reasoning : null,
         budget_tokens: params ? params.budget_tokens : null,
         response_format: params ? params.response_format : null,
+        output: params ? params.output : null,
+        voice: params ? params.voice : null,
+        voice_speed: params ? params.voice_speed : null,
+        voice_instructions: params ? params.voice_instructions : null,
+        voice_format: params ? params.voice_format : null,
       }),
     });
     const result = await response.json().catch(() => null);
@@ -212,6 +288,18 @@ export const configService = {
     const response = await fetch(`${API_BASE_URL}/api/config/parameters`, {
       method: "GET",
     });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    return response.json();
+  },
+
+  /** Get the voice options for a model (drives the voice panel). */
+  async getVoices(model: string, provider: string): Promise<VoicesResponse> {
+    const response = await fetch(
+      `${API_BASE_URL}/api/config/voices?model=${encodeURIComponent(model)}&provider=${encodeURIComponent(provider)}`,
+      { method: "GET" }
+    );
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }

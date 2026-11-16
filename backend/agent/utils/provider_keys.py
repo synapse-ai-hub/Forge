@@ -690,7 +690,9 @@ def validate_key(provider: str, api_key: str) -> dict:
             # Validate by listing models via Google GenAI SDK
             try:
                 from google import genai
-                client = genai.Client(api_key=key)
+                client = genai.Client(
+                    api_key=key, http_options={"api_version": "v1beta"}
+                )
                 models = list(client.models.list())
                 if not models:
                     return {

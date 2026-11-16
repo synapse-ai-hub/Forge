@@ -4,7 +4,7 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Collapsible } from "./ui/collapsible";
 import configService from "../services/configService";
-import type { ProviderKeyStatus, AdvancedParams, DecisionProvider } from "../services/configService";
+import type { ProviderKeyStatus, AdvancedParams, DecisionProvider, VoicesResponse, ModelSearchResult } from "../services/configService";
 import contextFilesService, { type ContextFile } from "../services/contextFilesService";
 import userMemoryService, { type UserPreference } from "../services/userMemoryService";
 
@@ -19,6 +19,11 @@ const DEFAULT_PARAMS: AdvancedParams = {
   reasoning: null,
   budget_tokens: null,
   response_format: null,
+  output: null,
+  voice: null,
+  voice_speed: null,
+  voice_instructions: null,
+  voice_format: null,
 };
 
 function paramsEqual(a: AdvancedParams, b: AdvancedParams): boolean {
@@ -27,8 +32,34 @@ function paramsEqual(a: AdvancedParams, b: AdvancedParams): boolean {
     a.top_p === b.top_p &&
     a.reasoning === b.reasoning &&
     a.budget_tokens === b.budget_tokens &&
-    a.response_format === b.response_format
+    a.response_format === b.response_format &&
+    a.output === b.output &&
+    a.voice === b.voice &&
+    a.voice_speed === b.voice_speed &&
+    a.voice_instructions === b.voice_instructions &&
+    a.voice_format === b.voice_format
   );
+}
+
+function buildOutputOptions(
+  outputModalities: string[] | null,
+  responseFormatSupported: boolean | null,
+  modelType: string | null
+): Array<{ value: string; label: string }> | null {
+  const mods = (outputModalities || []).map((m) => m.toLowerCase());
+  const has = (m: string): boolean => mods.includes(m);
+  const type = (modelType || "").toLowerCase();
+  const multimodal = has("image") || has("audio") || has("video") || type === "image" || type === "speech" || type === "realtime";
+  // Multimodales: sin dropdown.
+  if (multimodal) {
+    return null;
+  }
+  // Solo texto: Texto (default) y JSON. Nada de Default ni Auto.
+  const opts: Array<{ value: string; label: string }> = [{ value: "text", label: "Texto" }];
+  if (responseFormatSupported !== false) {
+    opts.push({ value: "json", label: "JSON" });
+  }
+  return opts;
 }
 
 export function ConfigTab({ verboseMode, onVerboseModeChange }: ConfigTabProps) {
@@ -64,6 +95,19 @@ export function ConfigTab({ verboseMode, onVerboseModeChange }: ConfigTabProps) 
   const [outputModalities, setOutputModalities] = useState<string[] | null>(null);
   const [costInput, setCostInput] = useState<number | null>(null);
   const [costOutput, setCostOutput] = useState<number | null>(null);
+  const [modelType, setModelType] = useState<string | null>(null);
+  const [outputOptions, setOutputOptions] = useState<Array<{ value: string; label: string }> | null>([
+    { value: "text", label: "Texto" },
+    { value: "json", label: "JSON" },
+  ]);
+  /* ---- voice panel (TTS models only; null = hidden) ---- */
+  const [voiceOptions, setVoiceOptions] = useState<VoicesResponse | null>(null);
+  const [showVoiceInfo, setShowVoiceInfo] = useState(false);
+  /* ---- model search filter (text + type, across providers with key) ---- */
+  const [modelFilterType, setModelFilterType] = useState("todos");
+  const [modelFilterText, setModelFilterText] = useState("");
+  const [searchResults, setSearchResults] = useState<ModelSearchResult[] | null>(null);
+  const [searching, setSearching] = useState(false);
   const [applyMessage, setApplyMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [contextFiles, setContextFiles] = useState<ContextFile[]>([]);
   const [uploadingContext, setUploadingContext] = useState(false);
@@ -324,11 +368,36 @@ export function ConfigTab({ verboseMode, onVerboseModeChange }: ConfigTabProps) 
           reasoning: prm.reasoning,
           budget_tokens: prm.budget_tokens,
           response_format: prm.response_format,
+          output: prm.output ?? null,
+          voice: prm.voice ?? null,
+          voice_speed: prm.voice_speed ?? null,
+          voice_instructions: prm.voice_instructions ?? null,
+          voice_format: prm.voice_format ?? null,
         };
         setPendingParams(p);
         setSavedParams(p);
         setReasoningSupported(prm.reasoning_supported);
         setResponseFormatSupported(prm.response_format_supported);
+        setOutputModalities(prm.output_modalities ?? null);
+        setModelType(prm.model_type ?? null);
+        setOutputOptions(
+          buildOutputOptions(
+            prm.output_modalities ?? null,
+            prm.response_format_supported,
+            prm.model_type ?? null
+          )
+        );
+        // Voice panel: options for the current model (hidden when N/A).
+        if (model && effective) {
+          try {
+            const v = await configService.getVoices(model, effective);
+            setVoiceOptions(v && v.status === "success" ? v : null);
+          } catch {
+            setVoiceOptions(null);
+          }
+        } else {
+          setVoiceOptions(null);
+        }
       }
       // Decision section: providers come from the decision_catalog table.
       if (dec && dec.status === "success") {
@@ -411,6 +480,40 @@ export function ConfigTab({ verboseMode, onVerboseModeChange }: ConfigTabProps) 
     }
   };
 
+  /* Cross-provider model search: runs when text or type filter changes. */
+  useEffect(() => {
+    if (modelFilterType === "todos" && modelFilterText.trim() === "") {
+      setSearchResults(null);
+      setSearching(false);
+      return;
+    }
+    setSearching(true);
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      try {
+        const resp = await configService.searchModels(modelFilterText.trim(), modelFilterType, controller.signal);
+        setSearchResults(resp && resp.status === "success" ? resp.results || [] : []);
+      } catch (err: unknown) {
+        if (!(err instanceof DOMException && err.name === "AbortError")) {
+          setSearchResults([]);
+        }
+      } finally {
+        setSearching(false);
+      }
+    }, 300);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [modelFilterType, modelFilterText]);
+
+  const handleSearchSelect = async (provider: string, modelId: string) => {
+    setSelectedProvider(provider);
+    await load(provider);
+    setPendingModel(modelId);
+    fetchReasoningOptions(modelId, provider);
+  };
+
   const fetchReasoningOptions = useCallback(async (model: string, provider: string) => {
     try {
       const response = await configService.getModelCapabilities(model, provider);
@@ -427,8 +530,18 @@ export function ConfigTab({ verboseMode, onVerboseModeChange }: ConfigTabProps) 
         setOutputLimit(response.output_limit ?? null);
         setInputModalities(response.input_modalities ?? null);
         setOutputModalities(response.output_modalities ?? null);
+        setModelType(response.model_type ?? null);
+        setOutputOptions(
+          buildOutputOptions(response.output_modalities ?? null, response.response_format_supported ?? null, response.model_type ?? null)
+        );
         setCostInput(response.cost_input ?? null);
         setCostOutput(response.cost_output ?? null);
+        try {
+          const v = await configService.getVoices(model, provider);
+          setVoiceOptions(v && v.status === "success" ? v : null);
+        } catch {
+          setVoiceOptions(null);
+        }
       } else {
         // Fallback to default options
         setReasoningOptions([
@@ -443,6 +556,12 @@ export function ConfigTab({ verboseMode, onVerboseModeChange }: ConfigTabProps) 
         setOutputLimit(null);
         setInputModalities(null);
         setOutputModalities(null);
+        setModelType(null);
+        setVoiceOptions(null);
+        setOutputOptions([
+          { value: "text", label: "Texto" },
+          { value: "json", label: "JSON" },
+        ]);
         setCostInput(null);
         setCostOutput(null);
       }
@@ -461,6 +580,12 @@ export function ConfigTab({ verboseMode, onVerboseModeChange }: ConfigTabProps) 
       setOutputLimit(null);
       setInputModalities(null);
       setOutputModalities(null);
+      setModelType(null);
+      setVoiceOptions(null);
+      setOutputOptions([
+        { value: "text", label: "Texto" },
+        { value: "json", label: "JSON" },
+      ]);
       setCostInput(null);
       setCostOutput(null);
     }
@@ -502,6 +627,47 @@ export function ConfigTab({ verboseMode, onVerboseModeChange }: ConfigTabProps) 
     setPendingParams((prev) => ({
       ...prev,
       response_format: value === "" ? null : value,
+    }));
+  };
+
+  const handleOutputChange = (value: string) => {
+    setPendingParams((prev) => ({
+      ...prev,
+      output: value === "" ? null : value,
+    }));
+  };
+
+  /* ---- voice handlers (TTS models only) ---- */
+
+  const handleVoiceChange = (value: string) => {
+    setPendingParams((prev) => ({
+      ...prev,
+      voice: value === "" ? null : value,
+    }));
+  };
+
+  const handleVoiceSpeedDefault = (useDefault: boolean) => {
+    setPendingParams((prev) => ({
+      ...prev,
+      voice_speed: useDefault ? null : prev.voice_speed ?? 1,
+    }));
+  };
+
+  const handleVoiceSpeedChange = (value: number) => {
+    setPendingParams((prev) => ({ ...prev, voice_speed: value }));
+  };
+
+  const handleVoiceInstructionsChange = (value: string) => {
+    setPendingParams((prev) => ({
+      ...prev,
+      voice_instructions: value === "" ? null : value,
+    }));
+  };
+
+  const handleVoiceFormatChange = (value: string) => {
+    setPendingParams((prev) => ({
+      ...prev,
+      voice_format: value === "" ? null : value,
     }));
   };
 
@@ -749,6 +915,53 @@ export function ConfigTab({ verboseMode, onVerboseModeChange }: ConfigTabProps) 
         </select>
       </div>
 
+      <Collapsible title="Filtrar modelos (todos los proveedores)">
+        <div className="mt-1 space-y-2">
+          <Input
+            value={modelFilterText}
+            onChange={(e) => setModelFilterText(e.target.value)}
+            aria-label="Filtrar modelos por texto"
+            className="w-full"
+          />
+          <select
+            value={modelFilterType}
+            onChange={(e) => setModelFilterType(e.target.value)}
+            className="w-full rounded-lg border border-app-border bg-white px-3 py-2 text-sm text-app-text focus:outline-none focus:ring-2 focus:ring-app-primary-light"
+          >
+            <option value="todos">Todos</option>
+            <option value="texto">Texto</option>
+            <option value="imagen">Imagen</option>
+            <option value="audio">Audio</option>
+            <option value="video">Video</option>
+            <option value="transcripcion">Transcripción</option>
+            <option value="embeddings">Embeddings</option>
+              <option value="decision">Decisión</option>
+            <option value="rerank">Rerank</option>
+          </select>
+        </div>
+        {searchResults !== null && (
+          <div className="mt-1 max-h-48 overflow-y-auto rounded-lg border border-app-border bg-white">
+            {searching ? (
+              <div className="px-3 py-2 text-sm text-app-text-secondary">Buscando...</div>
+            ) : searchResults.length === 0 ? (
+              <div className="px-3 py-2 text-sm text-app-text-secondary">Sin resultados</div>
+            ) : (
+              searchResults.map((r) => (
+                <button
+                  key={`${r.provider}/${r.model_id}`}
+                  type="button"
+                  onClick={() => handleSearchSelect(r.provider, r.model_id)}
+                  className="block w-full px-3 py-1.5 text-left text-sm text-app-text hover:bg-app-primary-light/20"
+                >
+                  <span className="font-medium">{r.provider}</span>
+                  <span className="text-app-text-secondary"> — {r.model_id}</span>
+                </button>
+              ))
+            )}
+          </div>
+        )}
+      </Collapsible>
+
       {/* Model info */}
       {(contextWindow !== null || inputLimit !== null || outputLimit !== null || inputModalities !== null || outputModalities !== null || costInput !== null || costOutput !== null) && (
         <Collapsible title="Info del modelo">
@@ -898,27 +1111,171 @@ export function ConfigTab({ verboseMode, onVerboseModeChange }: ConfigTabProps) 
             </select>
           </div>
 
-          {/* Salida */}
+          {/* Salida: solo modelos de texto. Multimodales: sin dropdown. */}
+          {outputOptions !== null && (
           <div className="flex items-center justify-between">
             <label className="text-xs text-app-text">Salida</label>
             <select
-              value={pendingParams.response_format ?? ""}
-              disabled={responseFormatSupported === false}
+              value={pendingParams.output ?? pendingParams.response_format ?? "text"}
+              onChange={(e) => {
+                const v = e.target.value;
+                handleOutputChange(v);
+                if (v === "json") {
+                  handleResponseFormatChange("json");
+                } else {
+                  handleResponseFormatChange("");
+                }
+              }}
               title={
-                responseFormatSupported === false
-                  ? "El modelo actual no soporta salida estructurada."
+                outputModalities && outputModalities.length > 0
+                  ? `Salidas del modelo: ${outputModalities.join(", ")}${modelType ? ` (${modelType})` : ""}`
                   : undefined
               }
-              onChange={(e) => handleResponseFormatChange(e.target.value)}
-              className={`rounded-lg border border-app-border bg-white px-2 py-1 text-xs text-app-text focus:outline-none focus:ring-2 focus:ring-app-primary-light ${
-                responseFormatSupported === false ? "opacity-50 cursor-not-allowed" : ""
-              }`}
+              className="rounded-lg border border-app-border bg-white px-2 py-1 text-xs text-app-text focus:outline-none focus:ring-2 focus:ring-app-primary-light"
             >
-              <option value="">Default</option>
-              <option value="text">Texto</option>
-              <option value="json">JSON</option>
+              {outputOptions.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
             </select>
           </div>
+          )}
+
+          {/* Voz: solo modelos TTS (applicable). Multimodales de imagen/video: sin panel. */}
+          {voiceOptions !== null && voiceOptions.applicable && (
+          <div className="pt-2 border-t border-app-border space-y-2">
+            <label className="block text-xs text-app-text">Voz</label>
+            {voiceOptions.fixed_voice ? (
+              <span className="block text-[11px] text-app-text-secondary">
+                Voz fija del modelo.
+              </span>
+            ) : (
+              <>
+                {voiceOptions.voices.length > 0 && (
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs text-app-text">Voz</label>
+                    <div className="flex items-center gap-1">
+                      <select
+                        value={pendingParams.voice ?? voiceOptions.default_voice ?? voiceOptions.voices[0] ?? ""}
+                        onChange={(e) => handleVoiceChange(e.target.value)}
+                        className="rounded-lg border border-app-border bg-white px-2 py-1 text-xs text-app-text focus:outline-none focus:ring-2 focus:ring-app-primary-light"
+                      >
+                        {voiceOptions.voices.map((v) => (
+                          <option key={v} value={v}>
+                            {v}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => setShowVoiceInfo((s) => !s)}
+                        title="Ver características de la voz"
+                        className="rounded-full border border-app-border px-1.5 py-0.5 text-[11px] text-app-text-secondary hover:bg-app-primary-light/20"
+                      >
+                        ⓘ
+                      </button>
+                    </div>
+                  </div>
+                  {showVoiceInfo && (() => {
+                    const effectiveVoice = pendingParams.voice ?? voiceOptions.default_voice ?? voiceOptions.voices[0];
+                    const sel = effectiveVoice
+                      ? voiceOptions.voice_details?.find((x) => x.name === effectiveVoice)
+                      : undefined;
+                    if (!sel) {
+                      return (
+                        <div className="rounded-lg border border-app-border bg-white px-2 py-1 text-[11px] text-app-text-secondary">
+                          Elegí una voz para ver sus características.
+                        </div>
+                      );
+                    }
+                    const rows: Array<[string, string]> = [
+                      ["Estilo", sel.style || ""],
+                      ["Género", sel.gender || ""],
+                      ["Tono", sel.pitch || ""],
+                      ["Acento", sel.accent || ""],
+                      ["Persona", sel.persona || ""],
+                    ].filter(([, v]) => v !== "") as Array<[string, string]>;
+                    return (
+                      <div className="rounded-lg border border-app-border bg-white px-2 py-1 text-[11px] text-app-text-secondary space-y-0.5">
+                        <div className="font-medium text-app-text">{sel.name}</div>
+                        {sel.recommended && <div>Recomendada por el proveedor.</div>}
+                        {rows.map(([k, v]) => (
+                          <div key={k}>
+                            {k}: <span className="text-app-text">{v}</span>
+                          </div>
+                        ))}
+                        {sel.description && <div>{sel.description}</div>}
+                      </div>
+                    );
+                  })()}
+                </div>
+                )}
+                {voiceOptions.supports_speed && (
+                <div>
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs text-app-text">Velocidad</label>
+                    <label className="flex items-center gap-1 text-[11px] text-app-text-secondary cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={pendingParams.voice_speed === null}
+                        onChange={(e) => handleVoiceSpeedDefault(e.target.checked)}
+                        className="accent-app-primary"
+                      />
+                      Default
+                    </label>
+                  </div>
+                  {pendingParams.voice_speed !== null && (
+                    <div className="flex items-center gap-2 mt-1">
+                      <input
+                        type="range"
+                        min={0.25}
+                        max={4}
+                        step={0.05}
+                        value={pendingParams.voice_speed}
+                        onChange={(e) => handleVoiceSpeedChange(Number(e.target.value))}
+                        className="flex-1 accent-app-primary"
+                      />
+                      <span className="w-9 text-right text-xs text-app-text-secondary tabular-nums">
+                        {pendingParams.voice_speed.toFixed(2)}
+                      </span>
+                    </div>
+                  )}
+                </div>
+                )}
+                {voiceOptions.supports_instructions && (
+                <div className="space-y-1">
+                  <label className="block text-xs text-app-text">Instrucciones de voz</label>
+                  <input
+                    type="text"
+                    value={pendingParams.voice_instructions ?? ""}
+                    placeholder="Ej. Habla lento y con calma"
+                    onChange={(e) => handleVoiceInstructionsChange(e.target.value)}
+                    className="w-full rounded-lg border border-app-border bg-white px-2 py-1 text-xs text-app-text focus:outline-none focus:ring-2 focus:ring-app-primary-light"
+                  />
+                </div>
+                )}
+                {voiceOptions.formats.length > 0 && (
+                <div className="flex items-center justify-between">
+                  <label className="text-xs text-app-text">Formato</label>
+                  <select
+                    value={pendingParams.voice_format ?? voiceOptions.default_format ?? voiceOptions.formats[0] ?? ""}
+                    onChange={(e) => handleVoiceFormatChange(e.target.value)}
+                    className="rounded-lg border border-app-border bg-white px-2 py-1 text-xs text-app-text focus:outline-none focus:ring-2 focus:ring-app-primary-light"
+                  >
+                    {voiceOptions.formats.map((f) => (
+                      <option key={f} value={f}>
+                        {f}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                )}
+              </>
+            )}
+          </div>
+          )}
 
           {/* Budget Tokens (if model uses budget) */}
           {reasoningType === "budget_tokens" && (

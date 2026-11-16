@@ -6,7 +6,7 @@ import asyncio
 import logging
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
 
 from backend.instances import agent, session_manager
@@ -128,8 +128,13 @@ async def select_model(data: dict[str, Any]) -> JSONResponse:
         {"model": "llama3.2", "provider": "LOCAL",
          "temperature": 0.7, "top_p": 0.9, "reasoning": true}
 
-    ``temperature``, ``top_p``, ``reasoning``, ``budget_tokens`` and
-    ``response_format`` are optional advanced parameters.
+    ``temperature``, ``top_p``, ``reasoning``, ``budget_tokens``,
+    ``response_format``, ``output``, ``voice``, ``voice_speed``,
+    ``voice_instructions`` and ``voice_format`` are optional advanced
+    parameters. ``output`` is the desired output modality (``text``, ``json``,
+    ``image``, ``audio``, ``video`` or null for default) derived from the
+    model's ``modalities.output`` in models.dev. ``voice`` and friends
+    configure TTS voice selection for audio-output models.
 
     Args:
         data: Request body.
@@ -215,6 +220,57 @@ async def select_model(data: dict[str, Any]) -> JSONResponse:
                     "message": "budget_tokens must be a positive integer or null.",
                 },
             )
+    from backend.routes.config.parameters import (
+        _parse_optional_output,
+        _parse_optional_voice,
+        _parse_optional_voice_format,
+        _parse_optional_voice_instructions,
+        _parse_optional_voice_speed,
+        _is_output_supported,
+    )
+
+    output, output_err = _parse_optional_output(data.get("output", None))
+    if output_err:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "status": "error",
+                "message": f"output {output_err}",
+            },
+        )
+    voice, voice_err = _parse_optional_voice(data.get("voice", None))
+    if voice_err:
+        return JSONResponse(
+            status_code=400,
+            content={"status": "error", "message": f"voice {voice_err}"},
+        )
+    voice_speed, voice_speed_err = _parse_optional_voice_speed(
+        data.get("voice_speed", None)
+    )
+    if voice_speed_err:
+        return JSONResponse(
+            status_code=400,
+            content={"status": "error", "message": f"voice_speed {voice_speed_err}"},
+        )
+    voice_instructions, voice_instructions_err = _parse_optional_voice_instructions(
+        data.get("voice_instructions", None)
+    )
+    if voice_instructions_err:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "status": "error",
+                "message": f"voice_instructions {voice_instructions_err}",
+            },
+        )
+    voice_format, voice_format_err = _parse_optional_voice_format(
+        data.get("voice_format", None)
+    )
+    if voice_format_err:
+        return JSONResponse(
+            status_code=400,
+            content={"status": "error", "message": f"voice_format {voice_format_err}"},
+        )
 
     if agent is None:
         return JSONResponse(
@@ -286,6 +342,48 @@ async def select_model(data: dict[str, Any]) -> JSONResponse:
                 },
             )
 
+    # --- Output modality validation (declarative catalog check) ---
+    # "auto" (free mode) and "text" never block: they fall back to chat.
+    if output is not None and output not in ("text", "auto", "default"):
+        try:
+            if provider == "LOCAL":
+                from backend.agent.utils.model_resolver import get_model_reasoning_options
+                local_caps = await asyncio.to_thread(
+                    get_model_reasoning_options, provider, model
+                )
+                supports_output = _is_output_supported(
+                    local_caps.get("output_modalities"),
+                    local_caps.get("model_type"),
+                    local_caps.get("response_format_supported"),
+                    output,
+                )
+            else:
+                caps = await asyncio.to_thread(
+                    model_catalog.get_reasoning_options,
+                    provider.strip(),
+                    model,
+                )
+                supports_output = _is_output_supported(
+                    caps.get("output_modalities"),
+                    caps.get("model_type"),
+                    caps.get("response_format_supported"),
+                    output,
+                )
+        except Exception as exc:
+            log_error(str(exc), source="backend/routes/config.py:select_model(output_check)")
+            supports_output = None
+        if supports_output is False:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "status": "error",
+                    "message": (
+                        f"Model '{model}' does not support output '{output}'. "
+                        "Set output to text/default or pick another model."
+                    ),
+                },
+            )
+
     # Liberar modelo anterior si es LOCAL (Ollama) y cambió
     modelo_anterior = agent._resolved_model
     if modelo_anterior and modelo_anterior != model and agent.provider == "LOCAL":
@@ -311,6 +409,11 @@ async def select_model(data: dict[str, Any]) -> JSONResponse:
             _persist_param(_PARAM_KEYS["reasoning"], reasoning)
             _persist_param(_PARAM_KEYS["budget_tokens"], budget_tokens)
             _persist_param(_PARAM_KEYS["response_format"], response_format)
+            _persist_param(_PARAM_KEYS["output"], output)
+            _persist_param(_PARAM_KEYS["voice"], voice)
+            _persist_param(_PARAM_KEYS["voice_speed"], voice_speed)
+            _persist_param(_PARAM_KEYS["voice_instructions"], voice_instructions)
+            _persist_param(_PARAM_KEYS["voice_format"], voice_format)
     except Exception as exc:
         log_error(str(exc), source="backend/routes/config.py")
         logger.warning("No se pudo persistir el modelo o proveedor seleccionado: %s", exc)
@@ -346,8 +449,96 @@ async def select_model(data: dict[str, Any]) -> JSONResponse:
             "reasoning": reasoning,
             "budget_tokens": budget_tokens,
             "response_format": response_format,
+            "output": output,
+            "voice": voice,
+            "voice_speed": voice_speed,
+            "voice_instructions": voice_instructions,
+            "voice_format": voice_format,
         },
     )
+
+@router.get("/models/search")
+async def search_models(
+    q: str = "",
+    type_filter: str = Query(default="todos", alias="type"),
+) -> JSONResponse:
+    """Search models by text and type across providers with a stored key.
+
+    Only providers with a configured API key are searched ("the ones I have").
+    ``q`` matches case-insensitively against the provider, model id, name and
+    description (e.g. ``free``, ``tts``, ``audio``). ``type`` is one of
+    ``todos``, ``texto``, ``imagen``, ``audio``, ``video``,
+    ``transcripcion``, ``embeddings``, ``decision`` or ``rerank``.
+
+    Args:
+        q: Substring filter over provider, model id, name and description.
+            Empty matches all.
+        type_filter: Model-type filter (``type`` query param).
+
+    Returns:
+        A JSONResponse with ``results``: list of
+        ``{"provider", "model_id", "type"}`` ordered by provider+model.
+    """
+    wanted = (type_filter or "todos").strip().lower()
+    if wanted not in (
+        "todos",
+        "all",
+        "texto",
+        "imagen",
+        "audio",
+        "video",
+        "transcripcion",
+        "transcription",
+        "embeddings",
+        "embedding",
+        "decision",
+        "decisions",
+        "rerank",
+        "reranking",
+    ):
+        return JSONResponse(
+            status_code=400,
+            content={
+                "status": "error",
+                "message": f"Invalid type filter: '{type_filter}'.",
+            },
+        )
+    try:
+        from backend.agent.utils import provider_keys
+
+        configured = {
+            entry.get("provider")
+            for entry in provider_keys.list_configured()
+            if entry.get("configured")
+        }
+    except Exception as exc:
+        log_error(str(exc), source="backend/routes/config.py:search_models(keys)")
+        configured = set()
+    try:
+        rows = await asyncio.to_thread(model_catalog.search_models, q or "")
+    except Exception as exc:
+        log_error(str(exc), source="backend/routes/config.py:search_models(search)")
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": "Error searching models."},
+        )
+    results = [
+        {
+            "provider": row["provider"],
+            "model_id": row["model_id"],
+            "type": row["type"],
+        }
+        for row in rows
+        if row["provider"] in configured
+        and model_catalog.matches_model_type(
+            row["type"], row["modalities_output"], wanted
+        )
+    ]
+    return JSONResponse(
+        status_code=200,
+        content={"status": "success", "results": results},
+    )
+
 
 @router.get("/models/capabilities")
 async def get_model_capabilities(model: str, provider: str) -> JSONResponse:
