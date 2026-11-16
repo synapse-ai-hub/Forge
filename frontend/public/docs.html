@@ -302,14 +302,15 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
           <ul>
             <li><strong>Archivos</strong> — PDF, Word (DOCX/DOC), TXT, Markdown, CSV, XLSX/XLS, JSON, XML, YAML, Python. Se extrae el texto, se divide en <strong>chunks</strong> (con overlap inteligente) y se guarda.</li>
             <li><strong>Páginas web</strong> — Se fetchea el contenido, se convierte a texto, se divide en chunks y se guarda. La URL se conserva en el metadata y el HTML crudo en el primer chunk.</li>
+            <li><strong>Multimedia</strong> — Audio (WAV/MP3/OGG/M4A/FLAC), video (MP4/WebM/MOV) e imágenes (PNG/JPG/WebP/GIF/BMP). Se vectorizan con embeddings multimodales y además se genera automáticamente una <strong>transcripción</strong> (audio/video) o <strong>descripción</strong> (imágenes/video) que se guarda como documento, así el agente puede responder qué dicen o muestran. Cada imagen produce exactamente un chunk; los videos se dividen en segmentos de 30 segundos.</li>
           </ul>
-          <p>Al subir archivos o agregar una URL podés configurar el <strong>chunking</strong>: tamaño de chunk y overlap, en caracteres (por defecto 500 y 60). Si no tocás nada, se usan esos valores.</p>
+          <p>Al subir archivos o agregar una URL podés configurar el <strong>chunking</strong>: tamaño de chunk y overlap, en caracteres (por defecto 500 y 60). Si no tocás nada, se usan esos valores. <strong>Ojo:</strong> el chunking solo aplica al contenido de <strong>texto</strong>; en imágenes y multimedia se ignora.</p>
           <h3>¿Cómo se crea una colección?</h3>
           <p>Desde la pestaña <strong>Crear → Gestionar RAG</strong> (modo dev) se abre la página de gestión de RAG, donde podés:</p>
           <ol>
-            <li>Crear una colección con un nombre (en minúsculas, sin espacios, solo <code>[a-z0-9-]</code>, mínimo 3 caracteres).</li>
+            <li>Crear una colección con un nombre (en minúsculas, sin espacios, solo <code>[a-z0-9-]</code>, mínimo 3 caracteres) y una descripción opcional.</li>
             <li>Seleccionar la colección y subir archivos (arrastrá y soltá o seleccioná) o agregar una URL.</li>
-            <li>Eliminar colecciones cuando ya no las necesites.</li>
+            <li>Renombrar la colección o editar su descripción cuando lo necesites, y eliminar colecciones cuando ya no las necesites.</li>
           </ol>
           <h3>¿Cómo la usa el agente?</h3>
           <p>El agente usa la tool nativa <code>rag</code> para consultar una colección. Devuelve los <strong>5 chunks más similares</strong> a la consulta. <strong>Deny by default</strong>: un agente solo puede consultar las colecciones que declara explícitamente en su frontmatter:</p>
@@ -608,7 +609,9 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
           <h3>Panel de configuración</h3>
           <p>En el panel lateral, hay una pestaña de <strong>Configuración</strong> con las siguientes opciones:</p>
           <h4>Proveedor y modelo</h4>
-          <p>Podés seleccionar el proveedor de modelos (Ollama local si está corriendo, o cualquier provider cloud curado: Google y 14 OpenAI-compatibles) y el modelo específico a utilizar. Los modelos se listan desde el catálogo models.dev cacheado en SQLite: no hay modelos fijos. La selección se persiste entre sesiones y se aplica con el botón <strong>Aplicar</strong>. Al primer arranque aparece una pantalla inicial de configuración (que podés saltar) para cargar tus API keys; sin ningún proveedor disponible, el chat y los creadores quedan bloqueados hasta configurar uno.</p>
+          <p>Podés seleccionar el proveedor de modelos (Ollama local si está corriendo, o cualquier provider cloud curado: Google y 14 OpenAI-compatibles) y el modelo específico a utilizar. Los modelos se listan desde el catálogo models.dev cacheado en SQLite: no hay modelos fijos. El catálogo cubre tipos texto, imagen, audio, video, transcripción, embeddings, decisión y rerank; para OpenRouter se suma un suplemento con los modelos no-texto que models.dev no publica (embeddings, speech, transcripción, etc.). El catálogo se re-sincroniza solo cada 24 horas, y también cuando se vacía o cuando cambia la lógica de sincronización. La selección se persiste entre sesiones y se aplica con el botón <strong>Aplicar</strong>. Al primer arranque aparece una pantalla inicial de configuración (que podés saltar) para cargar tus API keys; sin ningún proveedor disponible, el chat y los creadores quedan bloqueados hasta configurar uno.</p>
+          <h4>Filtrar modelos (todos los proveedores)</h4>
+          <p>Debajo del selector hay un buscador que filtra modelos de <strong>todos los proveedores donde tenés API key cargada</strong>, sin cambiar de proveedor. Tiene un campo de texto (busca en proveedor, id, nombre y descripción) y un filtro por tipo: Todos, Texto, Imagen, Audio, Video, Transcripción, Embeddings, Decisión y Rerank. Los resultados muestran <code>proveedor — modelo</code>; al elegir uno se aplica ese proveedor y ese modelo en el selector.</p>
           <h4>Providers (API keys)</h4>
           <p>En la sección <strong>Providers</strong> podés cargar la API key de cualquiera de los 15 providers cloud curados: Google más 14 OpenAI-compatibles (Groq, OpenRouter, OpenAI, DeepSeek, xAI, Together AI, Fireworks AI, Cerebras, Mistral AI, Perplexity, Meta, Moonshot AI, Zhipu AI, Alibaba). Cada key es opcional: si no cargás una key para un proveedor, ese proveedor no está disponible. La pantalla inicial solo pide las dos keys auxiliares (Groq para transcripción de voz, Google para la fuente de conocimiento); el resto de los providers se configura acá. Las keys se guardan cifradas en la base de datos SQLite interna y no se vuelven a mostrar después de guardarlas. Al guardar una key se valida en vivo contra la API del proveedor: si es inválida se rechaza; si es válida, el proveedor queda disponible de inmediato en los selectores.</p>
           <h4>Cuentas de mail</h4>
@@ -619,6 +622,11 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
           <p>Controla cuántos turnos de conversación se mantienen en el contexto del modelo. <code>-1</code> significa todo el historial. Reducir este número ayuda a controlar el uso de tokens y el costo.</p>
           <h4>Parámetros avanzados</h4>
           <p>Temperature, Top P, presupuesto de tokens, reasoning y formato de salida. Se aplican junto con el modelo al presionar <strong>Aplicar</strong>; con <strong>Default</strong> se usan los valores de cada agente. Debajo, un bloque <strong>Info del modelo</strong> muestra las modalidades de entrada/salida, la ventana de contexto y los límites y costos por millón de tokens del modelo seleccionado.</p>
+          <p>El formato de <strong>Salida</strong> solo aparece en modelos de texto: <strong>Texto</strong> (default) o <strong>JSON</strong> (si el modelo soporta salida estructurada). Los modelos de imagen, audio o video no tienen este selector: generan su modalidad directamente.</p>
+          <h4>Voz (modelos TTS)</h4>
+          <p>En modelos con salida de audio aparece un panel de <strong>Voz</strong> con lo que cada proveedor permite configurar: selector de voz con sus características (botón <strong>ⓘ</strong>) y, según el proveedor, velocidad, instrucciones de estilo y formato de salida. Algunos proveedores tienen voz fija o formato único (sin opciones), y en local no hay TTS. Los modelos solo-audio responden en un turno directo (sin historial, tools ni system prompt).</p>
+          <h4>Generación de imagen, audio y video</h4>
+          <p>Los modelos con salida de imagen, audio o video generan ese medio en el turno y el chat lo muestra inline (imagen, reproductor de audio o video). La generación de video requiere un proveedor que la exponga. Las imágenes generadas también llegan a Telegram como foto, y el audio y el video como adjuntos.</p>
           <h4>Modo verbose</h4>
           <p>Activando el modo verbose, la interfaz muestra tarjetas visuales para las llamadas a tools y las delegaciones a sub-agentes, lo que facilita entender qué está haciendo el agente en cada momento.</p>
           <h4>Instrucciones y documentos</h4>
@@ -630,6 +638,10 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
             <li><strong>Tarjetas de tool</strong> — Cuando el modelo invoca una tool, se muestra el nombre y los argumentos.</li>
             <li><strong>Tarjetas de sub-agente</strong> — Cuando se delega a un sub-agente, se muestra el nombre y el resultado.</li>
             <li><strong>Adjuntos</strong> — Los archivos que el usuario sube aparecen como chips debajo del mensaje.</li>
+            <li><strong>Imagen generada</strong> — Cuando el modelo genera una imagen, se muestra inline en el mensaje.</li>
+            <li><strong>Audio generado</strong> — Cuando el modelo genera audio (TTS), se muestra un reproductor inline. Si le das play a un audio, cualquier otro reproductor de la página se pausa: nunca se superponen.</li>
+            <li><strong>Video generado</strong> — Cuando el modelo genera un video, se muestra un reproductor inline (misma regla: un solo reproductor a la vez).</li>
+            <li><strong>Feedback en multimedia</strong> — Las respuestas de imagen, audio o video también tienen 👍/👎, pero sin botón Copiar (no hay texto que copiar; el reproductor ya permite descargar).</li>
             <li><strong>Aviso de trabajo descartado</strong> — Con el modelo de decisión habilitado, indica que el trabajo pendiente de un turno anterior se descartó porque el mensaje nuevo pedía otra cosa.</li>
             <li><strong>Aviso de mensaje bloqueado</strong> — Con el modelo de decisión habilitado, indica que el guardrail bloqueó tu mensaje por las reglas de seguridad.</li>
           </ul>
@@ -648,14 +660,14 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
           <h3>Notificaciones</h3>
           <p>Junto al botón de Agenda hay una <strong>campanita</strong> que guarda una notificación por cada ejecución de tarea programada y de workflow: indica si terminó con éxito o falló, con fecha y hora. Un círculo cuenta las no leídas y al abrirla pasan a leídas. Cada notificación se puede eliminar, y <strong>Limpiar</strong> borra todas. Las ejecuciones de tareas también se notifican por Telegram (ver la sección Telegram).</p>
           <h3>Historial</h3>
-          <p>En el panel lateral, bajo la pestaña <strong>Conversaciones</strong>, se listan todas las sesiones de chat. Podés crear nuevas conversaciones, seleccionar sesiones anteriores y eliminar conversaciones existentes.</p>
+          <p>En el panel lateral, bajo la pestaña <strong>Conversaciones</strong>, se listan todas las sesiones de chat. Podés crear nuevas conversaciones, seleccionar sesiones anteriores y eliminar conversaciones existentes. Al eliminar una sesión se borran sus mensajes y también su memoria de largo plazo en la base vectorial (<code>agent_conversations</code>).</p>
           <h3>Métricas</h3>
           <p>El botón <strong>Métricas</strong> del header abre el dashboard, con un filtro de rango de tiempo (1 hora, 6 horas, 1 día, 1 semana, 1 mes o todo) y tarjetas de <strong>Sesiones</strong>, <strong>Mensajes</strong>, <strong>Uso de herramientas</strong> (llamadas y sub-agentes), <strong>Modelos</strong>, <strong>Gasto</strong> y <strong>Errores</strong>. Cada tarjeta muestra sus gráficos y permite descargar los datos.</p>
           <h3>Uso y Facturación</h3>
           <p>En el header hay dos botones: <strong>Uso</strong> y <strong>Facturación</strong>, con los datos del mes.</p>
           <p><strong>Uso</strong> muestra el consumo del mes: solicitudes, tokens totales, gasto en USD y el desglose de tokens de entrada y salida, más el detalle por proveedor y los límites configurados.</p>
           <p><strong>Facturación</strong> muestra el gasto del mes por proveedor y modelo, con filtros por proveedor y modelo. Por cada modelo ves los tokens de entrada y salida con su tarifa y su costo, el costo total y la cantidad de solicitudes. También permite configurar límites de gasto por proveedor o por modelo: si se alcanza un límite, las solicitudes se bloquean hasta aumentarlo.</p>
-          <p>Se registra toda la actividad con modelos cloud: chat, tools, creadores, agenda, embeddings y transcripciones. Los modelos locales (Ollama) no tienen costo y no se contabilizan.</p>
+          <p>Se registra toda la actividad con modelos cloud: chat, tools, creadores, agenda, embeddings y transcripciones. Las generaciones de imagen, audio y video también se registran (cantidad de solicitudes), pero sin costo de tokens: su precio por unidad todavía no está tarifado. Los modelos locales (Ollama) no tienen costo y no se contabilizan.</p>
         </section>
 
         <section id="telegram">
@@ -701,7 +713,7 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
               <tr><td><code>/tools</code></td><td>Lista tools (solo dev).</td></tr>
               <tr><td><code>/agentes</code></td><td>Lista agentes (solo dev).</td></tr>
               <tr><td><code>/crear</code></td><td>Crea skill, tool o colección RAG (solo dev). Pregunta qué crear y guía el flujo.</td></tr>
-              <tr><td><code>/archivo</code></td><td>Envía un archivo por path (pregunta y espera respuesta).</td></tr>
+              <tr><td><code>/archivo</code></td><td>Pide un archivo generado por nombre (pregunta y espera respuesta). No se envían rutas del servidor.</td></tr>
               <tr><td><code>/agenda</code></td><td>Lista las tareas programadas.</td></tr>
               <tr><td><code>/agendar</code></td><td>Agrega una tarea programada (pregunta la tarea y el horario).</td></tr>
               <tr><td><code>/horario</code></td><td>Cambia el horario de una tarea programada (pregunta y espera respuesta).</td></tr>
@@ -720,6 +732,7 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
           <ul>
             <li><strong>Notas de voz</strong>: se transcriben a través de Groq Whisper (whisper-large-v3-turbo) y se envían como mensaje. Requiere API key de Groq (free tier). Sin ella, Telegram funciona solo por texto y comandos.</li>
             <li><strong>Adjuntos</strong>: los archivos enviados con el botón de adjuntar de Telegram se descargan y procesan igual que el backend (extracción de texto con <code>extract_text_from_bytes</code>).</li>
+            <li><strong>Multimedia generada</strong>: las imágenes que genera el agente llegan a Telegram como foto, y el audio y el video como adjuntos.</li>
             <li><strong>Toggle en el frontend</strong>: el header tiene un toggle para activar/desactivar el bot (persistido en SQLite).</li>
             <li><strong>Descarte de mensajes en cola</strong>: al reactivar el bot, se descartan los mensajes que llegaron mientras estaba apagado (solo se procesan los nuevos). Al activar, el frontend muestra un contador de 3 segundos para que no envíes durante el descarte.</li>
             <li><strong>Notificaciones de tareas programadas</strong>: cada vez que se ejecuta una tarea programada, el resultado (éxito o error, con fecha y hora) se envía a Telegram <strong>siempre</strong>, independientemente de si el bot está habilitado para trabajar.</li>
@@ -752,7 +765,7 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
               <tr><td>GET</td><td><code>/api/sessions</code></td><td>Listar todas las sesiones de chat.</td></tr>
               <tr><td>GET</td><td><code>/api/sessions/titles</code></td><td>Listar los títulos de las sesiones.</td></tr>
               <tr><td>GET</td><td><code>/api/sessions/{id}</code></td><td>Cargar una sesión completa con todos sus mensajes.</td></tr>
-              <tr><td>DELETE</td><td><code>/api/sessions/{id}</code></td><td>Eliminar una sesión y todos sus datos asociados.</td></tr>
+              <tr><td>DELETE</td><td><code>/api/sessions/{id}</code></td><td>Eliminar una sesión, sus mensajes y su memoria vectorial (<code>agent_conversations</code>).</td></tr>
               <tr><td>GET</td><td><code>/api/feedback/{session_id}</code></td><td>Feedback 👍/👎 de todas las respuestas de la sesión.</td></tr>
               <tr><td>PUT</td><td><code>/api/feedback/{session_id}/{turn_number}</code></td><td>Guardar o cambiar el feedback de una respuesta.</td></tr>
               <tr><td>DELETE</td><td><code>/api/feedback/{session_id}/{turn_number}</code></td><td>Quitar el feedback de una respuesta.</td></tr>
@@ -762,13 +775,15 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
               <tr><td>GET</td><td><code>/api/config/providers/keys</code></td><td>Indicar qué proveedores tienen API key guardada (sin devolverla).</td></tr>
               <tr><td>PUT/DELETE</td><td><code>/api/config/providers/{provider}/key</code></td><td>Guardar (validada y cifrada) o eliminar la API key de un proveedor.</td></tr>
               <tr><td>GET</td><td><code>/api/config/models</code></td><td>Listar modelos del proveedor seleccionado.</td></tr>
+              <tr><td>GET</td><td><code>/api/config/models/search</code></td><td>Buscar modelos por texto y tipo en todos los proveedores con API key (texto + <code>type</code>: texto, imagen, audio, video, transcripción, embeddings, decisión, rerank).</td></tr>
+              <tr><td>GET</td><td><code>/api/config/voices</code></td><td>Opciones de voz de un modelo TTS (voces, velocidad, instrucciones, formatos, voz fija, características).</td></tr>
               <tr><td>POST</td><td><code>/api/config/models/select</code></td><td>Seleccionar modelo y proveedor.</td></tr>
               <tr><td>GET</td><td><code>/api/config/models/capabilities</code></td><td>Capacidades de un modelo (razonamiento, temperatura, tool calling, structured output).</td></tr>
               <tr><td>GET</td><td><code>/api/config/models/decision</code></td><td>Listar proveedores y modelos de decisión, y la selección actual.</td></tr>
               <tr><td>POST</td><td><code>/api/config/models/decision/select</code></td><td>Seleccionar proveedor y modelo de decisión.</td></tr>
               <tr><td>POST</td><td><code>/api/config/models/decision/enabled</code></td><td>Habilitar o deshabilitar el modelo de decisión.</td></tr>
               <tr><td>GET</td><td><code>/api/config/models/decision/capabilities</code></td><td>Ficha de un modelo de decisión (límites, modalidades, costos).</td></tr>
-              <tr><td>GET</td><td><code>/api/config/parameters</code></td><td>Parámetros avanzados del modelo (temperature, top_p, reasoning, formato de salida).</td></tr>
+              <tr><td>GET</td><td><code>/api/config/parameters</code></td><td>Parámetros avanzados del modelo (temperature, top_p, reasoning, formato de salida, salida multimodal, voz y sus opciones).</td></tr>
               <tr><td>GET</td><td><code>/api/config/context-window</code></td><td>Obtener el límite de turnos en contexto.</td></tr>
               <tr><td>POST</td><td><code>/api/config/context-window</code></td><td>Configurar el límite de turnos en contexto.</td></tr>
               <tr><td>GET</td><td><code>/api/config/verbose-mode</code></td><td>Obtener el estado del modo verbose.</td></tr>
@@ -812,6 +827,7 @@ synapseForge init d:/proyectos/nuevo    # también acepta rutas absolutas</code>
               <tr><td>GET</td><td><code>/api/rag/collections</code></td><td>Listar colecciones RAG.</td></tr>
               <tr><td>GET</td><td><code>/api/rag/collections/embedding-compatibility</code></td><td>Clasificar las colecciones por compatibilidad del modelo de embeddings.</td></tr>
               <tr><td>POST</td><td><code>/api/rag/collections</code></td><td>Crear una colección RAG.</td></tr>
+              <tr><td>PATCH</td><td><code>/api/rag/collections/{name}</code></td><td>Renombrar una colección y/o editar su descripción.</td></tr>
               <tr><td>DELETE</td><td><code>/api/rag/collections/{name}</code></td><td>Eliminar una colección RAG.</td></tr>
               <tr><td>POST</td><td><code>/api/rag/collections/{name}/files</code></td><td>Subir archivos a una colección (extracción + chunking).</td></tr>
               <tr><td>POST</td><td><code>/api/rag/collections/{name}/urls</code></td><td>Agregar una página web a una colección.</td></tr>

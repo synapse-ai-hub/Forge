@@ -159,7 +159,7 @@ Un **modelo de decisión** opcional (System One) se puede habilitar en **Config*
 
 ### Frontend
 
-SPA React/Vite/TypeScript con Tailwind v4 y shadcn/ui. Multi-página: chat, creación de skills, tools, agentes y workflows, gestión de RAG, documentación. Streaming SSE, visualización de tool calls, indicador de contexto, tareas programadas, uso y facturación, dashboard de métricas (sesiones, mensajes, herramientas, modelos, gastos, errores, workflows, creadores y calidad, con filtros de tiempo y exportación CSV/JSON), toggle de Telegram.
+SPA React/Vite/TypeScript con Tailwind v4 y shadcn/ui. Multi-página: chat, creación de skills, tools, agentes y workflows, gestión de RAG, documentación. Streaming SSE, visualización de tool calls, indicador de contexto, tareas programadas, uso y facturación, dashboard de métricas (sesiones, mensajes, herramientas, modelos, gastos, errores, workflows, creadores y calidad, con filtros de tiempo y exportación CSV/JSON), toggle de Telegram. Borrar una conversación también borra su memoria vectorial de largo plazo (`agent_conversations`).
 
 ### Proveedores
 
@@ -169,7 +169,11 @@ SPA React/Vite/TypeScript con Tailwind v4 y shadcn/ui. Multi-página: chat, crea
 | Google | Cloud | Modelos Gemini + embeddings de RAG; free tier |
 | OpenAI-compatibles | Cloud | Groq, OpenRouter, OpenAI, DeepSeek, xAI, Together AI, Fireworks AI, Cerebras, Mistral AI, Perplexity, Meta, Moonshot AI, Zhipu AI, Alibaba; free tiers |
 
-Los providers cloud están curados en la app: cada API key se valida en vivo contra su propia API y se guarda encriptada (Fernet) en SQLite, y un proveedor figura solo mientras su key está guardada. No se necesitan variables de entorno. Los modelos vienen del catálogo models.dev cacheado en SQLite — elegí proveedor + modelo explícitamente y presioná **Apply**.
+Los providers cloud están curados en la app: cada API key se valida en vivo contra su propia API y se guarda encriptada (Fernet) en SQLite, y un proveedor figura solo mientras su key está guardada. No se necesitan variables de entorno. Los modelos vienen del catálogo models.dev cacheado en SQLite — elegí proveedor + modelo explícitamente y presioná **Apply**. El catálogo cubre tipos texto, imagen, audio, video, transcripción, embeddings, decisión y rerank, más un suplemento de OpenRouter con los modelos no-texto que models.dev no publica; se re-sincroniza solo cada 24 horas (y cuando se vacía o cambia la lógica de sincronización). Un buscador filtra modelos de todos los proveedores con key guardada, por texto (proveedor, id, nombre, descripción) y por tipo, y al elegir un resultado se aplica ese proveedor y ese modelo.
+
+### Salida del modelo y voz
+
+Los modelos de texto ofrecen salida **Texto** (default) o **JSON**; los de imagen, audio y video generan su modalidad directamente, sin selector de salida. Los modelos con salida de audio exponen un panel de **Voz**: selector de voz con sus características, más velocidad, instrucciones de estilo y formato donde el proveedor lo soporta (algunos tienen voz fija o formato único, en local no hay TTS). Los modelos solo-audio responden en un turno directo (sin historial, tools ni system prompt). La generación de video requiere un proveedor que la exponga. Las imágenes, el audio y el video generados se muestran inline en el chat (un solo reproductor a la vez — al darle play a uno se pausan los demás) con botones de feedback pero sin botón de copiar, y también llegan a Telegram como foto/audio/video. Las generaciones se registran en gasto como cantidad de solicitudes, sin costo de tokens (precio por unidad todavía no tarifado).
 
 ### Cuentas de mail
 
@@ -177,11 +181,11 @@ Múltiples cuentas IMAP/SMTP guardadas cifradas en SQLite y gestionadas desde Co
 
 ### Base de conocimiento (RAG)
 
-ChromaDB con embeddings de Gemini (`gemini-embedding-2`) vía el proveedor Google. Subí archivos y páginas web — el contenido se extrae, se divide en chunks y se indexa para recuperación semántica. El chunking (tamaño de chunk y overlap, en caracteres) se configura por subida desde la interfaz (por defecto: chunk 500, overlap 60). Requiere una API key de Google: sin ella, la base de conocimiento queda deshabilitada y el resto de la app funciona normalmente. Memoria de largo plazo: cada turno de conversación se indexa automáticamente y se puede buscar cross-sesión vía `search_memory`. Preferencias del usuario: las preferencias explícitas (idioma, tono, formato, zona horaria, empresa, rol) se guardan en la colección interna `user_memory` vía la tool `save_user_memory` o desde Config, se inyectan en cada turno del router y se gestionan (ver/agregar/editar/eliminar) desde Config — cada guardado iniciado por el agente pide confirmación en un modal — nunca aparecen como colecciones RAG.
+ChromaDB con embeddings de Gemini (`gemini-embedding-2`) vía el proveedor Google. Subí archivos, páginas web y multimedia — el contenido de texto se extrae, se divide en chunks y se indexa para recuperación semántica; el audio, el video y las imágenes se vectorizan con embeddings multimodales más una transcripción (audio/video) o descripción (imágenes/video) automática que se guarda como documento. El chunking (tamaño de chunk y overlap, en caracteres) se configura por subida desde la interfaz (por defecto: chunk 500, overlap 60) y aplica solo al contenido de texto — cada imagen produce exactamente un chunk y los videos se dividen en segmentos de 30 segundos. Las colecciones se pueden renombrar y su descripción se puede editar desde la interfaz. Requiere una API key de Google: sin ella, la base de conocimiento queda deshabilitada y el resto de la app funciona normalmente. Memoria de largo plazo: cada turno de conversación se indexa automáticamente y se puede buscar cross-sesión vía `search_memory`. Preferencias del usuario: las preferencias explícitas (idioma, tono, formato, zona horaria, empresa, rol) se guardan en la colección interna `user_memory` vía la tool `save_user_memory` o desde Config, se inyectan en cada turno del router y se gestionan (ver/agregar/editar/eliminar) desde Config — cada guardado iniciado por el agente pide confirmación en un modal — nunca aparecen como colecciones RAG.
 
 ### Telegram
 
-Control remoto del agente. Mandá mensajes, cambiá modelos, creá skills/tools, administrá tareas programadas — todo vía Telegram. El bot conecta al mismo flujo de chat que usa el frontend.
+Control remoto del agente. Mandá mensajes, cambiá modelos, creá skills/tools, administrá tareas programadas — todo vía Telegram. El bot conecta al mismo flujo de chat que usa el frontend. Las imágenes generadas llegan como foto, el audio y el video como adjuntos; `/archivo` pide un archivo generado por nombre (sin rutas del servidor).
 
 ### Tareas programadas
 
@@ -195,7 +199,7 @@ En el header hay dos botones: **Uso** y **Facturación**, con los datos del mes.
 
 **Facturación** muestra el gasto del mes por proveedor y modelo, con filtros por proveedor y modelo. Por cada modelo ves los tokens de entrada y salida con su tarifa y su costo, el costo total y la cantidad de solicitudes. También permite configurar límites de gasto por proveedor o por modelo: si se alcanza un límite, las solicitudes se bloquean hasta aumentarlo.
 
-Se registra toda la actividad con modelos cloud: chat, tools, creadores, agenda, embeddings y transcripciones. Los modelos locales (Ollama) no tienen costo y no se contabilizan.
+Se registra toda la actividad con modelos cloud: chat, tools, creadores, agenda, embeddings y transcripciones. Las generaciones de imagen, audio y video también se registran (cantidad de solicitudes), sin costo de tokens. Los modelos locales (Ollama) no tienen costo y no se contabilizan.
 
 ---
 

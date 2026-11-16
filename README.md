@@ -159,7 +159,7 @@ An optional **decision model** (System One) can be enabled in **Config**, indepe
 
 ### Frontend
 
-React/Vite/TypeScript SPA with Tailwind v4 and shadcn/ui. Multi-page: chat, skill, tool, agent and workflow creation, RAG management, docs. SSE streaming, tool call visualization, context window gauge, scheduled tasks, usage and billing, metrics dashboard (sessions, messages, tools, models, costs, errors, workflows, creators and feedback, with time filters and CSV/JSON export), Telegram toggle.
+React/Vite/TypeScript SPA with Tailwind v4 and shadcn/ui. Multi-page: chat, skill, tool, agent and workflow creation, RAG management, docs. SSE streaming, tool call visualization, context window gauge, scheduled tasks, usage and billing, metrics dashboard (sessions, messages, tools, models, costs, errors, workflows, creators and feedback, with time filters and CSV/JSON export), Telegram toggle. Deleting a conversation also deletes its long-term vector memory (`agent_conversations`).
 
 ### Providers
 
@@ -169,7 +169,11 @@ React/Vite/TypeScript SPA with Tailwind v4 and shadcn/ui. Multi-page: chat, skil
 | Google | Cloud | Gemini models + RAG embeddings; free tier |
 | OpenAI-compatible | Cloud | Groq, OpenRouter, OpenAI, DeepSeek, xAI, Together AI, Fireworks AI, Cerebras, Mistral AI, Perplexity, Meta, Moonshot AI, Zhipu AI, Alibaba; free tiers |
 
-Cloud providers are curated in-app: each API key is validated live against its own API and stored encrypted (Fernet) in SQLite, and a provider is listed only while its key is saved. No environment variables needed. Models come from the models.dev catalog cached in SQLite — select provider + model explicitly and press **Apply**.
+Cloud providers are curated in-app: each API key is validated live against its own API and stored encrypted (Fernet) in SQLite, and a provider is listed only while its key is saved. No environment variables needed. Models come from the models.dev catalog cached in SQLite — select provider + model explicitly and press **Apply**. The catalog covers text, image, audio, video, transcription, embedding, decision and rerank types, plus an OpenRouter supplement with the non-text models models.dev does not publish; it re-syncs on its own every 24 hours (and when emptied or when the sync logic changes). A model filter searches across all providers with a saved key, by text (provider, id, name, description) and by type, and picking a result applies that provider and model.
+
+### Model output and voice
+
+Text models offer **Text** (default) or **JSON** output; image, audio and video models generate their modality directly with no output selector. Models with audio output expose a **Voice** panel: voice selector with characteristics, plus speed, style instructions and output format wherever the provider supports them (some providers have a fixed voice or a single format, LOCAL has no TTS). Audio-only models answer in a single direct turn (no history, tools or system prompt). Video generation requires a provider that exposes it. Generated images, audio and video render inline in the chat (one player at a time — playing one pauses the rest) with feedback buttons but no copy button, and also reach Telegram as photo/audio/video attachments. Generations are recorded in spend as request counts with zero token cost (unit pricing not yet tarifed).
 
 ### Email accounts
 
@@ -177,11 +181,11 @@ Multiple IMAP/SMTP accounts stored encrypted in SQLite and managed from Config (
 
 ### Knowledge base (RAG)
 
-ChromaDB with Gemini embeddings (`gemini-embedding-2`) via the Google provider. Upload files and web pages — content is extracted, chunked and indexed for semantic retrieval. Chunking (chunk size and overlap, in characters) is configurable per upload from the UI (defaults: chunk 500, overlap 60). Requires a Google API key: without it, the knowledge base stays disabled and everything else runs normally. Long-term memory: every conversation turn is automatically indexed and searchable across sessions via `search_memory`. User preferences: explicit preferences (language, tone, format, timezone, company, role) are stored in the internal `user_memory` collection via the `save_user_memory` tool or from Config, injected into every router turn, and managed (view/add/edit/delete) from Config — every agent-initiated save asks for confirmation in a modal, and they never appear as RAG collections.
+ChromaDB with Gemini embeddings (`gemini-embedding-2`) via the Google provider. Upload files, web pages and media — text content is extracted, chunked and indexed for semantic retrieval; audio, video and images are vectorized with multimodal embeddings plus an automatic transcription (audio/video) or description (images/video) stored as document. Chunking (chunk size and overlap, in characters) is configurable per upload from the UI (defaults: chunk 500, overlap 60) and applies to text content only — each image produces exactly one chunk and videos are split into 30-second segments. Collections can be renamed and their description edited from the UI. Requires a Google API key: without it, the knowledge base stays disabled and everything else runs normally. Long-term memory: every conversation turn is automatically indexed and searchable across sessions via `search_memory`. User preferences: explicit preferences (language, tone, format, timezone, company, role) are stored in the internal `user_memory` collection via the `save_user_memory` tool or from Config, injected into every router turn, and managed (view/add/edit/delete) from Config — every agent-initiated save asks for confirmation in a modal, and they never appear as RAG collections.
 
 ### Telegram
 
-Remote control for the agent. Send messages, switch models, create skills/tools, manage scheduled tasks — all through Telegram. The bot bridges to the same chat flow the frontend uses.
+Remote control for the agent. Send messages, switch models, create skills/tools, manage scheduled tasks — all through Telegram. The bot bridges to the same chat flow the frontend uses. Generated images arrive as photos, audio and video as attachments; `/archivo` requests a generated file by name (no server paths).
 
 ### Scheduled tasks
 
@@ -195,7 +199,7 @@ The header has two buttons: **Usage** and **Billing**, with the current month's 
 
 **Billing** shows the month's spend per provider and model, with provider and model filters. Each model shows input and output tokens with their rate and cost, total cost and request count. It also configures spend limits per provider or model: when a limit is reached, requests are blocked until it is raised.
 
-All cloud model activity is tracked: chat, tools, creators, agenda, embeddings and transcriptions. Local models (Ollama) have no cost and are not counted.
+All cloud model activity is tracked: chat, tools, creators, agenda, embeddings and transcriptions. Image, audio and video generations are also recorded (request counts) with zero token cost. Local models (Ollama) have no cost and are not counted.
 
 ---
 
