@@ -43,6 +43,10 @@ SUPPORTED_MEDIA_EXTENSIONS = (
     SUPPORTED_IMAGE_EXTENSIONS | SUPPORTED_AUDIO_EXTENSIONS | SUPPORTED_VIDEO_EXTENSIONS
 )
 
+# Generation model used to transcribe/describe media at index time.
+# Must accept text+image+audio+video input with text output.
+MEDIA_DESCRIBE_MODEL = "gemini-3.5-flash-lite"
+
 # Caps from the Gemini embeddings documentation (with a safety margin).
 AUDIO_MAX_SECONDS = 170.0
 VIDEO_MAX_SECONDS = 110.0
@@ -511,3 +515,45 @@ def build_media_chunks(
         )
 
     raise MediaRagError(f"Tipo de medio no soportado: {kind}.")
+
+
+def build_content_prompt(kind: str) -> str:
+    """Build the transcription/description prompt for a media chunk.
+
+    Args:
+        kind: ``"image"``, ``"audio"`` or ``"video"``.
+
+    Returns:
+        Prompt string in Spanish for the generation model.
+    """
+    if kind == "audio":
+        return (
+            "Transcribí este audio de forma literal y completa, en su idioma "
+            "original. Devolvé solo la transcripción, sin comentarios."
+        )
+    if kind == "video":
+        return (
+            "Describí en detalle lo que se ve y lo que se escucha en este "
+            "fragmento de video: escena, personas, objetos, acciones, texto "
+            "visible y audio relevante. Devolvé solo la descripción."
+        )
+    return (
+        "Describí en detalle lo que se ve en esta imagen: escena, personas, "
+        "objetos, texto visible y cualquier elemento relevante. "
+        "Devolvé solo la descripción."
+    )
+
+
+def content_document(placeholder: str, content: str | None) -> str:
+    """Combine the placeholder header with the real media content.
+
+    Args:
+        placeholder: Short header (e.g. ``[audio 00:00-00:30 de x.wav]``).
+        content: Transcription or description (None/empty = keep header).
+
+    Returns:
+        Full document text to store in Chroma.
+    """
+    if content and content.strip():
+        return f"{placeholder}\n{content.strip()}"
+    return placeholder

@@ -174,6 +174,57 @@ class GeminiEmbeddingFunction(EmbeddingFunction[Documents]):
             logger.warning("No se pudieron contar tokens: %s", e)
             return 0
 
+    def describe_media(
+        self,
+        prompt: str,
+        media: list[tuple[bytes, str]],
+        model: str | None = None,
+    ) -> str:
+        """Transcribe or describe media with a Gemini generation model.
+
+        Sends the media bytes plus a text prompt (transcription for
+        audio, description for image/video) and returns the model text.
+        Used at index time so the stored Chroma document holds the real
+        media content instead of a bare placeholder.
+
+        Args:
+            prompt: Instruction for the model (transcribe/describe).
+            media: List of ``(raw_bytes, mime_type)`` tuples.
+            model: Generation model id (must accept the media modality).
+        Returns:
+            The model text response, stripped.
+
+        Raises:
+            RuntimeError: If the call fails or returns no text.
+        """
+        from google.genai import types
+
+        if not model:
+            from backend.agent.utils.media_rag import MEDIA_DESCRIBE_MODEL
+
+            model = MEDIA_DESCRIBE_MODEL
+        try:
+            parts: list[Any] = [types.Part.from_text(text=prompt)]
+            for raw, mime in media or []:
+                if raw:
+                    parts.append(
+                        types.Part.from_bytes(
+                            data=bytes(raw),
+                            mime_type=mime or "application/octet-stream",
+                        )
+                    )
+            resp = self.client.models.generate_content(
+                model=model,
+                contents=[types.Content(parts=parts)],
+            )
+            text = (getattr(resp, "text", None) or "").strip()
+            if not text:
+                raise RuntimeError("El modelo no devolvió texto.")
+            return text
+        except Exception as e:
+            logger.error("Error describiendo medio con Gemini: %s", e)
+            raise RuntimeError(f"No se pudo describir el medio: {e}") from e
+
 
 class VectorDB:
     """ChromaDB vector operations wrapper.
@@ -346,6 +397,51 @@ class VectorDB:
                 }
             )
         return result
+
+    def update_collection(
+        self,
+        name: str,
+        new_name: str | None = None,
+        description: str | None = None,
+    ) -> dict[str, Any]:
+        """Rename a collection and/or update its description.
+
+        Args:
+            name: Current collection name.
+            new_name: New name (None or equal to ``name`` = no rename).
+            description: New description (None = keep, "" = clear).
+
+        Returns:
+            Collection info dict after the update.
+
+        Raises:
+            ValueError: If the collection does not exist, or the new
+                name is already taken by another collection.
+        """
+        try:
+            col = self.get_collection(name)
+        except (ValueError, chromadb.errors.NotFoundError):
+            raise ValueError(f"La colección '{name}' no existe.")
+        current_meta = dict(col.metadata or {})
+        if description is not None:
+            if description:
+                current_meta["description"] = description
+            else:
+                current_meta.pop("description", None)
+        # Chroma forbids changing hnsw:space via modify: drop it so the
+        # distance function is left untouched.
+        current_meta.pop("hnsw:space", None)
+        target = (new_name or "").strip() or name
+        if target != name:
+            try:
+                self._client.get_collection(name=target)
+                raise ValueError(f"La colección '{target}' ya existe.")
+            except (ValueError, chromadb.errors.NotFoundError) as exc:
+                if isinstance(exc, ValueError) and "ya existe" in str(exc):
+                    raise
+        col.modify(name=target, metadata=current_meta)
+        logger.info("Colección '%s' actualizada (nuevo nombre: '%s').", name, target)
+        return self.get_collection_info(target)
 
     def delete_collection(self, name: str) -> None:
         """Delete a collection and all its data.

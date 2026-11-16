@@ -732,10 +732,11 @@ def index_media_turn(
     """Index one media one-shot turn using multimodal embeddings.
 
     The turn document contains the user text and the assistant text with
-    media payloads stripped to placeholders; the embedding vector is
-    computed from the text PLUS the media objects (image/audio bytes),
-    not from base64 text. A single document is stored (no chunking:
-    stripped media turns are short).
+    media payloads stripped to placeholders, plus the extracted media
+    content (transcription/description) appended; the embedding vector is
+    computed from that final document PLUS the media objects
+    (image/audio bytes), not from base64 text. A single document is
+    stored (no chunking: stripped media turns are short).
 
     Args:
         session_id: Session identifier.
@@ -766,6 +767,51 @@ def index_media_turn(
 
         db = get_vector_db()
         db.get_or_create_collection(MEMORY_COLLECTION)
+
+        # Extract the real media content (transcription/description) so the
+        # stored document holds it instead of a bare placeholder.
+        if media:
+            from backend.agent.utils.media_rag import (
+                MEDIA_DESCRIBE_MODEL,
+                build_content_prompt,
+                content_document,
+            )
+
+            contents: list[str] = []
+            for raw, mime in media:
+                kind = "audio" if (mime or "").startswith("audio") else (
+                    "video" if (mime or "").startswith("video") else "image"
+                )
+                try:
+                    _desc_t0 = time.time()
+                    contents.append(
+                        db.embed_func.describe_media(
+                            build_content_prompt(kind),
+                            [(bytes(raw), mime)],
+                            MEDIA_DESCRIBE_MODEL,
+                        )
+                    )
+                    try:
+                        from backend.agent.utils.spend_handler import (
+                            record_external_usage,
+                        )
+
+                        record_external_usage(
+                            "transcription", "google", MEDIA_DESCRIBE_MODEL, 1,
+                            duration=round(time.time() - _desc_t0, 2),
+                            session_id=session_id,
+                            turn_number=turn_number,
+                        )
+                    except Exception:
+                        pass
+                except Exception:
+                    logger.warning(
+                        "No se pudo extraer el contenido de un medio del "
+                        "turno %s#%s: se indexa solo el marcador.",
+                        session_id, turn_number,
+                    )
+            if contents:
+                document = content_document(document, "\n".join(contents))
 
         _mem_t0 = time.time()
         vector = db.embed_func.embed_multimodal(document, media)
