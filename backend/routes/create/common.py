@@ -269,6 +269,15 @@ def _touched(path: Path, since_ts: float) -> bool:
         return False
 
 
+def _is_plain_item_name(name: str) -> bool:
+    """Check that a creator item name is a single path component."""
+    if not name or name in (".", ".."):
+        return False
+    if any(ch in name for ch in ("/", "\\", ":")):
+        return False
+    return ".." not in name and Path(name).name == name
+
+
 def find_created_item(kind: str, name: str | None, since_ts: float) -> dict | None:
     """Detect the item a creator turn created or modified.
 
@@ -287,6 +296,8 @@ def find_created_item(kind: str, name: str | None, since_ts: float) -> dict | No
     """
     try:
         clean = (name or "").strip()
+        if not _is_plain_item_name(clean):
+            clean = ""
         if kind == "tool":
             if clean:
                 candidate = _TOOLS_DIR / f"{clean}.py"
@@ -554,7 +565,7 @@ def _exact_path(kind: str, item_name: str | None) -> Path:
         The expected path, or an empty path when the name is unusable.
     """
     clean = (item_name or "").strip()
-    if not clean:
+    if not clean or not _is_plain_item_name(clean):
         return Path("")
     if kind == "tool":
         return _TOOLS_DIR / f"{clean}.py"
